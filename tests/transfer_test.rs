@@ -253,3 +253,118 @@ async fn test_wrong_chunk_number_fails() {
 
     send_handle.await.unwrap();
 }
+
+#[tokio::test]
+async fn test_wrong_encryption_key_fails_on_header() {
+    let (mut client, mut server) = duplex(4096);
+    let sender_key = generate_key();
+    let receiver_key = generate_key(); // Different key!
+
+    let header = FileHeader::new("secret.txt".to_string(), 1000);
+
+    let send_handle = tokio::spawn(async move {
+        send_encrypted_header(&mut client, &sender_key, &header)
+            .await
+            .unwrap();
+    });
+
+    // Receiver tries to decrypt with wrong key - should fail immediately
+    let result = recv_encrypted_header(&mut server, &receiver_key).await;
+    assert!(result.is_err());
+
+    send_handle.await.unwrap();
+}
+
+#[tokio::test]
+async fn test_wrong_encryption_key_fails_on_chunk() {
+    let (mut client, mut server) = duplex(4096);
+    let sender_key = generate_key();
+    let receiver_key = generate_key(); // Different key!
+
+    let data = b"Sensitive data that should not be readable";
+
+    let send_handle = tokio::spawn(async move {
+        send_encrypted_chunk(&mut client, &sender_key, 1, data)
+            .await
+            .unwrap();
+    });
+
+    // Receiver tries to decrypt with wrong key - should fail
+    let result = recv_encrypted_chunk(&mut server, &receiver_key, 1).await;
+    assert!(result.is_err());
+
+    send_handle.await.unwrap();
+}
+
+#[tokio::test]
+async fn test_different_keys_produce_different_payloads() {
+    use wormhole_rs::crypto::encrypt_chunk;
+
+    // Same file content and metadata
+    let data = b"Identical file content for both transfers";
+    let chunk_num = 1u64;
+
+    // Generate two different keys (simulating two separate transfers)
+    let key1 = generate_key();
+    let key2 = generate_key();
+
+    // Encrypt the same data with different keys
+    let encrypted1 = encrypt_chunk(&key1, chunk_num, data).unwrap();
+    let encrypted2 = encrypt_chunk(&key2, chunk_num, data).unwrap();
+
+    // Payloads should be different due to different keys
+    assert_ne!(
+        encrypted1, encrypted2,
+        "Same data encrypted with different keys should produce different ciphertext"
+    );
+
+    // Also verify the nonces are the same (deterministic from chunk_num)
+    // but ciphertext differs
+    assert_eq!(
+        &encrypted1[..12],
+        &encrypted2[..12],
+        "Nonces should be identical for same chunk_num"
+    );
+    assert_ne!(
+        &encrypted1[12..],
+        &encrypted2[12..],
+        "Ciphertext should differ due to different keys"
+    );
+}
+
+#[tokio::test]
+async fn test_different_keys_produce_different_headers() {
+    use wormhole_rs::crypto::encrypt_chunk;
+    use wormhole_rs::transfer::FileHeader;
+
+    // Same file metadata
+    let header = FileHeader::new("same_file.txt".to_string(), 12345);
+    let header_bytes = header.to_bytes();
+
+    // Two different keys (two separate transfers of same file)
+    let key1 = generate_key();
+    let key2 = generate_key();
+
+    // Encrypt header with chunk_num 0
+    let encrypted1 = encrypt_chunk(&key1, 0, &header_bytes).unwrap();
+    let encrypted2 = encrypt_chunk(&key2, 0, &header_bytes).unwrap();
+
+    // Headers should produce different encrypted payloads
+    assert_ne!(
+        encrypted1, encrypted2,
+        "Same header encrypted with different keys should produce different ciphertext"
+    );
+}
+
+#[tokio::test]
+async fn test_each_transfer_generates_unique_key() {
+    // Verify that generate_key() produces different keys each time
+    // This ensures each file transfer has unique encryption
+    let key1 = generate_key();
+    let key2 = generate_key();
+    let key3 = generate_key();
+
+    assert_ne!(key1, key2, "Each generated key should be unique");
+    assert_ne!(key2, key3, "Each generated key should be unique");
+    assert_ne!(key1, key3, "Each generated key should be unique");
+}
