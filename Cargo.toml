@@ -22,4 +22,6 @@ anyhow = "1"
 postcard = "1"
 serde = { version = "1", features = ["derive"] }
 tempfile = "3"
+tar = "0.4"
+walkdir = "2"
 

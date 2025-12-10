@@ -8,7 +8,7 @@ use std::io::Write;
 use std::path::PathBuf;
 use tempfile::NamedTempFile;
 
-use crate::transfer::{format_bytes, num_chunks, recv_encrypted_chunk, recv_encrypted_header};
+use crate::transfer::{format_bytes, num_chunks, recv_encrypted_chunk, recv_encrypted_header, TransferType};
 use crate::wormhole::parse_code;
 
 const ALPN: &[u8] = b"wormhole-transfer/1";
@@ -58,6 +58,13 @@ pub async fn receive_file(code: &str, output_dir: Option<PathBuf>) -> Result<()>
     let header = recv_encrypted_header(&mut recv_stream, &key)
         .await
         .context("Failed to read file header")?;
+
+    // Validate transfer type
+    if header.transfer_type != TransferType::File {
+        anyhow::bail!(
+            "Expected file transfer, got folder transfer. Use 'receive-folder' command instead."
+        );
+    }
 
     println!("📁 Receiving: {} ({})", header.filename, format_bytes(header.file_size));
 
