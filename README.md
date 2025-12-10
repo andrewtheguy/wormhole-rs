@@ -40,15 +40,38 @@ The installer will:
 - Install to `~/.local/bin/wormhole-rs`
 - Provide PATH setup guidance
 
+### Quick Install (Windows)
+
+**One-line installation using PowerShell:**
+
+```powershell
+irm https://raw.githubusercontent.com/andrewtheguy/wormhole-rs/main/install.ps1 | iex
+```
+
+**Install with custom release tag:**
+
+```powershell
+irm https://raw.githubusercontent.com/andrewtheguy/wormhole-rs/main/install.ps1 | iex -Args <RELEASE_TAG>
+```
+
+**Using environment variable:**
+
+```powershell
+$env:RELEASE_TAG="latest"; irm https://raw.githubusercontent.com/andrewtheguy/wormhole-rs/main/install.ps1 | iex
+```
+
+The installer will:
+- Detect your architecture (amd64/arm64)
+- Download the appropriate Windows binary from GitHub releases
+- Test the binary before installation
+- Install to `$env:LOCALAPPDATA\Programs\wormhole-rs\wormhole-rs.exe`
+- Automatically add to your user PATH
+
 ### Manual Build
 
 ```bash
 cargo build --release
 ```
-
-### Windows
-
-Download the latest Windows binary from the [Releases](https://github.com/andrewtheguy/wormhole-rs/releases) page and add it to your PATH.
 
 ## Usage
 
