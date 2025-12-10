@@ -143,10 +143,19 @@ pub async fn receive_folder(code: &str, output_dir: Option<PathBuf>) -> Result<(
         format_bytes(header.file_size)
     );
 
-    // Create random output folder
-    let random_id: u32 = rand::random();
-    let base_dir = output_dir.unwrap_or_else(|| PathBuf::from("."));
-    let extract_dir = base_dir.join(format!("wormhole_{:08x}", random_id));
+    // Determine output directory
+    let extract_dir = match output_dir {
+        Some(dir) => dir, // Use provided directory directly
+        None => {
+            // Generate random folder in current directory with timestamp for sorting
+            let timestamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs();
+            let random_id: u32 = rand::random();
+            PathBuf::from(format!("wormhole_{}_{:08x}", timestamp, random_id))
+        }
+    };
 
     std::fs::create_dir_all(&extract_dir).context("Failed to create extraction directory")?;
 
