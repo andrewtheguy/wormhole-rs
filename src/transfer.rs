@@ -3,50 +3,78 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use crate::crypto::{decrypt_chunk, encrypt_chunk, CHUNK_SIZE};
 
+/// Transfer type identifier
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum TransferType {
+    File = 0,
+    Folder = 1, // Tar archive
+}
+
+impl TransferType {
+    pub fn from_u8(value: u8) -> Result<Self> {
+        match value {
+            0 => Ok(TransferType::File),
+            1 => Ok(TransferType::Folder),
+            _ => anyhow::bail!("Unknown transfer type: {}", value),
+        }
+    }
+}
+
 /// Transfer protocol header
-/// Format: filename_len (2 bytes) || filename || file_size (8 bytes)
+/// Format: transfer_type (1 byte) || filename_len (2 bytes) || filename || file_size (8 bytes)
 pub struct FileHeader {
+    pub transfer_type: TransferType,
     pub filename: String,
     pub file_size: u64,
 }
 
 impl FileHeader {
-    pub fn new(filename: String, file_size: u64) -> Self {
-        Self { filename, file_size }
+    pub fn new(transfer_type: TransferType, filename: String, file_size: u64) -> Self {
+        Self {
+            transfer_type,
+            filename,
+            file_size,
+        }
     }
 
     /// Serialize header for transmission
     pub fn to_bytes(&self) -> Vec<u8> {
         let filename_bytes = self.filename.as_bytes();
-        let mut bytes = Vec::with_capacity(2 + filename_bytes.len() + 8);
-        
+        let mut bytes = Vec::with_capacity(1 + 2 + filename_bytes.len() + 8);
+
+        bytes.push(self.transfer_type as u8);
         bytes.extend_from_slice(&(filename_bytes.len() as u16).to_be_bytes());
         bytes.extend_from_slice(filename_bytes);
         bytes.extend_from_slice(&self.file_size.to_be_bytes());
-        
+
         bytes
     }
 
     /// Deserialize header from bytes
     pub fn from_bytes(data: &[u8]) -> Result<Self> {
-        if data.len() < 2 {
+        if data.len() < 3 {
             anyhow::bail!("Header data too short");
         }
-        
-        let filename_len = u16::from_be_bytes([data[0], data[1]]) as usize;
-        if data.len() < 2 + filename_len + 8 {
+
+        let transfer_type = TransferType::from_u8(data[0])?;
+        let filename_len = u16::from_be_bytes([data[1], data[2]]) as usize;
+        if data.len() < 3 + filename_len + 8 {
             anyhow::bail!("Header data truncated");
         }
-        
-        let filename = String::from_utf8(data[2..2 + filename_len].to_vec())
+
+        let filename = String::from_utf8(data[3..3 + filename_len].to_vec())
             .context("Invalid filename encoding")?;
-        
-        let size_start = 2 + filename_len;
-        let file_size = u64::from_be_bytes(
-            data[size_start..size_start + 8].try_into().unwrap()
-        );
-        
-        Ok(Self { filename, file_size })
+
+        let size_start = 3 + filename_len;
+        let file_size =
+            u64::from_be_bytes(data[size_start..size_start + 8].try_into().unwrap());
+
+        Ok(Self {
+            transfer_type,
+            filename,
+            file_size,
+        })
     }
 }
 
