@@ -3,6 +3,14 @@ name = "wormhole-rs"
 version = "0.1.0"
 edition = "2021"
 
+[lib]
+name = "wormhole_rs"
+path = "src/lib.rs"
+
+[[bin]]
+name = "wormhole-rs"
+path = "src/main.rs"
+
 [dependencies]
 iroh = { version = "0.95.1", features = ["discovery-local-network"] }
 tokio = { version = "1", features = ["full"] }

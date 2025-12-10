@@ -1,16 +1,8 @@
-mod crypto;
-mod receiver;
-mod sender;
-mod transfer;
-mod wormhole;
-
-#[cfg(test)]
-mod crypto_tests;
-
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use std::io::{self, Write};
 use std::path::PathBuf;
+use wormhole_rs::{receiver, sender, wormhole};
 
 #[derive(Parser)]
 #[command(name = "wormhole-rs")]
