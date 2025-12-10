@@ -32,23 +32,45 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            suffix: amd64
+            target: x86_64-unknown-linux-gnu
+            suffix: linux-amd64
+            binary: wormhole-rs
           - os: ubuntu-24.04-arm
-            suffix: arm64
+            target: aarch64-unknown-linux-gnu
+            suffix: linux-arm64
+            binary: wormhole-rs
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            suffix: macos-arm64
+            binary: wormhole-rs
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            suffix: windows-amd64
+            binary: wormhole-rs.exe
     runs-on: ${{ matrix.os }}
     
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
 
       - name: Build Release
-        run: cargo build --release
+        run: cargo build --release --target ${{ matrix.target }}
 
-      - name: Rename Binary
-        run: mv target/release/wormhole-rs target/release/wormhole-rs-linux-${{ matrix.suffix }}
+      - name: Rename Binary (Unix)
+        if: runner.os != 'Windows'
+        run: mv target/${{ matrix.target }}/release/${{ matrix.binary }} target/release/wormhole-rs-${{ matrix.suffix }}
+
+      - name: Rename Binary (Windows)
+        if: runner.os == 'Windows'
+        run: move target\${{ matrix.target }}\release\${{ matrix.binary }} target\release\wormhole-rs-${{ matrix.suffix }}.exe
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
@@ -57,6 +79,8 @@ jobs:
           name: Release ${{ needs.setup.outputs.release_tag }}
           prerelease: true
           generate_release_notes: true
-          files: target/release/wormhole-rs-linux-${{ matrix.suffix }}
+          files: |
+            target/release/wormhole-rs-${{ matrix.suffix }}
+            target/release/wormhole-rs-${{ matrix.suffix }}.exe
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
