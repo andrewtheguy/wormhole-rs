@@ -12,6 +12,35 @@ A secure peer-to-peer file transfer tool using [iroh](https://github.com/n0-comp
 
 ## Installation
 
+### Quick Install (Linux & macOS)
+
+**One-line installation using the automated script:**
+
+```bash
+curl -sSL https://raw.githubusercontent.com/andrewtheguy/wormhole-rs/main/install.sh | bash
+```
+
+**Install with custom release tag:**
+
+```bash
+curl -sSL https://raw.githubusercontent.com/andrewtheguy/wormhole-rs/main/install.sh | bash -s <RELEASE_TAG>
+```
+
+**Using environment variable:**
+
+```bash
+RELEASE_TAG=latest curl -sSL https://raw.githubusercontent.com/andrewtheguy/wormhole-rs/main/install.sh | bash
+```
+
+The installer will:
+- Detect your OS (Linux/macOS) and architecture (amd64/arm64)
+- Download the appropriate binary from GitHub releases
+- Test the binary before installation
+- Install to `~/.local/bin/wormhole-rs`
+- Provide PATH setup guidance
+
+### Manual Build
+
 ```bash
 cargo build --release
 ```
