@@ -6,6 +6,7 @@ mod wormhole;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
+use std::io::{self, Write};
 use std::path::PathBuf;
 
 #[derive(Parser)]
@@ -26,9 +27,10 @@ enum Commands {
     },
     /// Receive a file
     Receive {
-        /// Wormhole code from sender
-        code: String,
-        
+        /// Wormhole code from sender (will prompt if not provided)
+        #[arg(short, long)]
+        code: Option<String>,
+
         /// Output directory (default: current directory)
         #[arg(short, long)]
         output: Option<PathBuf>,
@@ -55,6 +57,17 @@ async fn main() -> Result<()> {
                     anyhow::bail!("Output directory does not exist: {}", dir.display());
                 }
             }
+            let code = match code {
+                Some(c) => c,
+                None => {
+                    print!("Enter wormhole code: ");
+                    io::stdout().flush()?;
+                    let mut input = String::new();
+                    io::stdin().read_line(&mut input)?;
+                    input.trim().to_string()
+                }
+            };
+            wormhole::validate_code_format(&code)?;
             receiver::receive_file(&code, output).await?;
         }
     }

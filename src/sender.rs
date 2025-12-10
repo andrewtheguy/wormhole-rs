@@ -51,9 +51,10 @@ pub async fn send_file(file_path: &Path) -> Result<()> {
     // Generate wormhole code
     let code = generate_code(&key, &addr)?;
 
-    println!("\n🔮 Wormhole code: {}\n", code);
+    println!("\n🔮 Wormhole code:\n{}\n", code);
     println!("On the receiving end, run:");
-    println!("  wormhole-rs receive {}\n", code);
+    println!("  wormhole-rs receive\n");
+    println!("Then enter the code above when prompted.\n");
     println!("⏳ Waiting for receiver to connect...");
 
     // Wait for connection
