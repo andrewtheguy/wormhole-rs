@@ -4,6 +4,9 @@ mod sender;
 mod transfer;
 mod wormhole;
 
+#[cfg(test)]
+mod crypto_tests;
+
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use std::io::{self, Write};

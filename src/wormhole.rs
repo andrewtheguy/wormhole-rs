@@ -73,14 +73,3 @@ pub fn parse_code(code: &str) -> Result<([u8; 32], EndpointAddr)> {
 
     Ok((payload.key, payload.addr))
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_code_roundtrip() {
-        // This test requires a valid EndpointAddr which needs an actual endpoint
-        // For unit testing, we'd mock this
-    }
-}
