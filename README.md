@@ -1,12 +1,13 @@
 # wormhole-rs
 
-A magic-wormhole-style secure file transfer tool using [iroh](https://github.com/n0-computer/iroh) for peer-to-peer connectivity and AES-256-GCM encryption.
+A secure peer-to-peer file transfer tool using [iroh](https://github.com/n0-computer/iroh) for direct connectivity and AES-256-GCM end-to-end encryption.
 
 ## Features
 
 - 🔐 **End-to-end encryption** - AES-256-GCM with unique nonces per 16KB chunk
-- 🌐 **Peer-to-peer** - Direct connections via iroh's QUIC relay network
-- 🔮 **Human-readable codes** - Easy to share wormhole codes like `42-guitar-piano-...`
+- 🌐 **Peer-to-peer** - Direct connections when possible, relay fallback when needed
+- 🏠 **Local discovery** - mDNS for same-network transfers without relay
+- 📡 **Connection info** - Shows if transfer is Direct, Relay, or Mixed
 - 📊 **Progress display** - Real-time transfer progress
 
 ## Installation
@@ -39,26 +40,34 @@ Optionally specify an output directory:
 
 ## How It Works
 
+### Connection Flow
+
 ```
-┌────────┐                          ┌──────────┐                         ┌──────────┐
-│ Sender │                          │  Relay   │                         │ Receiver │
-└───┬────┘                          └────┬─────┘                         └────┬─────┘
-    │  1. Connect & publish addr         │                                    │
-    ├───────────────────────────────────►│                                    │
-    │                                    │                                    │
-    │  2. Generate AES-256 key           │                                    │
-    │  3. Create wormhole code           │                                    │
-    │     (key + addr encoded)           │                                    │
-    │                                    │                                    │
-    │                                    │  4. Parse code, connect            │
-    │◄───────────────────────────────────┼────────────────────────────────────┤
-    │                                    │                                    │
-    │  5. Send file header               │                                    │
-    ├────────────────────────────────────┼───────────────────────────────────►│
-    │                                    │                                    │
-    │  6. Stream encrypted 16KB chunks   │                                    │
-    ├────────────────────────────────────┼───────────────────────────────────►│
-    │                                    │                                    │
+                    ┌──────────┐
+                    │  Relay   │  (discovery + fallback)
+                    └────┬─────┘
+                         │
+   1. Publish addr       │        2. Discover sender
+         ┌───────────────┴───────────────┐
+         ▼                               ▼
+    ┌────────┐                      ┌──────────┐
+    │ Sender │◄────────────────────►│ Receiver │
+    └────────┘   3. Direct P2P      └──────────┘
+                 (if possible)
+```
+
+### Data Transfer
+
+**Direct connection (same network or hole-punch success):**
+```
+Sender ◄──── encrypted chunks ────► Receiver
+         (relay not involved)
+```
+
+**Relay fallback (strict NAT/firewall):**
+```
+Sender ──► Relay ──► Receiver
+       (encrypted, relay can't read)
 ```
 
 ## Security & Encryption Model
@@ -90,6 +99,19 @@ The 32-byte AES-256 encryption key is:
 ### Nonce Handling
 
 Each 16KB chunk uses a unique nonce derived from the chunk number, preventing nonce reuse attacks.
+
+### Connection Types
+
+The receiver displays the current connection type:
+
+| Type | Description |
+|------|-------------|
+| `Direct(addr)` | Direct P2P via UDP hole-punching (fastest) |
+| `Relay(url)` | Via relay server (works through firewalls) |
+| `Mixed(addr, url)` | Both available, upgrading to direct |
+| `None` | No verified connection path |
+
+**Priority:** Local mDNS → Direct UDP → Relay fallback
 
 ## Wire Protocol Format
 
