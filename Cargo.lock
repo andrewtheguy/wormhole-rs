@@ -4315,6 +4315,7 @@ dependencies = [
  "tar",
  "tempfile",
  "tokio",
+ "walkdir",
 ]
 
 [[package]]

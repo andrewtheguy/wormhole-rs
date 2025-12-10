@@ -79,7 +79,12 @@ impl<R: tokio::io::AsyncReadExt + Unpin + Send> Read for DecryptingReader<R> {
     }
 }
 
-/// Receive a folder (tar archive) using a wormhole code
+/// Receive a folder (tar archive) using a wormhole code.
+///
+/// Note: File permissions may not be fully preserved in cross-platform transfers,
+/// especially when receiving from Unix on Windows or vice versa. Windows does not
+/// support Unix permission modes (rwx), so files may have different permissions
+/// after extraction.
 pub async fn receive_folder(code: &str, output_dir: Option<PathBuf>) -> Result<()> {
     println!("🔮 Parsing wormhole code...");
 
@@ -146,6 +151,14 @@ pub async fn receive_folder(code: &str, output_dir: Option<PathBuf>) -> Result<(
     std::fs::create_dir_all(&extract_dir).context("Failed to create extraction directory")?;
 
     println!("📂 Extracting to: {}", extract_dir.display());
+    #[cfg(unix)]
+    println!("   File modes (e.g., 0755) will be preserved; owner/group will not.");
+    #[cfg(windows)]
+    {
+        println!("   Note: Unix file modes are not supported on Windows.");
+        println!("   Symlinks require admin privileges and may be skipped.");
+    }
+    println!("   Special files (devices, FIFOs) will be skipped if present.");
 
     // Get runtime handle for blocking in Read impl
     let runtime_handle = tokio::runtime::Handle::current();
@@ -155,17 +168,56 @@ pub async fn receive_folder(code: &str, output_dir: Option<PathBuf>) -> Result<(
 
     // Extract tar archive while streaming
     let mut archive = Archive::new(reader);
+    // Preserve file mode (0755, etc.) but not owner/group (UID/GID mismatch across machines)
     archive.set_preserve_permissions(true);
+    archive.set_preserve_ownerships(false);
 
     // Use spawn_blocking to run tar extraction in a blocking context
     let extract_dir_clone = extract_dir.clone();
-    tokio::task::spawn_blocking(move || {
-        archive
-            .unpack(&extract_dir_clone)
-            .context("Failed to extract tar archive")
+    let skipped_entries = tokio::task::spawn_blocking(move || -> Result<Vec<String>> {
+        let mut skipped = Vec::new();
+
+        for entry in archive.entries().context("Failed to read tar entries")? {
+            let mut entry = entry.context("Failed to read tar entry")?;
+            let path = entry.path().context("Failed to get entry path")?.into_owned();
+
+            // Check entry type
+            let entry_type = entry.header().entry_type();
+
+            // On Windows, symlinks require special privileges and may fail
+            #[cfg(windows)]
+            if entry_type.is_symlink() || entry_type.is_hard_link() {
+                skipped.push(format!("{} (symlink/hardlink)", path.display()));
+                continue;
+            }
+
+            // Skip special files that can't be extracted
+            if entry_type.is_block_special()
+                || entry_type.is_character_special()
+                || entry_type.is_fifo()
+            {
+                skipped.push(format!("{} (special file)", path.display()));
+                continue;
+            }
+
+            // Extract the entry
+            entry
+                .unpack_in(&extract_dir_clone)
+                .with_context(|| format!("Failed to extract: {}", path.display()))?;
+        }
+
+        Ok(skipped)
     })
     .await
     .context("Extraction task panicked")??;
+
+    // Report skipped entries
+    if !skipped_entries.is_empty() {
+        println!("\n⚠️  Skipped {} entries (not supported on this platform):", skipped_entries.len());
+        for entry in &skipped_entries {
+            println!("   - {}", entry);
+        }
+    }
 
     println!("\n✅ Folder received successfully!");
     println!("📂 Extracted to: {}", extract_dir.display());
