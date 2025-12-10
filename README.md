@@ -91,6 +91,29 @@ The 32-byte AES-256 encryption key is:
 
 Each 16KB chunk uses a unique nonce derived from the chunk number, preventing nonce reuse attacks.
 
+## Wire Protocol Format
+
+### Wormhole Code
+```
+base64( postcard( [32-byte AES key] + [EndpointAddr] ) )
+```
+
+### File Header
+```
+┌──────────────┬────────────────────────┬─────────────────┐
+│ filename_len │      filename          │    file_size    │
+│   (2 bytes)  │    (variable)          │    (8 bytes)    │
+└──────────────┴────────────────────────┴─────────────────┘
+```
+
+### Encrypted Chunk
+```
+┌──────────────┬──────────┬─────────────────┬─────────────┐
+│  chunk_len   │  nonce   │   ciphertext    │   GCM tag   │
+│  (4 bytes)   │(12 bytes)│    (≤16KB)      │  (16 bytes) │
+└──────────────┴──────────┴─────────────────┴─────────────┘
+```
+
 ## Project Structure
 
 ```
