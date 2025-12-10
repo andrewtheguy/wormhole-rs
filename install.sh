@@ -1,24 +1,17 @@
 #!/bin/bash
 
 # Wormhole-rs installer for Linux and Mac
-# Downloads binary from: https://github.com/andrewtheguy/wormhole-rs/releases/tag/20251210172710
+# Downloads latest binary from: https://github.com/andrewtheguy/wormhole-rs/releases
 #
 # Usage: ./install.sh [RELEASE_TAG]
 # Or set RELEASE_TAG environment variable
 
 set -e
 
-# Default release tag (can be overridden by argument or environment variable)
-DEFAULT_RELEASE_TAG="20251210172710"
-
-# Allow override via command-line argument or environment variable
-RELEASE_TAG="${1:-${RELEASE_TAG:-$DEFAULT_RELEASE_TAG}}"
-
 REPO_OWNER="andrewtheguy"
 REPO_NAME="wormhole-rs"
-BASE_URL="https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/download/${RELEASE_TAG}"
 
-# Color output
+# Color output (defined early for use in get_latest_release)
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -36,6 +29,46 @@ print_warn() {
 print_error() {
     echo -e "${RED}[ERROR]${NC} $1"
 }
+
+# Fetch the latest release tag matching yyyymmddhhmmss pattern from GitHub
+get_latest_release() {
+    local api_url="https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/tags"
+    local tags_json
+
+    if command -v curl >/dev/null 2>&1; then
+        tags_json=$(curl -s "$api_url")
+    elif command -v wget >/dev/null 2>&1; then
+        tags_json=$(wget -qO- "$api_url")
+    else
+        print_error "Neither curl nor wget is available. Please install one of them."
+        exit 1
+    fi
+
+    # Extract tag names matching yyyymmddhhmmss pattern (14 digits) and get the latest one
+    # Tags are returned in reverse chronological order, so first match is latest
+    local latest_tag
+    latest_tag=$(echo "$tags_json" | grep -o '"name": *"[0-9]\{14\}"' | head -1 | grep -o '[0-9]\{14\}')
+
+    if [ -z "$latest_tag" ]; then
+        print_error "Could not find any release tags matching yyyymmddhhmmss pattern"
+        exit 1
+    fi
+
+    echo "$latest_tag"
+}
+
+# Allow override via command-line argument or environment variable
+# If not provided, fetch the latest release tag from GitHub
+if [ -n "$1" ]; then
+    RELEASE_TAG="$1"
+elif [ -n "$RELEASE_TAG" ]; then
+    RELEASE_TAG="$RELEASE_TAG"
+else
+    print_info "Fetching latest release tag from GitHub..."
+    RELEASE_TAG=$(get_latest_release)
+fi
+
+BASE_URL="https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/download/${RELEASE_TAG}"
 
 # Detect OS
 detect_os() {
@@ -167,7 +200,7 @@ show_usage() {
     echo "Download and install wormhole-rs binary"
     echo ""
     echo "Arguments:"
-    echo "  RELEASE_TAG    GitHub release tag to download (default: ${DEFAULT_RELEASE_TAG})"
+    echo "  RELEASE_TAG    GitHub release tag to download (default: latest)"
     echo ""
     echo "Environment variables:"
     echo "  RELEASE_TAG    Alternative way to specify release tag"
