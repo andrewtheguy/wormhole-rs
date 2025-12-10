@@ -51,10 +51,9 @@ pub async fn send_file(file_path: &Path) -> Result<()> {
     // Generate wormhole code
     let code = generate_code(&key, &addr)?;
 
-    let exe_name = std::env::args().next().unwrap_or_else(|| "wormhole-rs".to_string());
     println!("\n🔮 Wormhole code: {}\n", code);
     println!("On the receiving end, run:");
-    println!("  {} receive {}\n", exe_name, code);
+    println!("  wormhole-rs receive {}\n", code);
     println!("⏳ Waiting for receiver to connect...");
 
     // Wait for connection
