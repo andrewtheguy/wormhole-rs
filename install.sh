@@ -10,6 +10,7 @@ set -e
 
 REPO_OWNER="andrewtheguy"
 REPO_NAME="wormhole-rs"
+DOWNLOAD_ONLY=false
 
 # Color output (defined early for use in get_latest_release)
 RED='\033[0;31m'
@@ -123,18 +124,36 @@ verify_checksum() {
     fi
 }
 
-# Allow override via command-line argument or environment variable
-# If not provided, fetch the latest release tag from GitHub
-if [ -n "$1" ]; then
-    RELEASE_TAG="$1"
-elif [ -n "$RELEASE_TAG" ]; then
-    RELEASE_TAG="$RELEASE_TAG"
-else
-    print_info "Fetching latest release tag from GitHub..."
-    RELEASE_TAG=$(get_latest_release)
-fi
+# Parse command-line arguments
+parse_args() {
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --download-only)
+                DOWNLOAD_ONLY=true
+                shift
+                ;;
+            --help|-h)
+                show_usage
+                exit 0
+                ;;
+            *)
+                # Assume it's a release tag
+                RELEASE_TAG="$1"
+                shift
+                ;;
+        esac
+    done
 
-BASE_URL="https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/download/${RELEASE_TAG}"
+    # If RELEASE_TAG not set via args, check environment variable or fetch latest
+    if [ -z "$RELEASE_TAG" ]; then
+        if [ -n "${RELEASE_TAG_ENV:-}" ]; then
+            RELEASE_TAG="$RELEASE_TAG_ENV"
+        else
+            print_info "Fetching latest release tag from GitHub..."
+            RELEASE_TAG=$(get_latest_release)
+        fi
+    fi
+}
 
 # Detect OS
 detect_os() {
@@ -194,27 +213,22 @@ get_binary_name() {
     esac
 }
 
-# Download binary to temporary location and test it
-download_and_test_binary() {
-    local url="${BASE_URL}/${BINARY_NAME}"
-    local temp_dir=$(mktemp -d)
-    local temp_binary="${temp_dir}/${BINARY_NAME}"
-    local final_path="$HOME/.local/bin/wormhole-rs"
-    local version_info
-    
-    # Set up trap to clean up temp directory on exit
-    trap 'rm -rf "$temp_dir"' EXIT
-    
+# Download binary and verify checksum
+download_binary() {
+    local base_url="https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/download/${RELEASE_TAG}"
+    local url="${base_url}/${BINARY_NAME}"
+    local output_path="$1"
+
     print_info "Downloading ${BINARY_NAME} from ${url}"
-    
-    # Download the binary to temporary location
+
+    # Download the binary
     if command -v curl >/dev/null 2>&1; then
-        if ! curl -L -o "$temp_binary" "$url"; then
+        if ! curl -L -o "$output_path" "$url"; then
             print_error "Failed to download binary"
             exit 1
         fi
     elif command -v wget >/dev/null 2>&1; then
-        if ! wget -O "$temp_binary" "$url"; then
+        if ! wget -O "$output_path" "$url"; then
             print_error "Failed to download binary"
             exit 1
         fi
@@ -223,44 +237,82 @@ download_and_test_binary() {
         exit 1
     fi
 
-    # Verify checksum before making executable
-    if [ -n "$EXPECTED_CHECKSUM" ]; then
-        if ! verify_checksum "$temp_binary" "$EXPECTED_CHECKSUM"; then
-            print_error "Binary integrity check failed. Aborting installation."
-            exit 1
-        fi
-    else
-        print_warn "Checksum not available, skipping verification"
+    # Verify checksum
+    if [ -z "$EXPECTED_CHECKSUM" ]; then
+        print_error "No checksum available. Aborting."
+        rm -f "$output_path"
+        exit 1
     fi
+    if ! verify_checksum "$output_path" "$EXPECTED_CHECKSUM"; then
+        print_error "Binary integrity check failed. Aborting."
+        rm -f "$output_path"
+        exit 1
+    fi
+}
+
+# Download only - save to current directory
+download_only() {
+    local output_file="./${BINARY_NAME}"
+
+    download_binary "$output_file"
+
+    # Make executable
+    chmod +x "$output_file"
+
+    # Test the binary
+    print_info "Testing downloaded binary..."
+    local version_info
+    if ! version_info=$("$output_file" --version 2>&1); then
+        print_error "Binary test failed. The downloaded file may be corrupted or incompatible."
+        print_error "Output: $version_info"
+        rm -f "$output_file"
+        exit 1
+    fi
+
+    print_info "Binary test successful: $version_info"
+    print_info "Binary saved to: ${output_file}"
+}
+
+# Download binary to temporary location, test it, and install
+download_and_install() {
+    local temp_dir=$(mktemp -d)
+    local temp_binary="${temp_dir}/${BINARY_NAME}"
+    local final_path="$HOME/.local/bin/wormhole-rs"
+
+    # Set up trap to clean up temp directory on exit
+    trap 'rm -rf "$temp_dir"' EXIT
+
+    download_binary "$temp_binary"
 
     # Make executable
     chmod +x "$temp_binary"
-    
+
     # Test the binary
     print_info "Testing downloaded binary..."
+    local version_info
     if ! version_info=$("$temp_binary" --version 2>&1); then
         print_error "Binary test failed. The downloaded file may be corrupted or incompatible."
         print_error "Output: $version_info"
         exit 1
     fi
-    
+
     print_info "Binary test successful: $version_info"
-    
+
     # Create target directory if it doesn't exist
     local target_dir="$HOME/.local/bin"
     mkdir -p "$target_dir"
-    
+
     # Move the tested binary to final location
     if ! mv "$temp_binary" "$final_path"; then
         print_error "Failed to move binary to final location"
         exit 1
     fi
-    
+
     # Clean up temp directory (trap will also handle this)
     rm -rf "$temp_dir"
-    
+
     print_info "Binary installed successfully to ${final_path}"
-    
+
     # Add to PATH if not already there
     if [[ ":$PATH:" != *":$target_dir:"* ]]; then
         print_warn "${target_dir} is not in your PATH"
@@ -271,27 +323,33 @@ download_and_test_binary() {
 
 # Display usage information
 show_usage() {
-    echo "Usage: $0 [RELEASE_TAG]"
+    echo "Usage: $0 [OPTIONS] [RELEASE_TAG]"
     echo ""
     echo "Download and install wormhole-rs binary"
     echo ""
-    echo "Arguments:"
-    echo "  RELEASE_TAG    GitHub release tag to download (default: latest)"
+    echo "Options:"
+    echo "  --download-only  Download binary to current directory without installing"
+    echo "  -h, --help       Show this help message"
     echo ""
-    echo "Environment variables:"
-    echo "  RELEASE_TAG    Alternative way to specify release tag"
+    echo "Arguments:"
+    echo "  RELEASE_TAG      GitHub release tag to download (default: latest)"
     echo ""
     echo "Examples:"
-    echo "  $0                              # Use default release tag"
-    echo "  $0 20251210172710               # Use specific release tag"
-    echo "  RELEASE_TAG=latest $0           # Use environment variable"
+    echo "  $0                              # Install latest release"
+    echo "  $0 20251210172710               # Install specific release"
+    echo "  $0 --download-only              # Download latest to current directory"
+    echo "  $0 --download-only 20251210172710  # Download specific release"
     echo ""
     echo "Supported platforms: Linux (amd64, arm64), macOS (arm64)"
 }
 
 # Main installation function
 install() {
-    print_info "Wormhole-rs installer"
+    if [ "$DOWNLOAD_ONLY" = true ]; then
+        print_info "Wormhole-rs downloader"
+    else
+        print_info "Wormhole-rs installer"
+    fi
     print_info "Release: ${RELEASE_TAG}"
     print_info "Repository: ${REPO_OWNER}/${REPO_NAME}"
 
@@ -307,21 +365,25 @@ install() {
     RELEASE_JSON=$(get_release_info "$RELEASE_TAG")
 
     if [ -z "$RELEASE_JSON" ] || echo "$RELEASE_JSON" | grep -q '"message": "Not Found"'; then
-        print_warn "Could not fetch release info, checksum verification will be skipped"
-        EXPECTED_CHECKSUM=""
-    else
-        EXPECTED_CHECKSUM=$(get_expected_checksum "$RELEASE_JSON" "$BINARY_NAME")
-        if [ -n "$EXPECTED_CHECKSUM" ]; then
-            print_info "Expected checksum: ${EXPECTED_CHECKSUM:0:16}..."
-        else
-            print_warn "No checksum found in release, verification will be skipped"
-        fi
+        print_error "Could not fetch release info from GitHub. Cannot verify binary integrity."
+        exit 1
     fi
 
-    download_and_test_binary
+    EXPECTED_CHECKSUM=$(get_expected_checksum "$RELEASE_JSON" "$BINARY_NAME")
+    if [ -z "$EXPECTED_CHECKSUM" ]; then
+        print_error "No checksum found for ${BINARY_NAME} in release. Cannot verify binary integrity."
+        exit 1
+    fi
+    print_info "Expected checksum: ${EXPECTED_CHECKSUM:0:16}..."
 
-    print_info "Installation completed successfully!"
-    print_info "You can now run 'wormhole-rs' from your terminal."
+    if [ "$DOWNLOAD_ONLY" = true ]; then
+        download_only
+        print_info "Download completed successfully!"
+    else
+        download_and_install
+        print_info "Installation completed successfully!"
+        print_info "You can now run 'wormhole-rs' from your terminal."
+    fi
 }
 
 # Check if running with proper privileges
@@ -333,15 +395,15 @@ check_privileges() {
 
 # Main execution
 main() {
-    # Handle help flags
-    if [[ "$1" == "--help" || "$1" == "-h" ]]; then
-        show_usage
-        exit 0
+    parse_args "$@"
+
+    if [ "$DOWNLOAD_ONLY" = true ]; then
+        print_info "Starting Wormhole-rs download..."
+    else
+        print_info "Starting Wormhole-rs installation..."
+        check_privileges
     fi
-    
-    print_info "Starting Wormhole-rs installation..."
-    
-    check_privileges
+
     install
 }
 
