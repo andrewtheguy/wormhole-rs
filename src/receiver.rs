@@ -67,7 +67,19 @@ pub async fn receive_file(code: &str, output_dir: Option<PathBuf>) -> Result<()>
 
     // Check if file already exists
     if output_path.exists() {
-        anyhow::bail!("File already exists: {}", output_path.display());
+        print!("⚠️  File already exists: {}. Overwrite? [y/N] ", output_path.display());
+        std::io::Write::flush(&mut std::io::stdout())?;
+        
+        let mut input = String::new();
+        std::io::stdin().read_line(&mut input)?;
+        
+        if !input.trim().eq_ignore_ascii_case("y") {
+            anyhow::bail!("Transfer cancelled - file exists");
+        }
+        
+        // Remove existing file
+        std::fs::remove_file(&output_path)
+            .context("Failed to remove existing file")?;
     }
 
     // Create temp file in same directory (ensures rename works, auto-deletes on drop)
