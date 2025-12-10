@@ -4,9 +4,9 @@ use iroh::{
     endpoint::RelayMode,
     Endpoint, Watcher,
 };
+use std::io::Write;
 use std::path::PathBuf;
-use tokio::fs::File;
-use tokio::io::AsyncWriteExt;
+use tempfile::NamedTempFile;
 
 use crate::transfer::{format_bytes, num_chunks, recv_encrypted_chunk, recv_encrypted_header};
 use crate::wormhole::parse_code;
@@ -61,21 +61,18 @@ pub async fn receive_file(code: &str, output_dir: Option<PathBuf>) -> Result<()>
 
     println!("📁 Receiving: {} ({})", header.filename, format_bytes(header.file_size));
 
-    // Determine output path
-    let output_path = match output_dir {
-        Some(dir) => dir.join(&header.filename),
-        None => PathBuf::from(&header.filename),
-    };
+    // Determine output directory and final path
+    let output_dir = output_dir.unwrap_or_else(|| PathBuf::from("."));
+    let output_path = output_dir.join(&header.filename);
 
     // Check if file already exists
     if output_path.exists() {
         anyhow::bail!("File already exists: {}", output_path.display());
     }
 
-    // Create output file
-    let mut file = File::create(&output_path)
-        .await
-        .context("Failed to create output file")?;
+    // Create temp file in same directory (ensures rename works, auto-deletes on drop)
+    let mut temp_file = NamedTempFile::new_in(&output_dir)
+        .context("Failed to create temporary file")?;
 
     // Receive chunks (starting at chunk_num 1)
     let total_chunks = num_chunks(header.file_size);
@@ -89,8 +86,8 @@ pub async fn receive_file(code: &str, output_dir: Option<PathBuf>) -> Result<()>
             .await
             .context("Failed to receive chunk")?;
 
-        file.write_all(&chunk)
-            .await
+        // Write synchronously (tempfile uses std::fs::File)
+        temp_file.write_all(&chunk)
             .context("Failed to write to file")?;
 
         chunk_num += 1;
@@ -103,9 +100,10 @@ pub async fn receive_file(code: &str, output_dir: Option<PathBuf>) -> Result<()>
         }
     }
 
-    // Ensure file is flushed
-    file.flush().await.context("Failed to flush file")?;
-    drop(file);
+    // Flush and persist temp file to final path (atomic move)
+    temp_file.flush().context("Failed to flush file")?;
+    temp_file.persist(&output_path)
+        .map_err(|e| anyhow::anyhow!("Failed to persist temp file: {}", e))?;
 
     println!("\n✅ File received successfully!");
     println!("📁 Saved to: {}", output_path.display());

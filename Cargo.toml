@@ -13,4 +13,5 @@ base64 = "0.22"
 anyhow = "1"
 postcard = "1"
 serde = { version = "1", features = ["derive"] }
+tempfile = "3"
 
