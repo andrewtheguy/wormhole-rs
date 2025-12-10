@@ -48,7 +48,7 @@ cargo build --release
 
 ### Windows
 
-Download the latest Windows binary from the [Releases](https://github.com/nicookenny/wormhole-rs/releases) page and add it to your PATH.
+Download the latest Windows binary from the [Releases](https://github.com/andrewtheguy/wormhole-rs/releases) page and add it to your PATH.
 
 ## Usage
 
