@@ -2,10 +2,18 @@
 
 # Wormhole-rs installer for Linux and Mac
 # Downloads binary from: https://github.com/andrewtheguy/wormhole-rs/releases/tag/20251210172710
+#
+# Usage: ./install.sh [RELEASE_TAG]
+# Or set RELEASE_TAG environment variable
 
 set -e
 
-RELEASE_TAG="20251210172710"
+# Default release tag (can be overridden by argument or environment variable)
+DEFAULT_RELEASE_TAG="20251210172710"
+
+# Allow override via command-line argument or environment variable
+RELEASE_TAG="${1:-${RELEASE_TAG:-$DEFAULT_RELEASE_TAG}}"
+
 REPO_OWNER="andrewtheguy"
 REPO_NAME="wormhole-rs"
 BASE_URL="https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/download/${RELEASE_TAG}"
@@ -152,6 +160,26 @@ download_and_test_binary() {
     fi
 }
 
+# Display usage information
+show_usage() {
+    echo "Usage: $0 [RELEASE_TAG]"
+    echo ""
+    echo "Download and install wormhole-rs binary"
+    echo ""
+    echo "Arguments:"
+    echo "  RELEASE_TAG    GitHub release tag to download (default: ${DEFAULT_RELEASE_TAG})"
+    echo ""
+    echo "Environment variables:"
+    echo "  RELEASE_TAG    Alternative way to specify release tag"
+    echo ""
+    echo "Examples:"
+    echo "  $0                              # Use default release tag"
+    echo "  $0 20251210172710               # Use specific release tag"
+    echo "  RELEASE_TAG=latest $0           # Use environment variable"
+    echo ""
+    echo "Supported platforms: Linux (amd64, arm64), macOS (arm64)"
+}
+
 # Main installation function
 install() {
     print_info "Wormhole-rs installer"
@@ -181,6 +209,12 @@ check_privileges() {
 
 # Main execution
 main() {
+    # Handle help flags
+    if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+        show_usage
+        exit 0
+    fi
+    
     print_info "Starting Wormhole-rs installation..."
     
     check_privileges
