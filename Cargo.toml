@@ -1,6 +1,16 @@
 [package]
-name = "testsendfile"
+name = "wormhole-rs"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
 
 [dependencies]
+iroh = "0.95.1"
+tokio = { version = "1", features = ["full"] }
+clap = { version = "4", features = ["derive"] }
+aes-gcm = "0.10"
+rand = "0.8"
+base64 = "0.22"
+anyhow = "1"
+postcard = "1"
+serde = { version = "1", features = ["derive"] }
+
