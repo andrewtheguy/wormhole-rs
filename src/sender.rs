@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use iroh::{
-    discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher},
+    discovery::{dns::DnsDiscovery, mdns::MdnsDiscovery, pkarr::PkarrPublisher},
     endpoint::RelayMode,
     Endpoint,
 };
@@ -32,11 +32,12 @@ pub async fn send_file(file_path: &Path) -> Result<()> {
     // Generate encryption key
     let key = generate_key();
 
-    // Create iroh endpoint with N0 discovery
+    // Create iroh endpoint with N0 discovery + local mDNS
     let endpoint = Endpoint::empty_builder(RelayMode::Default)
         .alpns(vec![ALPN.to_vec()])
         .discovery(PkarrPublisher::n0_dns())
         .discovery(DnsDiscovery::n0_dns())
+        .discovery(MdnsDiscovery::builder())
         .bind()
         .await
         .context("Failed to create endpoint")?;

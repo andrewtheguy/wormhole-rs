@@ -1,8 +1,8 @@
 use anyhow::{Context, Result};
 use iroh::{
-    discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher},
+    discovery::{dns::DnsDiscovery, mdns::MdnsDiscovery, pkarr::PkarrPublisher},
     endpoint::RelayMode,
-    Endpoint,
+    Endpoint, Watcher,
 };
 use std::path::PathBuf;
 use tokio::fs::File;
@@ -22,10 +22,11 @@ pub async fn receive_file(code: &str, output_dir: Option<PathBuf>) -> Result<()>
 
     println!("✅ Code valid. Connecting to sender...");
 
-    // Create iroh endpoint with N0 discovery
+    // Create iroh endpoint with N0 discovery + local mDNS
     let endpoint = Endpoint::empty_builder(RelayMode::Default)
         .discovery(PkarrPublisher::n0_dns())
         .discovery(DnsDiscovery::n0_dns())
+        .discovery(MdnsDiscovery::builder())
         .bind()
         .await
         .context("Failed to create endpoint")?;
@@ -36,7 +37,16 @@ pub async fn receive_file(code: &str, output_dir: Option<PathBuf>) -> Result<()>
         .await
         .context("Failed to connect to sender")?;
 
+    // Print connection info
+    let remote_id = conn.remote_id();
     println!("✅ Connected!");
+    println!("   📡 Remote ID: {}", remote_id);
+    
+    // Get connection type (Direct, Relay, Mixed, None)
+    if let Some(mut conn_type_watcher) = endpoint.conn_type(remote_id) {
+        let conn_type = conn_type_watcher.get();
+        println!("   🔗 Connection: {:?}", conn_type);
+    }
 
     // Accept bi-directional stream
     let (send_stream, mut recv_stream) = conn
