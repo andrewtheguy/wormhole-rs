@@ -1,0 +1,62 @@
+name: Release (Manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Tag name (leave empty for auto-generated yyyymmddhhmmss)'
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      release_tag: ${{ steps.tag.outputs.release_tag }}
+    steps:
+      - name: Generate Tag
+        id: tag
+        run: |
+          if [ -z "${{ inputs.tag_name }}" ]; then
+            echo "release_tag=$(date +'%Y%m%d%H%M%S')" >> $GITHUB_OUTPUT
+          else
+            echo "release_tag=${{ inputs.tag_name }}" >> $GITHUB_OUTPUT
+          fi
+
+  build-and-release:
+    needs: setup
+    name: Build and Release
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            suffix: amd64
+          - os: ubuntu-24.04-arm
+            suffix: arm64
+    runs-on: ${{ matrix.os }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build Release
+        run: cargo build --release
+
+      - name: Rename Binary
+        run: mv target/release/wormhole-rs target/release/wormhole-rs-linux-${{ matrix.suffix }}
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ needs.setup.outputs.release_tag }}
+          name: Release ${{ needs.setup.outputs.release_tag }}
+          prerelease: true
+          generate_release_notes: true
+          files: target/release/wormhole-rs-linux-${{ matrix.suffix }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
