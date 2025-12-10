@@ -28,21 +28,66 @@ impl FileHeader {
     }
 
     /// Deserialize header from bytes
-    pub async fn from_stream<R: AsyncReadExt + Unpin>(reader: &mut R) -> Result<Self> {
-        let mut len_buf = [0u8; 2];
-        reader.read_exact(&mut len_buf).await.context("Failed to read filename length")?;
-        let filename_len = u16::from_be_bytes(len_buf) as usize;
-
-        let mut filename_buf = vec![0u8; filename_len];
-        reader.read_exact(&mut filename_buf).await.context("Failed to read filename")?;
-        let filename = String::from_utf8(filename_buf).context("Invalid filename encoding")?;
-
-        let mut size_buf = [0u8; 8];
-        reader.read_exact(&mut size_buf).await.context("Failed to read file size")?;
-        let file_size = u64::from_be_bytes(size_buf);
-
+    pub fn from_bytes(data: &[u8]) -> Result<Self> {
+        if data.len() < 2 {
+            anyhow::bail!("Header data too short");
+        }
+        
+        let filename_len = u16::from_be_bytes([data[0], data[1]]) as usize;
+        if data.len() < 2 + filename_len + 8 {
+            anyhow::bail!("Header data truncated");
+        }
+        
+        let filename = String::from_utf8(data[2..2 + filename_len].to_vec())
+            .context("Invalid filename encoding")?;
+        
+        let size_start = 2 + filename_len;
+        let file_size = u64::from_be_bytes(
+            data[size_start..size_start + 8].try_into().unwrap()
+        );
+        
         Ok(Self { filename, file_size })
     }
+}
+
+/// Send an encrypted header over the stream (uses chunk_num 0)
+/// Format: header_len (4 bytes) || encrypted_header
+pub async fn send_encrypted_header<W: AsyncWriteExt + Unpin>(
+    writer: &mut W,
+    key: &[u8; 32],
+    header: &FileHeader,
+) -> Result<()> {
+    let header_bytes = header.to_bytes();
+    let encrypted = encrypt_chunk(key, 0, &header_bytes)?;
+    
+    // Write length prefix
+    let len = encrypted.len() as u32;
+    writer.write_all(&len.to_be_bytes()).await?;
+    
+    // Write encrypted header
+    writer.write_all(&encrypted).await?;
+    
+    Ok(())
+}
+
+/// Receive and decrypt a header from the stream (uses chunk_num 0)
+pub async fn recv_encrypted_header<R: AsyncReadExt + Unpin>(
+    reader: &mut R,
+    key: &[u8; 32],
+) -> Result<FileHeader> {
+    // Read length prefix
+    let mut len_buf = [0u8; 4];
+    reader.read_exact(&mut len_buf).await.context("Failed to read header length")?;
+    let len = u32::from_be_bytes(len_buf) as usize;
+    
+    // Read encrypted header
+    let mut encrypted = vec![0u8; len];
+    reader.read_exact(&mut encrypted).await.context("Failed to read header data")?;
+    
+    // Decrypt
+    let decrypted = decrypt_chunk(key, 0, &encrypted)?;
+    
+    FileHeader::from_bytes(&decrypted)
 }
 
 /// Send an encrypted chunk over the stream

@@ -9,7 +9,7 @@ use tokio::fs::File;
 use tokio::io::AsyncReadExt;
 
 use crate::crypto::{generate_key, CHUNK_SIZE};
-use crate::transfer::{format_bytes, num_chunks, send_encrypted_chunk, FileHeader};
+use crate::transfer::{format_bytes, num_chunks, send_encrypted_chunk, send_encrypted_header, FileHeader};
 use crate::wormhole::generate_code;
 
 const ALPN: &[u8] = b"wormhole-transfer/1";
@@ -72,18 +72,17 @@ pub async fn send_file(file_path: &Path) -> Result<()> {
         .await
         .context("Failed to open stream")?;
 
-    // Send file header
+    // Send encrypted file header (uses chunk_num 0)
     let header = FileHeader::new(filename.clone(), file_size);
-    send_stream
-        .write_all(&header.to_bytes())
+    send_encrypted_header(&mut send_stream, &key, &header)
         .await
         .context("Failed to send header")?;
 
-    // Open file and send chunks
+    // Open file and send chunks (starting at chunk_num 1)
     let mut file = File::open(file_path).await.context("Failed to open file")?;
     let total_chunks = num_chunks(file_size);
     let mut buffer = vec![0u8; CHUNK_SIZE];
-    let mut chunk_num = 0u64;
+    let mut chunk_num = 1u64;  // Start at 1, header used 0
     let mut bytes_sent = 0u64;
 
     println!("📤 Sending {} chunks...", total_chunks);

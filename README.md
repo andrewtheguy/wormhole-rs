@@ -98,21 +98,23 @@ Each 16KB chunk uses a unique nonce derived from the chunk number, preventing no
 base64( postcard( [32-byte AES key] + [EndpointAddr] ) )
 ```
 
-### File Header
+### Encrypted Header (chunk_num = 0)
 ```
-┌──────────────┬────────────────────────┬─────────────────┐
-│ filename_len │      filename          │    file_size    │
-│   (2 bytes)  │    (variable)          │    (8 bytes)    │
-└──────────────┴────────────────────────┴─────────────────┘
+┌──────────────┬─────────────────────────────────────────────────────┐
+│  header_len  │              encrypted header data                  │
+│  (4 bytes)   │  nonce(12) + encrypted(filename_len + name + size)  │
+└──────────────┴─────────────────────────────────────────────────────┘
 ```
 
-### Encrypted Chunk
+### Encrypted Chunk (chunk_num = 1, 2, 3...)
 ```
 ┌──────────────┬──────────┬─────────────────┬─────────────┐
 │  chunk_len   │  nonce   │   ciphertext    │   GCM tag   │
 │  (4 bytes)   │(12 bytes)│    (≤16KB)      │  (16 bytes) │
 └──────────────┴──────────┴─────────────────┴─────────────┘
 ```
+
+> **Note:** All data sent over the network is encrypted. The relay server only sees encrypted blobs.
 
 ## Project Structure
 

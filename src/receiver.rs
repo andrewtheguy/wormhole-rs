@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
 
-use crate::transfer::{format_bytes, num_chunks, recv_encrypted_chunk, FileHeader};
+use crate::transfer::{format_bytes, num_chunks, recv_encrypted_chunk, recv_encrypted_header};
 use crate::wormhole::parse_code;
 
 const ALPN: &[u8] = b"wormhole-transfer/1";
@@ -44,8 +44,8 @@ pub async fn receive_file(code: &str, output_dir: Option<PathBuf>) -> Result<()>
         .await
         .context("Failed to accept stream")?;
 
-    // Read file header
-    let header = FileHeader::from_stream(&mut recv_stream)
+    // Read encrypted file header (uses chunk_num 0)
+    let header = recv_encrypted_header(&mut recv_stream, &key)
         .await
         .context("Failed to read file header")?;
 
@@ -67,9 +67,9 @@ pub async fn receive_file(code: &str, output_dir: Option<PathBuf>) -> Result<()>
         .await
         .context("Failed to create output file")?;
 
-    // Receive chunks
+    // Receive chunks (starting at chunk_num 1)
     let total_chunks = num_chunks(header.file_size);
-    let mut chunk_num = 0u64;
+    let mut chunk_num = 1u64;  // Start at 1, header used 0
     let mut bytes_received = 0u64;
 
     println!("📥 Receiving {} chunks...", total_chunks);
