@@ -9,6 +9,7 @@ A secure peer-to-peer file transfer tool using [iroh](https://github.com/n0-comp
 - 🏠 **Local discovery** - mDNS for same-network transfers without relay
 - 📡 **Connection info** - Shows if transfer is Direct, Relay, or Mixed
 - 📊 **Progress display** - Real-time transfer progress
+- 💻 **Cross-platform** - Single binary with no dependencies, supports macOS, Linux, and Windows
 
 ## Installation
 
@@ -44,6 +45,10 @@ The installer will:
 ```bash
 cargo build --release
 ```
+
+### Windows
+
+Download the latest Windows binary from the [Releases](https://github.com/nicookenny/wormhole-rs/releases) page and add it to your PATH.
 
 ## Usage
 
