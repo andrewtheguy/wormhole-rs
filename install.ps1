@@ -11,7 +11,10 @@ param(
     [string]$ReleaseTag,
     
     [Parameter()]
-    [switch]$Admin
+    [switch]$Admin,
+    
+    [Parameter()]
+    [switch]$DownloadOnly
 )
 
 $ErrorActionPreference = "Stop"
@@ -170,7 +173,71 @@ function Get-BinaryName {
     return "wormhole-rs-windows-amd64.exe"
 }
 
-# Download binary to temporary location and test it
+# Download binary and verify checksum
+function Download-Binary {
+    param(
+        [string]$Url,
+        [string]$OutputPath,
+        [string]$ExpectedChecksum
+    )
+
+    Print-Info "Downloading from $Url"
+
+    # Download the binary
+    try {
+        Invoke-WebRequest -Uri $Url -OutFile $OutputPath -UseBasicParsing
+    }
+    catch {
+        Print-Error "Failed to download binary: $_"
+        exit 1
+    }
+
+    # Verify checksum
+    if (-not $ExpectedChecksum) {
+        Print-Error "No checksum available. Aborting."
+        Remove-Item -Path $OutputPath -Force -ErrorAction SilentlyContinue
+        exit 1
+    }
+    if (-not (Test-Checksum -FilePath $OutputPath -ExpectedChecksum $ExpectedChecksum)) {
+        Print-Error "Binary integrity check failed. Aborting."
+        Remove-Item -Path $OutputPath -Force -ErrorAction SilentlyContinue
+        exit 1
+    }
+}
+
+# Download only - save to current directory
+function Download-Only {
+    param(
+        [string]$BaseUrl,
+        [string]$BinaryName,
+        [string]$ExpectedChecksum
+    )
+
+    $url = "$BaseUrl/$BinaryName"
+    $outputFile = Join-Path (Get-Location) $BinaryName
+
+    Download-Binary -Url $url -OutputPath $outputFile -ExpectedChecksum $ExpectedChecksum
+
+    # Test the binary
+    Print-Info "Testing downloaded binary..."
+    try {
+        $versionInfo = & $outputFile --version 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            throw "Binary returned non-zero exit code"
+        }
+        Print-Info "Binary test successful: $versionInfo"
+    }
+    catch {
+        Print-Error "Binary test failed. The downloaded file may be corrupted or incompatible."
+        Print-Error "Output: $_"
+        Remove-Item -Path $outputFile -Force -ErrorAction SilentlyContinue
+        exit 1
+    }
+
+    Print-Info "Binary saved to: $outputFile"
+}
+
+# Download binary to temporary location, test it, and install
 function Install-Binary {
     param(
         [string]$BaseUrl,
@@ -188,27 +255,7 @@ function Install-Binary {
         # Create temp directory
         New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
 
-        Print-Info "Downloading $BinaryName from $url"
-
-        # Download the binary
-        try {
-            Invoke-WebRequest -Uri $url -OutFile $tempBinary -UseBasicParsing
-        }
-        catch {
-            Print-Error "Failed to download binary: $_"
-            exit 1
-        }
-
-        # Verify checksum
-        if ($ExpectedChecksum) {
-            if (-not (Test-Checksum -FilePath $tempBinary -ExpectedChecksum $ExpectedChecksum)) {
-                Print-Error "Binary integrity check failed. Aborting installation."
-                exit 1
-            }
-        }
-        else {
-            Print-Warn "Checksum not available, skipping verification"
-        }
+        Download-Binary -Url $url -OutputPath $tempBinary -ExpectedChecksum $ExpectedChecksum
 
         # Test the binary
         Print-Info "Testing downloaded binary..."
@@ -272,20 +319,26 @@ function Install-Binary {
 # Display usage information
 function Show-Usage {
     Write-Host @"
-Usage: .\install.ps1 [RELEASE_TAG] [-Admin]
+Usage: .\install.ps1 [OPTIONS] [RELEASE_TAG]
 
 Download and install wormhole-rs binary
 
+Options:
+  -DownloadOnly  Download binary to current directory without installing
+  -Admin         Allow installation with administrator privileges (not recommended)
+  -h, --help     Show this help message
+
 Arguments:
   RELEASE_TAG    GitHub release tag to download (default: latest)
-  -Admin         Allow installation with administrator privileges (not recommended)
 
 Environment variables:
   `$env:RELEASE_TAG    Alternative way to specify release tag
 
 Examples:
-  .\install.ps1                              # Use latest release tag
-  .\install.ps1 20251210172710               # Use specific release tag
+  .\install.ps1                              # Install latest release
+  .\install.ps1 20251210172710               # Install specific release
+  .\install.ps1 -DownloadOnly                # Download latest to current directory
+  .\install.ps1 -DownloadOnly 20251210172710 # Download specific release
   .\install.ps1 -Admin                       # Allow admin installation (not recommended)
   `$env:RELEASE_TAG='latest'; .\install.ps1  # Use environment variable
 
@@ -322,9 +375,17 @@ function Test-AdminPrivileges {
 
 # Main installation function
 function Start-Installation {
-    param([string]$Tag)
+    param(
+        [string]$Tag,
+        [bool]$DownloadOnly
+    )
 
-    Print-Info "Wormhole-rs installer"
+    if ($DownloadOnly) {
+        Print-Info "Wormhole-rs downloader"
+    }
+    else {
+        Print-Info "Wormhole-rs installer"
+    }
     Print-Info "Release: $Tag"
     Print-Info "Repository: $REPO_OWNER/$REPO_NAME"
 
@@ -340,36 +401,45 @@ function Start-Installation {
     Print-Info "Fetching release information..."
     $releaseInfo = Get-ReleaseInfo -Tag $Tag
 
-    $expectedChecksum = $null
-    if ($releaseInfo) {
-        $expectedChecksum = Get-ExpectedChecksum -ReleaseInfo $releaseInfo -BinaryName $binaryName
-        if ($expectedChecksum) {
-            $shortHash = $expectedChecksum.Substring(0, 16)
-            Print-Info "Expected checksum: $shortHash..."
-        }
-        else {
-            Print-Warn "No checksum found in release, verification will be skipped"
-        }
+    if (-not $releaseInfo) {
+        Print-Error "Could not fetch release info from GitHub. Cannot verify binary integrity."
+        exit 1
+    }
+
+    $expectedChecksum = Get-ExpectedChecksum -ReleaseInfo $releaseInfo -BinaryName $binaryName
+    if (-not $expectedChecksum) {
+        Print-Error "No checksum found for $binaryName in release. Cannot verify binary integrity."
+        exit 1
+    }
+    $shortHash = $expectedChecksum.Substring(0, 16)
+    Print-Info "Expected checksum: $shortHash..."
+
+    if ($DownloadOnly) {
+        Download-Only -BaseUrl $baseUrl -BinaryName $binaryName -ExpectedChecksum $expectedChecksum
+        Print-Info "Download completed successfully!"
     }
     else {
-        Print-Warn "Could not fetch release info, checksum verification will be skipped"
+        Install-Binary -BaseUrl $baseUrl -BinaryName $binaryName -ExpectedChecksum $expectedChecksum
+        Print-Info "Installation completed successfully!"
+        Print-Info "You can now run 'wormhole-rs' from your terminal."
     }
-
-    Install-Binary -BaseUrl $baseUrl -BinaryName $binaryName -ExpectedChecksum $expectedChecksum
-
-    Print-Info "Installation completed successfully!"
-    Print-Info "You can now run 'wormhole-rs' from your terminal."
 }
 
 # Main execution
 function Main {
-    # Handle help flags
-    if ($args -contains "--help" -or $args -contains "-h" -or $args -contains "-?" -or $args -contains "/?" -or $args -contains "/h") {
+    # Handle help flags - check both parameter and ReleaseTag value
+    if ($args -contains "--help" -or $args -contains "-h" -or $args -contains "-?" -or $args -contains "/?" -or $args -contains "/h" -or
+        $ReleaseTag -eq "--help" -or $ReleaseTag -eq "-h" -or $ReleaseTag -eq "-?" -or $ReleaseTag -eq "/?" -or $ReleaseTag -eq "/h") {
         Show-Usage
         exit 0
     }
 
-    Print-Info "Starting Wormhole-rs installation..."
+    if ($DownloadOnly) {
+        Print-Info "Starting Wormhole-rs download..."
+    }
+    else {
+        Print-Info "Starting Wormhole-rs installation..."
+    }
 
     # Determine release tag
     $tag = $ReleaseTag
@@ -381,8 +451,11 @@ function Main {
         $tag = Get-LatestRelease
     }
 
-    Test-AdminPrivileges -AllowAdmin:$Admin
-    Start-Installation -Tag $tag
+    if (-not $DownloadOnly) {
+        Test-AdminPrivileges -AllowAdmin:$Admin
+    }
+    
+    Start-Installation -Tag $tag -DownloadOnly:$DownloadOnly
 }
 
 # Run main function
