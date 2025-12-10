@@ -57,6 +57,72 @@ get_latest_release() {
     echo "$latest_tag"
 }
 
+# Fetch full release info (including asset checksums) from GitHub API
+get_release_info() {
+    local tag="$1"
+    local api_url="https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/tags/${tag}"
+
+    if command -v curl >/dev/null 2>&1; then
+        curl -s "$api_url"
+    elif command -v wget >/dev/null 2>&1; then
+        wget -qO- "$api_url"
+    else
+        print_error "Neither curl nor wget is available."
+        return 1
+    fi
+}
+
+# Extract SHA-256 checksum from release JSON for a specific binary
+get_expected_checksum() {
+    local release_json="$1"
+    local binary_name="$2"
+
+    # Extract sha256 hash for matching asset
+    # The digest field appears ~35 lines after the name field due to nested uploader object
+    echo "$release_json" | grep -A40 "\"name\": \"${binary_name}\"" | \
+        grep '"digest"' | head -1 | grep -o 'sha256:[a-f0-9]*' | cut -d: -f2
+}
+
+# Compute SHA-256 checksum of a file (cross-platform)
+compute_checksum() {
+    local file="$1"
+
+    if command -v sha256sum >/dev/null 2>&1; then
+        # Linux
+        sha256sum "$file" | cut -d' ' -f1
+    elif command -v shasum >/dev/null 2>&1; then
+        # macOS
+        shasum -a 256 "$file" | cut -d' ' -f1
+    else
+        print_error "No SHA-256 tool available (need sha256sum or shasum)"
+        return 1
+    fi
+}
+
+# Verify file checksum against expected value
+verify_checksum() {
+    local file="$1"
+    local expected="$2"
+
+    print_info "Verifying checksum..."
+    local actual
+    actual=$(compute_checksum "$file")
+
+    if [ $? -ne 0 ]; then
+        return 1
+    fi
+
+    if [ "$expected" = "$actual" ]; then
+        print_info "Checksum verified: ${actual:0:16}..."
+        return 0
+    else
+        print_error "Checksum verification FAILED!"
+        print_error "Expected: $expected"
+        print_error "Actual:   $actual"
+        return 1
+    fi
+}
+
 # Allow override via command-line argument or environment variable
 # If not provided, fetch the latest release tag from GitHub
 if [ -n "$1" ]; then
@@ -156,7 +222,17 @@ download_and_test_binary() {
         print_error "Neither curl nor wget is available. Please install one of them."
         exit 1
     fi
-    
+
+    # Verify checksum before making executable
+    if [ -n "$EXPECTED_CHECKSUM" ]; then
+        if ! verify_checksum "$temp_binary" "$EXPECTED_CHECKSUM"; then
+            print_error "Binary integrity check failed. Aborting installation."
+            exit 1
+        fi
+    else
+        print_warn "Checksum not available, skipping verification"
+    fi
+
     # Make executable
     chmod +x "$temp_binary"
     
@@ -218,17 +294,32 @@ install() {
     print_info "Wormhole-rs installer"
     print_info "Release: ${RELEASE_TAG}"
     print_info "Repository: ${REPO_OWNER}/${REPO_NAME}"
-    print_info "Target: ${OS}-${ARCH}"
-    
+
     detect_os
     detect_arch
     get_binary_name
-    
+
     print_info "Platform detected: ${OS}-${ARCH}"
     print_info "Binary name: ${BINARY_NAME}"
-    
+
+    # Fetch release info for checksum verification
+    print_info "Fetching release information..."
+    RELEASE_JSON=$(get_release_info "$RELEASE_TAG")
+
+    if [ -z "$RELEASE_JSON" ] || echo "$RELEASE_JSON" | grep -q '"message": "Not Found"'; then
+        print_warn "Could not fetch release info, checksum verification will be skipped"
+        EXPECTED_CHECKSUM=""
+    else
+        EXPECTED_CHECKSUM=$(get_expected_checksum "$RELEASE_JSON" "$BINARY_NAME")
+        if [ -n "$EXPECTED_CHECKSUM" ]; then
+            print_info "Expected checksum: ${EXPECTED_CHECKSUM:0:16}..."
+        else
+            print_warn "No checksum found in release, verification will be skipped"
+        fi
+    fi
+
     download_and_test_binary
-    
+
     print_info "Installation completed successfully!"
     print_info "You can now run 'wormhole-rs' from your terminal."
 }
