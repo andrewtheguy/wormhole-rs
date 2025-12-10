@@ -61,14 +61,35 @@ Optionally specify an output directory:
     │                                    │                                    │
 ```
 
-## Security
+## Security & Encryption Model
+
+### Key Exchange (Out-of-Band)
+
+The 32-byte AES-256 encryption key is:
+1. **Generated randomly** by the sender
+2. **Embedded in the wormhole code** (base64-encoded along with endpoint address)
+3. **Shared out-of-band** - you manually share the code with the receiver
+
+**The iroh relay server never sees the encryption key.**
+
+### What Each Party Sees
+
+| Party | Sees |
+|-------|------|
+| Sender | Plaintext file, encryption key |
+| Receiver | Encryption key (from wormhole code), decrypted file |
+| Relay Server | Only encrypted blobs + routing info |
+
+### Encryption Layers
 
 | Layer | Protection |
 |-------|------------|
-| Transport | iroh QUIC/TLS encryption |
-| Application | AES-256-GCM authenticated encryption |
-| Key Exchange | Wormhole code contains key + endpoint address |
-| Nonce | Chunk number as counter (unique per chunk) |
+| AES-256-GCM | File content encryption (application layer) |
+| iroh QUIC/TLS | Transport encryption (network layer) |
+
+### Nonce Handling
+
+Each 16KB chunk uses a unique nonce derived from the chunk number, preventing nonce reuse attacks.
 
 ## Project Structure
 

@@ -59,6 +59,31 @@ Wire protocol implementation:
 
 ## Security Model
 
-- **Dual encryption**: AES-256-GCM on top of iroh's QUIC/TLS
-- **Unique nonces**: Chunk number used as counter
-- **Authenticated encryption**: GCM tag ensures integrity
+### Out-of-Band Key Exchange
+
+The encryption key is **never transmitted over the network**:
+
+1. Sender generates a random 32-byte AES-256 key
+2. Key is embedded in the wormhole code (base64)
+3. User manually shares the code with receiver (copy/paste, voice, etc.)
+4. Receiver extracts key from code and decrypts the file
+
+### What the Relay Server Sees
+
+The iroh relay only handles routing - it sees:
+- Encrypted chunk data (AES-256-GCM ciphertext)
+- Endpoint addresses for routing
+- **NOT the encryption key** (only in wormhole code)
+
+### Dual Encryption
+
+| Layer | Algorithm | Purpose |
+|-------|-----------|---------|
+| Application | AES-256-GCM | End-to-end file encryption |
+| Transport | QUIC/TLS | Network encryption |
+
+### Nonce Strategy
+
+- Each chunk uses nonce derived from chunk number (counter mode)
+- Prevents nonce reuse across chunks
+- Receiver verifies nonce matches expected chunk number
