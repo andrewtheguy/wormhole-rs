@@ -2,7 +2,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use std::io::{self, Write};
 use std::path::PathBuf;
-use wormhole_rs::{folder_receiver, folder_sender, receiver, sender, wormhole};
+use wormhole_rs::{folder_receiver, folder_sender, nostr_protocol, nostr_receiver, nostr_sender, receiver, sender, wormhole};
 
 #[derive(Parser)]
 #[command(name = "wormhole-rs")]
@@ -45,6 +45,29 @@ enum Commands {
     },
     /// Receive a folder (extracts tar archive)
     ReceiveFolder {
+        /// Wormhole code from sender (will prompt if not provided)
+        #[arg(short, long)]
+        code: Option<String>,
+
+        /// Output directory (default: current directory)
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
+    /// Send a file via Nostr relays (max 512KB)
+    SendNostr {
+        /// Path to the file to send
+        file: PathBuf,
+
+        /// Custom Nostr relay URLs (can be specified multiple times)
+        #[arg(long = "nostr-relay")]
+        relays: Vec<String>,
+
+        /// Use default hardcoded relays instead of fetching from nostr.watch
+        #[arg(long)]
+        use_default_relays: bool,
+    },
+    /// Receive a file via Nostr relays
+    ReceiveNostr {
         /// Wormhole code from sender (will prompt if not provided)
         #[arg(short, long)]
         code: Option<String>,
@@ -118,6 +141,52 @@ async fn main() -> Result<()> {
             };
             wormhole::validate_code_format(&code)?;
             folder_receiver::receive_folder(&code, output).await?;
+        }
+        Commands::SendNostr { file, relays, use_default_relays } => {
+            if !file.exists() {
+                anyhow::bail!("File not found: {}", file.display());
+            }
+            if !file.is_file() {
+                anyhow::bail!("Not a file: {}", file.display());
+            }
+            // Enforce file size limit for Nostr transfers
+            let metadata = std::fs::metadata(&file)?;
+            let file_size = metadata.len();
+            if file_size > nostr_protocol::MAX_NOSTR_FILE_SIZE {
+                anyhow::bail!(
+                    "File too large for Nostr transfer (max 512KB): {} bytes\n\
+                     Use regular 'send' command for larger files via iroh.",
+                    file_size
+                );
+            }
+            let custom_relays = if relays.is_empty() {
+                None
+            } else {
+                Some(relays)
+            };
+            nostr_sender::send_file_nostr(&file, custom_relays, use_default_relays).await?;
+        }
+        Commands::ReceiveNostr {
+            code,
+            output,
+        } => {
+            if let Some(ref dir) = output {
+                if !dir.is_dir() {
+                    anyhow::bail!("Output directory does not exist: {}", dir.display());
+                }
+            }
+            let code = match code {
+                Some(c) => c,
+                None => {
+                    print!("Enter wormhole code: ");
+                    io::stdout().flush()?;
+                    let mut input = String::new();
+                    io::stdin().read_line(&mut input)?;
+                    input.trim().to_string()
+                }
+            };
+            wormhole::validate_code_format(&code)?;
+            nostr_receiver::receive_file_nostr(&code, output).await?;
         }
     }
 

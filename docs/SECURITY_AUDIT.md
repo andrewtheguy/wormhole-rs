@@ -229,6 +229,8 @@ Security: Double encryption (AES-256-GCM + QUIC/TLS 1.3)
 
 ## Recommendations
 
+### iroh Mode
+
 1. **For standard use**: Use default mode (no `--extra-encrypt`)
    - Simpler, shorter codes
    - iroh's encryption is sufficient
@@ -240,6 +242,21 @@ Security: Double encryption (AES-256-GCM + QUIC/TLS 1.3)
 3. **For future insecure transports**: Always use `--extra-encrypt`
    - Required if adding TURN/WebRTC support
    - Required if using untrusted relay servers
+
+### Nostr Mode
+
+**AES-256-GCM encryption is mandatory** for all Nostr transfers. There is no separate security audit needed for Nostr mode because:
+
+1. **Same encryption as `--extra-encrypt`**: Uses identical AES-256-GCM implementation from `crypto.rs`
+2. **No transport-layer encryption**: Unlike iroh's QUIC/TLS, Nostr relays can read all event content
+3. **Application-layer encryption required**: All chunks are encrypted before being published to relays
+4. **Security model**:
+   - Nostr relays see only encrypted chunks (base64-encoded ciphertext)
+   - Only sender and receiver have the encryption key
+   - Ephemeral keypairs used (not linked to user identity)
+   - Events are ephemeral (kind 20000-29999 range)
+
+The encryption implementation is the same code audited for iroh mode's `--extra-encrypt` feature, just applied mandatorily for all Nostr transfers.
 
 ## References
 

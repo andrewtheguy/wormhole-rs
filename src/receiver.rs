@@ -27,8 +27,15 @@ pub async fn receive_file(code: &str, output_dir: Option<PathBuf>) -> Result<()>
         println!("🔐 Extra AES-256-GCM encryption detected");
     }
 
-    let key = token.key;
-    let addr = token.addr;
+    let key = token
+        .key
+        .as_ref()
+        .map(|k| crate::wormhole::decode_key(k))
+        .transpose()
+        .context("Failed to decode encryption key")?;
+    let addr = token
+        .addr
+        .context("No iroh endpoint address in wormhole code")?;
 
     println!("✅ Code valid. Connecting to sender...");
 

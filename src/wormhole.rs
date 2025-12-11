@@ -3,10 +3,13 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use iroh::EndpointAddr;
 
 /// Current token format version
-pub const CURRENT_VERSION: u8 = 1;
+pub const CURRENT_VERSION: u8 = 2;
 
 /// Protocol identifier for iroh transport
 pub const PROTOCOL_IROH: &str = "iroh";
+
+/// Protocol identifier for nostr transport
+pub const PROTOCOL_NOSTR: &str = "nostr";
 
 /// Wormhole token containing all transfer metadata
 /// This is a self-describing format that includes version, protocol, and encryption info
@@ -14,14 +17,30 @@ pub const PROTOCOL_IROH: &str = "iroh";
 pub struct WormholeToken {
     /// Token format version (for future compatibility checks)
     pub version: u8,
-    /// Protocol identifier (e.g., "iroh")
+    /// Protocol identifier (e.g., "iroh" or "nostr")
     pub protocol: String,
     /// Whether extra AES-256-GCM encryption layer is used
     pub extra_encrypt: bool,
-    /// AES-256-GCM key (only present if extra_encrypt is true)
-    pub key: Option<[u8; 32]>,
-    /// Endpoint address for connection
-    pub addr: EndpointAddr,
+    /// AES-256-GCM key as base64 string (only present if extra_encrypt is true)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub key: Option<String>,
+    /// Endpoint address for connection (None for nostr-only transfers)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub addr: Option<EndpointAddr>,
+
+    // Version 2 fields (Nostr-specific):
+    /// Sender's ephemeral Nostr public key (hex)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub nostr_sender_pubkey: Option<String>,
+    /// List of Nostr relay URLs to use for transfer (sender and receiver must use same relays)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub nostr_relays: Option<Vec<String>>,
+    /// Unique transfer session ID
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub nostr_transfer_id: Option<String>,
+    /// Original filename (for Nostr transfers)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub nostr_filename: Option<String>,
 }
 
 /// Generate a wormhole code from endpoint address
@@ -44,8 +63,46 @@ pub fn generate_code(
         version: CURRENT_VERSION,
         protocol: PROTOCOL_IROH.to_string(),
         extra_encrypt,
-        key: key.copied(),
-        addr: addr.clone(),
+        key: key.map(|k| URL_SAFE_NO_PAD.encode(k)),
+        addr: Some(addr.clone()),
+        nostr_sender_pubkey: None,
+        nostr_relays: None,
+        nostr_transfer_id: None,
+        nostr_filename: None,
+    };
+
+    let serialized =
+        serde_json::to_vec(&token).context("Failed to serialize wormhole token")?;
+
+    Ok(URL_SAFE_NO_PAD.encode(&serialized))
+}
+
+/// Generate a wormhole code for Nostr transfer
+/// Format: base64url(json(WormholeToken))
+///
+/// # Arguments
+/// * `key` - The AES-256-GCM encryption key (always required for Nostr)
+/// * `sender_pubkey` - Sender's ephemeral Nostr public key (hex)
+/// * `transfer_id` - Unique transfer session ID
+/// * `relays` - List of Nostr relay URLs (sender and receiver must use same relays)
+/// * `filename` - Original filename
+pub fn generate_nostr_code(
+    key: &[u8; 32],
+    sender_pubkey: String,
+    transfer_id: String,
+    relays: Vec<String>,
+    filename: String,
+) -> Result<String> {
+    let token = WormholeToken {
+        version: CURRENT_VERSION,
+        protocol: PROTOCOL_NOSTR.to_string(),
+        extra_encrypt: true, // Always true for Nostr
+        key: Some(URL_SAFE_NO_PAD.encode(key)),
+        addr: None,
+        nostr_sender_pubkey: Some(sender_pubkey),
+        nostr_relays: Some(relays),
+        nostr_transfer_id: Some(transfer_id),
+        nostr_filename: Some(filename),
     };
 
     let serialized =
@@ -107,13 +164,24 @@ pub fn parse_code(code: &str) -> Result<WormholeToken> {
         "Invalid wormhole code: failed to parse token. Make sure the code is correct.",
     )?;
 
-    // Validate version
-    if token.version != CURRENT_VERSION {
+    // Validate version (support both v1 and v2)
+    if token.version != 1 && token.version != 2 {
         anyhow::bail!(
-            "Unsupported token version {}. This receiver supports version {}.",
-            token.version,
-            CURRENT_VERSION
+            "Unsupported token version {}. This receiver supports versions 1 and 2.",
+            token.version
         );
+    }
+
+    // Validate protocol for v2 tokens
+    if token.version == 2 {
+        if token.protocol != PROTOCOL_IROH && token.protocol != PROTOCOL_NOSTR {
+            anyhow::bail!(
+                "Invalid protocol '{}' in v2 token. Supported protocols: '{}', '{}'",
+                token.protocol,
+                PROTOCOL_IROH,
+                PROTOCOL_NOSTR
+            );
+        }
     }
 
     // Validate key consistency
@@ -121,5 +189,62 @@ pub fn parse_code(code: &str) -> Result<WormholeToken> {
         anyhow::bail!("Invalid token: extra_encrypt is true but no key provided");
     }
 
+    // Validate key format if present
+    if let Some(ref key_str) = token.key {
+        let key_bytes = URL_SAFE_NO_PAD
+            .decode(key_str)
+            .context("Invalid key format: not valid base64")?;
+        if key_bytes.len() != 32 {
+            anyhow::bail!(
+                "Invalid key length: expected 32 bytes, got {}",
+                key_bytes.len()
+            );
+        }
+    }
+
+    // For version 1 tokens, ensure addr is present (backward compatibility)
+    if token.version == 1 && token.addr.is_none() {
+        anyhow::bail!("Invalid v1 token: missing endpoint address");
+    }
+
+    // For version 2 with iroh protocol, ensure addr is present
+    if token.version == 2 && token.protocol == PROTOCOL_IROH && token.addr.is_none() {
+        anyhow::bail!("Invalid v2 iroh token: missing endpoint address");
+    }
+
+    // For version 2 with nostr protocol, ensure nostr fields are present
+    if token.version == 2 && token.protocol == PROTOCOL_NOSTR {
+        if token.nostr_sender_pubkey.is_none() {
+            anyhow::bail!("Invalid v2 nostr token: missing sender pubkey");
+        }
+        if token.nostr_relays.is_none() {
+            anyhow::bail!("Invalid v2 nostr token: missing relay list");
+        }
+        if token.nostr_transfer_id.is_none() {
+            anyhow::bail!("Invalid v2 nostr token: missing transfer ID");
+        }
+        if token.key.is_none() {
+            anyhow::bail!("Invalid v2 nostr token: encryption key required for Nostr transfers");
+        }
+    }
+
     Ok(token)
+}
+
+/// Helper function to decode a base64 key from WormholeToken into a 32-byte array
+pub fn decode_key(key_str: &str) -> Result<[u8; 32]> {
+    let key_bytes = URL_SAFE_NO_PAD
+        .decode(key_str)
+        .context("Failed to decode base64 key")?;
+
+    if key_bytes.len() != 32 {
+        anyhow::bail!(
+            "Invalid key length: expected 32 bytes, got {}",
+            key_bytes.len()
+        );
+    }
+
+    let mut key = [0u8; 32];
+    key.copy_from_slice(&key_bytes);
+    Ok(key)
 }

@@ -1,14 +1,16 @@
 # wormhole-rs
 
-A secure peer-to-peer file transfer tool using [iroh](https://github.com/n0-computer/iroh) for direct connectivity and AES-256-GCM end-to-end encryption.
+A secure peer-to-peer file transfer tool with two transport modes:
+- **iroh mode** - Direct P2P transfers using [iroh](https://github.com/n0-computer/iroh) with QUIC/TLS
+- **Nostr mode** - Small file transfers (≤512KB) via [Nostr relays](https://nostr.com) with mandatory AES-256-GCM encryption
 
 ## Features
 
 - 🔐 **End-to-end encryption** - AES-256-GCM with unique nonces per 16KB chunk
-- 🌐 **Peer-to-peer** - Direct connections when possible, relay fallback when needed
-- 🏠 **Local discovery** - mDNS for same-network transfers without relay
-- 📡 **Connection info** - Shows if transfer is Direct, Relay, or Mixed
-- 📊 **Progress display** - Real-time transfer progress
+- 🌐 **Dual transport modes** - Choose between iroh P2P or Nostr relays
+- 🏠 **Local discovery** - mDNS for same-network transfers (iroh mode)
+- 📡 **Connection info** - Shows if transfer is Direct, Relay, or Mixed (iroh mode)
+- 📊 **Progress display** - Real-time transfer progress for both modes
 - 💻 **Cross-platform** - Single binary with no dependencies, supports macOS, Linux, and Windows
 
 ## Installation
@@ -75,7 +77,9 @@ cargo build --release
 
 ## Usage
 
-### Send a file
+### iroh Mode (Default, Large Files)
+
+**Send a file:**
 
 ```bash
 wormhole-rs send /path/to/file
@@ -83,7 +87,7 @@ wormhole-rs send /path/to/file
 
 This will display a wormhole code to share with the receiver.
 
-### Receive a file
+**Receive a file:**
 
 ```bash
 wormhole-rs receive
@@ -101,9 +105,53 @@ Optionally specify an output directory:
 wormhole-rs receive --output /path/to/dir
 ```
 
+### Nostr Mode (Small Files ≤512KB)
+
+Use Nostr mode when iroh is unavailable or blocked. Nostr transfers are always encrypted with AES-256-GCM.
+
+**Send a file:**
+
+```bash
+wormhole-rs send-nostr /path/to/file
+```
+
+The tool will automatically fetch the best relays from [nostr.watch](https://nostr.watch) or use hardcoded defaults if the API fails.
+
+**Use custom relays:**
+
+```bash
+wormhole-rs send-nostr /path/to/file --nostr-relay wss://relay.damus.io --nostr-relay wss://nos.lol
+```
+
+**Use default hardcoded relays:**
+
+```bash
+wormhole-rs send-nostr /path/to/file --use-default-relays
+```
+
+**Receive a file:**
+
+```bash
+wormhole-rs receive-nostr
+```
+
+You will be prompted to enter the wormhole code. The relay list is embedded in the code - sender and receiver must use the same relays.
+
+**With code:**
+
+```bash
+wormhole-rs receive-nostr --code <WORMHOLE_CODE>
+```
+
+**With output directory:**
+
+```bash
+wormhole-rs receive-nostr --output /path/to/dir
+```
+
 ## How It Works
 
-### Connection Flow
+### iroh Mode - Connection Flow
 
 ```
                     ┌──────────┐
@@ -119,8 +167,6 @@ wormhole-rs receive --output /path/to/dir
                  (if possible)
 ```
 
-### Data Transfer
-
 **Direct connection (same network or hole-punch success):**
 ```
 Sender ◄──── encrypted chunks ────► Receiver
@@ -133,9 +179,38 @@ Sender ──► Relay ──► Receiver
        (encrypted, relay can't read)
 ```
 
+### Nostr Mode - Transfer Flow
+
+```
+    ┌────────┐           ┌─────────────┐           ┌──────────┐
+    │ Sender │──────────►│Nostr Relays │◄──────────│ Receiver │
+    └────────┘           └─────────────┘           └──────────┘
+         │                                               │
+         │  1. Generate ephemeral keys                  │
+         │  2. Publish encrypted chunks                  │
+         │     (kind 24242, ephemeral events)            │
+         │                                               │
+         │                                               │  3. Subscribe to
+         │                                               │     transfer events
+         │                                               │
+         │  4. Wait for ACK events                       │
+         │  ◄────────────────────────────────────────────┤
+         │  5. Retry failed chunks (up to 3 times)       │
+```
+
+**Nostr Protocol:**
+- Each file chunk is published as a separate Nostr event (kind 24242)
+- Receiver sends ACK events for each received chunk
+- Sender retries unacknowledged chunks up to 3 times
+- All chunks are AES-256-GCM encrypted before publishing
+- Ephemeral events are not stored permanently by relays
+- Sender and receiver must connect to at least one common relay
+
 ## Security & Encryption Model
 
-### Key Exchange (Out-of-Band)
+### iroh Mode
+
+**Key Exchange (Out-of-Band):**
 
 The 32-byte AES-256 encryption key is:
 1. **Generated randomly** by the sender
@@ -144,7 +219,7 @@ The 32-byte AES-256 encryption key is:
 
 **The iroh relay server never sees the encryption key.**
 
-### What Each Party Sees
+**What Each Party Sees:**
 
 | Party | Sees |
 |-------|------|
@@ -152,18 +227,18 @@ The 32-byte AES-256 encryption key is:
 | Receiver | Encryption key (from wormhole code), decrypted file |
 | Relay Server | Only encrypted blobs + routing info |
 
-### Encryption Layers
+**Encryption Layers:**
 
 | Layer | Protection |
 |-------|------------|
 | AES-256-GCM | File content encryption (application layer) |
 | iroh QUIC/TLS | Transport encryption (network layer) |
 
-### Nonce Handling
+**Nonce Handling:**
 
 Each 16KB chunk uses a unique nonce derived from the chunk number, preventing nonce reuse attacks.
 
-### Connection Types
+**Connection Types:**
 
 The receiver displays the current connection type:
 
@@ -176,14 +251,74 @@ The receiver displays the current connection type:
 
 **Priority:** Local mDNS → Direct UDP → Relay fallback
 
+### Nostr Mode
+
+**Mandatory Encryption:**
+
+Nostr mode always uses AES-256-GCM encryption - it cannot be disabled. This is required because:
+- Nostr relays can read all event content
+- Events may be cached or forwarded by relays
+- No transport-layer encryption between sender and receiver
+
+**Key Exchange:**
+
+The 32-byte AES-256 encryption key is:
+1. **Generated randomly** by the sender
+2. **Embedded in the wormhole code** along with sender pubkey, transfer ID, relay list, and filename
+3. **Shared out-of-band** - you manually share the code with the receiver
+
+**What Each Party Sees:**
+
+| Party | Sees |
+|-------|------|
+| Sender | Plaintext file, encryption key, ephemeral keypair |
+| Receiver | Encryption key (from wormhole code), decrypted file, ephemeral keypair |
+| Nostr Relays | Only encrypted chunks (base64-encoded ciphertext), event metadata, signatures |
+
+**Nonce Handling:**
+
+Each 16KB chunk uses a unique nonce derived from the chunk sequence number, preventing nonce reuse.
+
+**Event Structure:**
+
+```json
+{
+  "kind": 24242,
+  "pubkey": "<sender_ephemeral_pubkey>",
+  "tags": [
+    ["t", "<transfer_id>"],
+    ["seq", "<chunk_number>"],
+    ["total", "<total_chunks>"],
+    ["type", "chunk"]
+  ],
+  "content": "<base64_encrypted_chunk>"
+}
+```
+
+**Security Guarantees:**
+
+- Nostr relays cannot decrypt file content (only sender and receiver have the key)
+- Each transfer uses ephemeral Nostr keypairs (not linked to user identity)
+- Events are ephemeral (kind 20000-29999 range, not permanently stored)
+- Unique transfer ID per session prevents cross-transfer confusion
+
 ## Wire Protocol Format
 
-### Wormhole Code
-```
-base64( postcard( [32-byte AES key] + [EndpointAddr] ) )
-```
+### iroh Mode
 
-### Encrypted Header (chunk_num = 0)
+**Wormhole Code (Version 2):**
+```json
+{
+  "version": 2,
+  "protocol": "iroh",
+  "extra_encrypt": true,
+  "key": "<base64-encoded-32-bytes>",
+  "addr": <EndpointAddr>
+}
+```
+Base64url-encoded JSON token.
+
+**Encrypted Header (chunk_num = 0):**
 ```
 ┌──────────────┬─────────────────────────────────────────────────────┐
 │  header_len  │              encrypted header data                  │
@@ -191,7 +326,7 @@ base64( postcard( [32-byte AES key] + [EndpointAddr] ) )
 └──────────────┴─────────────────────────────────────────────────────┘
 ```
 
-### Encrypted Chunk (chunk_num = 1, 2, 3...)
+**Encrypted Chunk (chunk_num = 1, 2, 3...):**
 ```
 ┌──────────────┬──────────┬─────────────────┬─────────────┐
 │  chunk_len   │  nonce   │   ciphertext    │   GCM tag   │
@@ -201,25 +336,99 @@ base64( postcard( [32-byte AES key] + [EndpointAddr] ) )
 
 > **Note:** All data sent over the network is encrypted. The relay server only sees encrypted blobs.
 
+### Nostr Mode
+
+**Wormhole Code (Version 2):**
+```json
+{
+  "version": 2,
+  "protocol": "nostr",
+  "extra_encrypt": true,
+  "key": "<base64-encoded-32-bytes>",
+  "addr": null,
+  "nostr_sender_pubkey": "<hex_pubkey>",
+  "nostr_relays": ["wss://relay1.com", "wss://relay2.com"],
+  "nostr_transfer_id": "<hex_transfer_id>",
+  "nostr_filename": "example.txt"
+}
+```
+Base64url-encoded JSON token.
+
+**Chunk Event:**
+```json
+{
+  "kind": 24242,
+  "pubkey": "<sender_ephemeral_pubkey>",
+  "created_at": <unix_timestamp>,
+  "tags": [
+    ["t", "<transfer_id>"],
+    ["seq", "<chunk_number>"],
+    ["total", "<total_chunks>"],
+    ["type", "chunk"]
+  ],
+  "content": "<base64(encrypted_chunk)>",
+  "sig": "<signature>"
+}
+```
+
+**ACK Event:**
+```json
+{
+  "kind": 24242,
+  "pubkey": "<receiver_ephemeral_pubkey>",
+  "tags": [
+    ["p", "<sender_pubkey>"],
+    ["t", "<transfer_id>"],
+    ["seq", "<chunk_number>"],
+    ["type", "ack"]
+  ],
+  "content": "",
+  "sig": "<signature>"
+}
+```
+
+**Encrypted Chunk Format (before base64 encoding):**
+```
+┌──────────┬─────────────────┬─────────────┐
+│  nonce   │   ciphertext    │   GCM tag   │
+│(12 bytes)│    (≤16KB)      │  (16 bytes) │
+└──────────┴─────────────────┴─────────────┘
+```
+
 ## Project Structure
 
 ```
 src/
-├── main.rs       # CLI entry point
-├── crypto.rs     # AES-256-GCM encryption/decryption
-├── wormhole.rs   # Wormhole code generation/parsing
-├── transfer.rs   # Wire protocol (headers, chunks)
-├── sender.rs     # Send file logic
-└── receiver.rs   # Receive file logic
+├── main.rs              # CLI entry point
+├── crypto.rs            # AES-256-GCM encryption/decryption
+├── wormhole.rs          # Wormhole code generation/parsing (v2 tokens)
+├── transfer.rs          # Wire protocol (headers, chunks) for iroh mode
+├── sender.rs            # iroh mode file sender
+├── receiver.rs          # iroh mode file receiver
+├── folder_sender.rs     # iroh mode folder sender (tar archives)
+├── folder_receiver.rs   # iroh mode folder receiver (tar extraction)
+├── nostr_sender.rs      # Nostr mode file sender
+├── nostr_receiver.rs    # Nostr mode file receiver
+└── nostr_protocol.rs    # Nostr event structures and protocol logic
 ```
 
 ## Dependencies
 
-- `iroh` v0.95.1 - P2P connectivity
+### Core
+- `iroh` v0.95.1 - P2P connectivity (iroh mode)
+- `nostr-sdk` v0.44.1 - Nostr protocol (Nostr mode)
 - `aes-gcm` - AES-256-GCM encryption
 - `clap` - CLI parsing
 - `tokio` - Async runtime
-- `postcard` + `serde` - Binary serialization
+- `serde` + `serde_json` - Serialization
+
+### Additional
+- `reqwest` - HTTP client (nostr.watch API)
+- `base64` - Encoding
+- `hex` - Hex encoding
+- `rand` - Random generation
+- `tempfile` - Atomic file writing
+- `tar` - Folder archiving
 
 ## License
 
