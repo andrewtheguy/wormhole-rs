@@ -9,12 +9,10 @@ use tokio::time::{timeout, Duration};
 use crate::crypto::{encrypt_chunk, generate_key};
 use crate::nostr_protocol::{
     create_chunk_event, generate_transfer_id, get_best_relays, get_transfer_id, is_ack_event,
-    parse_ack_event, NOSTR_CHUNK_SIZE,
+    parse_ack_event, MAX_NOSTR_FILE_SIZE, NOSTR_CHUNK_SIZE,
 };
 use crate::transfer::format_bytes;
 use crate::wormhole::generate_nostr_code;
-
-const MAX_FILE_SIZE: u64 = 512 * 1024; // 512KB
 const ACK_TIMEOUT_SECS: u64 = 30; // Increased from 10s to 30s for better reliability
 const MAX_RETRIES: u32 = 3;
 const MIN_RELAYS_REQUIRED: usize = 2;
@@ -38,12 +36,12 @@ pub async fn send_file_nostr(
         .to_string();
 
     // Validate file size
-    if file_size > MAX_FILE_SIZE {
+    if file_size > MAX_NOSTR_FILE_SIZE {
         anyhow::bail!(
             "File size ({}) exceeds Nostr limit ({})\n\
              Use regular 'send' command for larger files via iroh.",
             format_bytes(file_size),
-            format_bytes(MAX_FILE_SIZE)
+            format_bytes(MAX_NOSTR_FILE_SIZE)
         );
     }
 

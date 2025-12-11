@@ -2,7 +2,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use std::io::{self, Write};
 use std::path::PathBuf;
-use wormhole_rs::{folder_receiver, folder_sender, nostr_receiver, nostr_sender, receiver, sender, wormhole};
+use wormhole_rs::{folder_receiver, folder_sender, nostr_protocol, nostr_receiver, nostr_sender, receiver, sender, wormhole};
 
 #[derive(Parser)]
 #[command(name = "wormhole-rs")]
@@ -149,11 +149,10 @@ async fn main() -> Result<()> {
             if !file.is_file() {
                 anyhow::bail!("Not a file: {}", file.display());
             }
-            // Enforce 512KB file size limit for Nostr transfers
+            // Enforce file size limit for Nostr transfers
             let metadata = std::fs::metadata(&file)?;
             let file_size = metadata.len();
-            const MAX_NOSTR_FILE_SIZE: u64 = 512 * 1024; // 512KB
-            if file_size > MAX_NOSTR_FILE_SIZE {
+            if file_size > nostr_protocol::MAX_NOSTR_FILE_SIZE {
                 anyhow::bail!(
                     "File too large for Nostr transfer (max 512KB): {} bytes\n\
                      Use regular 'send' command for larger files via iroh.",

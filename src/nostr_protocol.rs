@@ -4,6 +4,10 @@ use nostr_sdk::prelude::*;
 use rand::Rng;
 use serde::Deserialize;
 
+/// Maximum file size for Nostr transfers (512KB)
+/// Nostr relays have message size limits, so we restrict file size
+pub const MAX_NOSTR_FILE_SIZE: u64 = 512 * 1024; // 512KB
+
 /// Chunk size for Nostr transfers (16KB)
 /// Balances event size with transfer efficiency for Nostr relays
 pub const NOSTR_CHUNK_SIZE: usize = 16 * 1024; // 16KB chunks
