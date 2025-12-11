@@ -9,13 +9,16 @@ use tokio::fs::File;
 use tokio::io::AsyncReadExt;
 
 use crate::crypto::{generate_key, CHUNK_SIZE};
-use crate::transfer::{format_bytes, num_chunks, send_encrypted_chunk, send_encrypted_header, FileHeader, TransferType};
-use crate::wormhole::generate_code;
+use crate::transfer::{
+    format_bytes, num_chunks, send_chunk, send_encrypted_chunk, send_encrypted_header,
+    send_header, FileHeader, TransferType,
+};
+use crate::wormhole::{generate_code, generate_code_encrypted};
 
 const ALPN: &[u8] = b"wormhole-transfer/1";
 
 /// Send a file and return the wormhole code
-pub async fn send_file(file_path: &Path) -> Result<()> {
+pub async fn send_file(file_path: &Path, extra_encrypt: bool) -> Result<()> {
     // Get file metadata
     let metadata = tokio::fs::metadata(file_path)
         .await
@@ -27,10 +30,19 @@ pub async fn send_file(file_path: &Path) -> Result<()> {
         .context("Invalid filename")?
         .to_string();
 
-    println!("📁 Preparing to send: {} ({})", filename, format_bytes(file_size));
+    println!(
+        "📁 Preparing to send: {} ({})",
+        filename,
+        format_bytes(file_size)
+    );
 
-    // Generate encryption key
-    let key = generate_key();
+    // Generate encryption key only if extra encryption is enabled
+    let key = if extra_encrypt {
+        println!("🔐 Extra AES-256-GCM encryption enabled");
+        Some(generate_key())
+    } else {
+        None
+    };
 
     // Create iroh endpoint with N0 discovery + local mDNS
     let endpoint = Endpoint::empty_builder(RelayMode::Default)
@@ -49,11 +61,19 @@ pub async fn send_file(file_path: &Path) -> Result<()> {
     let addr = endpoint.addr();
 
     // Generate wormhole code
-    let code = generate_code(&key, &addr)?;
+    let code = if let Some(ref k) = key {
+        generate_code_encrypted(k, &addr)?
+    } else {
+        generate_code(&addr)?
+    };
 
     println!("\n🔮 Wormhole code:\n{}\n", code);
     println!("On the receiving end, run:");
-    println!("  wormhole-rs receive\n");
+    if extra_encrypt {
+        println!("  wormhole-rs receive --extra-encrypt\n");
+    } else {
+        println!("  wormhole-rs receive\n");
+    }
     println!("Then enter the code above when prompted.\n");
     println!("⏳ Waiting for receiver to connect...");
 
@@ -68,22 +88,25 @@ pub async fn send_file(file_path: &Path) -> Result<()> {
     println!("✅ Receiver connected!");
 
     // Open bi-directional stream
-    let (mut send_stream, _recv_stream) = conn
-        .open_bi()
-        .await
-        .context("Failed to open stream")?;
+    let (mut send_stream, _recv_stream) = conn.open_bi().await.context("Failed to open stream")?;
 
-    // Send encrypted file header (uses chunk_num 0)
+    // Send file header
     let header = FileHeader::new(TransferType::File, filename.clone(), file_size);
-    send_encrypted_header(&mut send_stream, &key, &header)
-        .await
-        .context("Failed to send header")?;
+    if let Some(ref k) = key {
+        send_encrypted_header(&mut send_stream, k, &header)
+            .await
+            .context("Failed to send header")?;
+    } else {
+        send_header(&mut send_stream, &header)
+            .await
+            .context("Failed to send header")?;
+    }
 
-    // Open file and send chunks (starting at chunk_num 1)
+    // Open file and send chunks
     let mut file = File::open(file_path).await.context("Failed to open file")?;
     let total_chunks = num_chunks(file_size);
     let mut buffer = vec![0u8; CHUNK_SIZE];
-    let mut chunk_num = 1u64;  // Start at 1, header used 0
+    let mut chunk_num = 1u64; // Start at 1, header used 0
     let mut bytes_sent = 0u64;
 
     println!("📤 Sending {} chunks...", total_chunks);
@@ -94,9 +117,15 @@ pub async fn send_file(file_path: &Path) -> Result<()> {
             break;
         }
 
-        send_encrypted_chunk(&mut send_stream, &key, chunk_num, &buffer[..bytes_read])
-            .await
-            .context("Failed to send chunk")?;
+        if let Some(ref k) = key {
+            send_encrypted_chunk(&mut send_stream, k, chunk_num, &buffer[..bytes_read])
+                .await
+                .context("Failed to send chunk")?;
+        } else {
+            send_chunk(&mut send_stream, &buffer[..bytes_read])
+                .await
+                .context("Failed to send chunk")?;
+        }
 
         chunk_num += 1;
         bytes_sent += bytes_read as u64;
@@ -104,7 +133,12 @@ pub async fn send_file(file_path: &Path) -> Result<()> {
         // Progress update every 10 chunks or on last chunk
         if chunk_num % 10 == 0 || bytes_sent == file_size {
             let percent = (bytes_sent as f64 / file_size as f64 * 100.0) as u32;
-            print!("\r   Progress: {}% ({}/{})", percent, format_bytes(bytes_sent), format_bytes(file_size));
+            print!(
+                "\r   Progress: {}% ({}/{})",
+                percent,
+                format_bytes(bytes_sent),
+                format_bytes(file_size)
+            );
         }
     }
 
@@ -112,7 +146,7 @@ pub async fn send_file(file_path: &Path) -> Result<()> {
 
     // Finish the stream
     send_stream.finish().context("Failed to finish stream")?;
-    
+
     // Wait a moment for the receiver to process
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 

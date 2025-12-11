@@ -9,16 +9,20 @@ use std::io::Read;
 use std::path::PathBuf;
 use tar::Archive;
 
-use crate::transfer::{format_bytes, recv_encrypted_chunk, recv_encrypted_header, TransferType};
-use crate::wormhole::parse_code;
+use crate::transfer::{
+    format_bytes, recv_chunk, recv_encrypted_chunk, recv_encrypted_header, recv_header,
+    TransferType,
+};
+use crate::wormhole::{parse_code, parse_code_encrypted};
 
 const ALPN: &[u8] = b"wormhole-transfer/1";
 
 /// Wrapper to bridge async chunk receiving with sync tar reading.
-/// Implements std::io::Read by fetching and decrypting chunks on demand.
-struct DecryptingReader<R> {
+/// Implements std::io::Read by fetching chunks on demand.
+/// Supports both encrypted and unencrypted modes.
+struct StreamingReader<R> {
     recv_stream: R,
-    key: [u8; 32],
+    key: Option<[u8; 32]>,
     chunk_num: u64,
     buffer: Vec<u8>,
     buffer_pos: usize,
@@ -26,8 +30,13 @@ struct DecryptingReader<R> {
     runtime_handle: tokio::runtime::Handle,
 }
 
-impl<R> DecryptingReader<R> {
-    fn new(recv_stream: R, key: [u8; 32], file_size: u64, runtime_handle: tokio::runtime::Handle) -> Self {
+impl<R> StreamingReader<R> {
+    fn new(
+        recv_stream: R,
+        key: Option<[u8; 32]>,
+        file_size: u64,
+        runtime_handle: tokio::runtime::Handle,
+    ) -> Self {
         Self {
             recv_stream,
             key,
@@ -40,13 +49,17 @@ impl<R> DecryptingReader<R> {
     }
 }
 
-impl<R: tokio::io::AsyncReadExt + Unpin + Send> Read for DecryptingReader<R> {
+impl<R: tokio::io::AsyncReadExt + Unpin + Send> Read for StreamingReader<R> {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         // If buffer is exhausted and there's more data, fetch next chunk
         if self.buffer_pos >= self.buffer.len() && self.bytes_remaining > 0 {
             // Block on async chunk receive
             let chunk_result = self.runtime_handle.block_on(async {
-                recv_encrypted_chunk(&mut self.recv_stream, &self.key, self.chunk_num).await
+                if let Some(ref key) = self.key {
+                    recv_encrypted_chunk(&mut self.recv_stream, key, self.chunk_num).await
+                } else {
+                    recv_chunk(&mut self.recv_stream).await
+                }
             });
 
             match chunk_result {
@@ -85,11 +98,22 @@ impl<R: tokio::io::AsyncReadExt + Unpin + Send> Read for DecryptingReader<R> {
 /// especially when receiving from Unix on Windows or vice versa. Windows does not
 /// support Unix permission modes (rwx), so files may have different permissions
 /// after extraction.
-pub async fn receive_folder(code: &str, output_dir: Option<PathBuf>) -> Result<()> {
+pub async fn receive_folder(
+    code: &str,
+    output_dir: Option<PathBuf>,
+    extra_encrypt: bool,
+) -> Result<()> {
     println!("🔮 Parsing wormhole code...");
 
     // Parse the wormhole code
-    let (key, addr) = parse_code(code).context("Failed to parse wormhole code")?;
+    let (key, addr) = if extra_encrypt {
+        println!("🔐 Expecting extra AES-256-GCM encryption");
+        let (k, a) = parse_code_encrypted(code).context("Failed to parse wormhole code")?;
+        (Some(k), a)
+    } else {
+        let a = parse_code(code).context("Failed to parse wormhole code")?;
+        (None, a)
+    };
 
     println!("✅ Code valid. Connecting to sender...");
 
@@ -125,10 +149,16 @@ pub async fn receive_folder(code: &str, output_dir: Option<PathBuf>) -> Result<(
         .await
         .context("Failed to accept stream")?;
 
-    // Read encrypted header (uses chunk_num 0)
-    let header = recv_encrypted_header(&mut recv_stream, &key)
-        .await
-        .context("Failed to read header")?;
+    // Read header
+    let header = if let Some(ref k) = key {
+        recv_encrypted_header(&mut recv_stream, k)
+            .await
+            .context("Failed to read header")?
+    } else {
+        recv_header(&mut recv_stream)
+            .await
+            .context("Failed to read header")?
+    };
 
     // Validate transfer type
     if header.transfer_type != TransferType::Folder {
@@ -172,8 +202,8 @@ pub async fn receive_folder(code: &str, output_dir: Option<PathBuf>) -> Result<(
     // Get runtime handle for blocking in Read impl
     let runtime_handle = tokio::runtime::Handle::current();
 
-    // Create decrypting reader that feeds tar extractor
-    let reader = DecryptingReader::new(recv_stream, key, header.file_size, runtime_handle);
+    // Create streaming reader that feeds tar extractor
+    let reader = StreamingReader::new(recv_stream, key, header.file_size, runtime_handle);
 
     // Extract tar archive while streaming
     let mut archive = Archive::new(reader);
@@ -222,7 +252,10 @@ pub async fn receive_folder(code: &str, output_dir: Option<PathBuf>) -> Result<(
 
     // Report skipped entries
     if !skipped_entries.is_empty() {
-        println!("\n⚠️  Skipped {} entries (not supported on this platform):", skipped_entries.len());
+        println!(
+            "\n⚠️  Skipped {} entries (not supported on this platform):",
+            skipped_entries.len()
+        );
         for entry in &skipped_entries {
             println!("   - {}", entry);
         }

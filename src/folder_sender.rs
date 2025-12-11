@@ -14,10 +14,10 @@ use walkdir::WalkDir;
 
 use crate::crypto::{generate_key, CHUNK_SIZE};
 use crate::transfer::{
-    format_bytes, num_chunks, send_encrypted_chunk, send_encrypted_header, FileHeader,
-    TransferType,
+    format_bytes, num_chunks, send_chunk, send_encrypted_chunk, send_encrypted_header,
+    send_header, FileHeader, TransferType,
 };
-use crate::wormhole::generate_code;
+use crate::wormhole::{generate_code, generate_code_encrypted};
 
 const ALPN: &[u8] = b"wormhole-transfer/1";
 
@@ -27,7 +27,7 @@ const ALPN: &[u8] = b"wormhole-transfer/1";
 /// especially when sending from Unix to Windows or vice versa. Windows does not
 /// support Unix permission modes (rwx), so files may have different permissions
 /// after extraction on Windows.
-pub async fn send_folder(folder_path: &Path) -> Result<()> {
+pub async fn send_folder(folder_path: &Path, extra_encrypt: bool) -> Result<()> {
     // Validate folder
     if !folder_path.is_dir() {
         anyhow::bail!("Not a directory: {}", folder_path.display());
@@ -50,8 +50,7 @@ pub async fn send_folder(folder_path: &Path) -> Result<()> {
 
     // Build tar archive
     {
-        let tar_file = fs::File::create(temp_tar.path())
-            .context("Failed to create tar file")?;
+        let tar_file = fs::File::create(temp_tar.path()).context("Failed to create tar file")?;
         let mut builder = Builder::new(tar_file);
 
         // Walk the directory and add all entries
@@ -101,8 +100,13 @@ pub async fn send_folder(folder_path: &Path) -> Result<()> {
         format_bytes(file_size)
     );
 
-    // Generate encryption key
-    let key = generate_key();
+    // Generate encryption key only if extra encryption is enabled
+    let key = if extra_encrypt {
+        println!("🔐 Extra AES-256-GCM encryption enabled");
+        Some(generate_key())
+    } else {
+        None
+    };
 
     // Create iroh endpoint with N0 discovery + local mDNS
     let endpoint = Endpoint::empty_builder(RelayMode::Default)
@@ -121,11 +125,19 @@ pub async fn send_folder(folder_path: &Path) -> Result<()> {
     let addr = endpoint.addr();
 
     // Generate wormhole code
-    let code = generate_code(&key, &addr)?;
+    let code = if let Some(ref k) = key {
+        generate_code_encrypted(k, &addr)?
+    } else {
+        generate_code(&addr)?
+    };
 
     println!("\n🔮 Wormhole code:\n{}\n", code);
     println!("On the receiving end, run:");
-    println!("  wormhole-rs receive-folder\n");
+    if extra_encrypt {
+        println!("  wormhole-rs receive-folder --extra-encrypt\n");
+    } else {
+        println!("  wormhole-rs receive-folder\n");
+    }
     println!("Then enter the code above when prompted.\n");
     println!("⏳ Waiting for receiver to connect...");
 
@@ -140,18 +152,21 @@ pub async fn send_folder(folder_path: &Path) -> Result<()> {
     println!("✅ Receiver connected!");
 
     // Open bi-directional stream
-    let (mut send_stream, _recv_stream) = conn
-        .open_bi()
-        .await
-        .context("Failed to open stream")?;
+    let (mut send_stream, _recv_stream) = conn.open_bi().await.context("Failed to open stream")?;
 
-    // Send encrypted header with Folder transfer type (uses chunk_num 0)
+    // Send header with Folder transfer type
     let header = FileHeader::new(TransferType::Folder, tar_filename.clone(), file_size);
-    send_encrypted_header(&mut send_stream, &key, &header)
-        .await
-        .context("Failed to send header")?;
+    if let Some(ref k) = key {
+        send_encrypted_header(&mut send_stream, k, &header)
+            .await
+            .context("Failed to send header")?;
+    } else {
+        send_header(&mut send_stream, &header)
+            .await
+            .context("Failed to send header")?;
+    }
 
-    // Open tar file and send chunks (starting at chunk_num 1)
+    // Open tar file and send chunks
     let mut file = File::open(temp_tar.path())
         .await
         .context("Failed to open tar file")?;
@@ -171,9 +186,15 @@ pub async fn send_folder(folder_path: &Path) -> Result<()> {
             break;
         }
 
-        send_encrypted_chunk(&mut send_stream, &key, chunk_num, &buffer[..bytes_read])
-            .await
-            .context("Failed to send chunk")?;
+        if let Some(ref k) = key {
+            send_encrypted_chunk(&mut send_stream, k, chunk_num, &buffer[..bytes_read])
+                .await
+                .context("Failed to send chunk")?;
+        } else {
+            send_chunk(&mut send_stream, &buffer[..bytes_read])
+                .await
+                .context("Failed to send chunk")?;
+        }
 
         chunk_num += 1;
         bytes_sent += bytes_read as u64;
