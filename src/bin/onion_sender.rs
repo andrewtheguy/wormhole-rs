@@ -54,8 +54,10 @@ async fn main() -> anyhow::Result<()> {
         // Accept the stream request
         let mut stream = stream_req.accept(Connected::new_empty()).await?;
 
-        // Send test message
+        // Send test message with length prefix
         let message = b"Hello from onion service!";
+        let len = message.len() as u32;
+        stream.write_all(&len.to_be_bytes()).await?;
         stream.write_all(message).await?;
         stream.flush().await?;
 

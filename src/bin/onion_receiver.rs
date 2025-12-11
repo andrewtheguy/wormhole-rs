@@ -1,5 +1,19 @@
-use arti_client::{TorClient, TorClientConfig};
+use arti_client::{ErrorKind, HasKind, TorClient, TorClientConfig};
 use tokio::io::AsyncReadExt;
+
+const MAX_RETRIES: u32 = 5;
+const RETRY_DELAY_SECS: u64 = 5;
+
+/// Check if error is retryable (timeout, temporary network issues)
+fn is_retryable(e: &arti_client::Error) -> bool {
+    matches!(
+        e.kind(),
+        ErrorKind::TorNetworkTimeout
+            | ErrorKind::RemoteNetworkTimeout
+            | ErrorKind::TransientFailure
+            | ErrorKind::LocalNetworkError
+    )
+}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -17,16 +31,54 @@ async fn main() -> anyhow::Result<()> {
     let tor_client = TorClient::create_bootstrapped(config).await?;
 
     println!("Tor client bootstrapped!");
-    println!("Connecting to {}...", onion_addr);
 
-    // Connect to onion service on port 80 (default)
-    let mut stream = tor_client.connect((onion_addr.as_str(), 80)).await?;
+    // Retry connection only for temporary errors
+    let mut stream = None;
+    let mut last_error = None;
+
+    for attempt in 1..=MAX_RETRIES {
+        println!("Connecting to {} (attempt {}/{})...", onion_addr, attempt, MAX_RETRIES);
+
+        match tor_client.connect((onion_addr.as_str(), 80)).await {
+            Ok(s) => {
+                stream = Some(s);
+                break;
+            }
+            Err(e) => {
+                eprintln!("Connection failed: {}", e);
+
+                // Only retry on temporary/retryable errors
+                if !is_retryable(&e) {
+                    return Err(e.into());
+                }
+
+                last_error = Some(e);
+                if attempt < MAX_RETRIES {
+                    println!("Retrying in {} seconds...", RETRY_DELAY_SECS);
+                    tokio::time::sleep(tokio::time::Duration::from_secs(RETRY_DELAY_SECS)).await;
+                }
+            }
+        }
+    }
+
+    let mut stream = stream.ok_or_else(|| {
+        anyhow::anyhow!(
+            "Failed to connect after {} attempts: {}",
+            MAX_RETRIES,
+            last_error.map(|e| e.to_string()).unwrap_or_default()
+        )
+    })?;
 
     println!("Connected!");
 
-    // Read message
-    let mut buffer = Vec::new();
-    stream.read_to_end(&mut buffer).await?;
+    // Read length prefix (4 bytes, big-endian u32)
+    let mut len_buf = [0u8; 4];
+    stream.read_exact(&mut len_buf).await?;
+    let len = u32::from_be_bytes(len_buf) as usize;
+
+    // Read exact message bytes
+    let mut buffer = vec![0u8; len];
+    stream.read_exact(&mut buffer).await?;
 
     let message = String::from_utf8_lossy(&buffer);
     println!("\n=== RECEIVED MESSAGE ===");
