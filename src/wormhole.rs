@@ -37,6 +37,9 @@ pub struct WormholeToken {
     /// Unique transfer session ID
     #[serde(skip_serializing_if = "Option::is_none")]
     pub nostr_transfer_id: Option<String>,
+    /// Original filename (for Nostr transfers)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub nostr_filename: Option<String>,
 }
 
 /// Generate a wormhole code from endpoint address
@@ -64,6 +67,7 @@ pub fn generate_code(
         nostr_sender_pubkey: None,
         nostr_relays: None,
         nostr_transfer_id: None,
+        nostr_filename: None,
     };
 
     let serialized =
@@ -80,11 +84,13 @@ pub fn generate_code(
 /// * `sender_pubkey` - Sender's ephemeral Nostr public key (hex)
 /// * `transfer_id` - Unique transfer session ID
 /// * `relays` - List of Nostr relay URLs
+/// * `filename` - Original filename
 pub fn generate_nostr_code(
     key: &[u8; 32],
     sender_pubkey: String,
     transfer_id: String,
     relays: Vec<String>,
+    filename: String,
 ) -> Result<String> {
     let token = WormholeToken {
         version: CURRENT_VERSION,
@@ -95,6 +101,7 @@ pub fn generate_nostr_code(
         nostr_sender_pubkey: Some(sender_pubkey),
         nostr_relays: Some(relays),
         nostr_transfer_id: Some(transfer_id),
+        nostr_filename: Some(filename),
     };
 
     let serialized =

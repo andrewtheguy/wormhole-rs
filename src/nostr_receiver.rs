@@ -243,8 +243,12 @@ pub async fn receive_file_nostr(
     let file_size = decrypted_data.len() as u64;
     println!("📁 File size: {}", format_bytes(file_size));
 
-    // TODO: Extract filename from somewhere (for now use default)
-    let filename = format!("received_file_{}.bin", transfer_id[..8].to_string());
+    // Extract filename from wormhole code, or use default if missing
+    let filename = token
+        .nostr_filename
+        .unwrap_or_else(|| format!("received_file_{}.bin", transfer_id[..8].to_string()));
+
+    println!("📄 Filename: {}", filename);
 
     // Determine output directory and final path
     let output_dir = output_dir.unwrap_or_else(|| PathBuf::from("."));

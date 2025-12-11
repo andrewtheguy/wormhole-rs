@@ -113,6 +113,7 @@ pub async fn send_file_nostr(file_path: &Path, custom_relays: Option<Vec<String>
         sender_pubkey.to_hex(),
         transfer_id.clone(),
         relay_urls.clone(),
+        filename.clone(),
     )?;
 
     println!("\n🔮 Wormhole code:\n{}\n", code);
