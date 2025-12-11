@@ -15,12 +15,17 @@ use crate::transfer::format_bytes;
 use crate::wormhole::generate_nostr_code;
 
 const MAX_FILE_SIZE: u64 = 512 * 1024; // 512KB
-const ACK_TIMEOUT_SECS: u64 = 10;
+const ACK_TIMEOUT_SECS: u64 = 30; // Increased from 10s to 30s for better reliability
 const MAX_RETRIES: u32 = 3;
 const MIN_RELAYS_REQUIRED: usize = 2;
+const SUBSCRIPTION_SETUP_DELAY_SECS: u64 = 3; // Wait for subscription to propagate
 
 /// Send a file via Nostr relays
-pub async fn send_file_nostr(file_path: &Path, custom_relays: Option<Vec<String>>) -> Result<()> {
+pub async fn send_file_nostr(
+    file_path: &Path,
+    custom_relays: Option<Vec<String>>,
+    use_default_relays: bool,
+) -> Result<()> {
     // Get file metadata
     let metadata = tokio::fs::metadata(file_path)
         .await
@@ -62,12 +67,17 @@ pub async fn send_file_nostr(file_path: &Path, custom_relays: Option<Vec<String>
     println!("🔐 AES-256-GCM encryption enabled (mandatory for Nostr)");
 
     // Determine which relays to use
-    let relay_urls = match custom_relays {
-        Some(relays) => {
-            println!("📡 Using custom relays");
-            relays
-        }
-        None => get_best_relays().await,
+    let relay_urls = if let Some(relays) = custom_relays {
+        println!("📡 Using custom relays");
+        relays
+    } else if use_default_relays {
+        println!("📡 Using default hardcoded relays");
+        crate::nostr_protocol::DEFAULT_NOSTR_RELAYS
+            .iter()
+            .map(|s| s.to_string())
+            .collect()
+    } else {
+        get_best_relays().await
     };
 
     println!("📡 Connecting to {} Nostr relays...", relay_urls.len());
@@ -113,7 +123,6 @@ pub async fn send_file_nostr(file_path: &Path, custom_relays: Option<Vec<String>
         &encryption_key,
         sender_pubkey.to_hex(),
         transfer_id.clone(),
-        relay_urls.clone(),
         filename.clone(),
     )?;
 
@@ -140,6 +149,9 @@ pub async fn send_file_nostr(file_path: &Path, custom_relays: Option<Vec<String>
         );
 
     let _ = client.subscribe(filter, None).await;
+
+    // Wait for subscription to propagate to relays
+    tokio::time::sleep(Duration::from_secs(SUBSCRIPTION_SETUP_DELAY_SECS)).await;
 
     println!("⏳ Waiting for receiver to connect...");
 
@@ -257,6 +269,9 @@ pub async fn send_file_nostr(file_path: &Path, custom_relays: Option<Vec<String>
                 total_chunks
             );
         }
+
+        // Small delay between chunks to avoid overwhelming relays
+        tokio::time::sleep(Duration::from_millis(100)).await;
     }
 
     println!("✅ All chunks sent successfully!");

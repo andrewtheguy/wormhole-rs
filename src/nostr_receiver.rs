@@ -15,12 +15,14 @@ use crate::wormhole::{parse_code, PROTOCOL_NOSTR};
 
 const CHUNK_RECEIVE_TIMEOUT_SECS: u64 = 60;
 const MIN_RELAYS_REQUIRED: usize = 2;
+const SUBSCRIPTION_SETUP_DELAY_SECS: u64 = 3; // Wait for subscription to propagate
 
 /// Receive a file via Nostr relays
 pub async fn receive_file_nostr(
     code: &str,
     output_dir: Option<PathBuf>,
     custom_relays: Option<Vec<String>>,
+    use_default_relays: bool,
 ) -> Result<()> {
     println!("🔮 Parsing wormhole code...");
 
@@ -56,13 +58,19 @@ pub async fn receive_file_nostr(
     println!("🆔 Transfer ID: {}", transfer_id);
 
     // Determine which relays to use
+    // Priority: custom CLI flag > use-default-relays flag > fetch from nostr.watch
+    // Note: We ignore relays from wormhole code to avoid ambiguity
     let relay_urls = if let Some(relays) = custom_relays {
         println!("📡 Using custom relays");
         relays
-    } else if let Some(relays) = token.nostr_relays {
-        println!("📡 Using relays from wormhole code");
-        relays
+    } else if use_default_relays {
+        println!("📡 Using default hardcoded relays");
+        crate::nostr_protocol::DEFAULT_NOSTR_RELAYS
+            .iter()
+            .map(|s| s.to_string())
+            .collect()
     } else {
+        // Always fetch best relays for receiver, ignore wormhole code relays
         get_best_relays().await
     };
 
@@ -120,6 +128,9 @@ pub async fn receive_file_nostr(
 
     let _ = client.subscribe(filter, None).await;
     println!("📥 Subscribed to transfer events");
+
+    // Wait for subscription to propagate to relays before signaling ready
+    tokio::time::sleep(Duration::from_secs(SUBSCRIPTION_SETUP_DELAY_SECS)).await;
 
     // Send initial ACK to signal readiness (seq = 0)
     let ack_event = create_ack_event(&receiver_keys, &sender_pubkey, &transfer_id, 0)?;

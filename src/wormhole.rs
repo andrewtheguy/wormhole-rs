@@ -31,9 +31,6 @@ pub struct WormholeToken {
     /// Sender's ephemeral Nostr public key (hex)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub nostr_sender_pubkey: Option<String>,
-    /// List of Nostr relay URLs to use for transfer
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub nostr_relays: Option<Vec<String>>,
     /// Unique transfer session ID
     #[serde(skip_serializing_if = "Option::is_none")]
     pub nostr_transfer_id: Option<String>,
@@ -65,7 +62,6 @@ pub fn generate_code(
         key: key.copied(),
         addr: Some(addr.clone()),
         nostr_sender_pubkey: None,
-        nostr_relays: None,
         nostr_transfer_id: None,
         nostr_filename: None,
     };
@@ -83,13 +79,11 @@ pub fn generate_code(
 /// * `key` - The AES-256-GCM encryption key (always required for Nostr)
 /// * `sender_pubkey` - Sender's ephemeral Nostr public key (hex)
 /// * `transfer_id` - Unique transfer session ID
-/// * `relays` - List of Nostr relay URLs
 /// * `filename` - Original filename
 pub fn generate_nostr_code(
     key: &[u8; 32],
     sender_pubkey: String,
     transfer_id: String,
-    relays: Vec<String>,
     filename: String,
 ) -> Result<String> {
     let token = WormholeToken {
@@ -99,7 +93,6 @@ pub fn generate_nostr_code(
         key: Some(*key),
         addr: None,
         nostr_sender_pubkey: Some(sender_pubkey),
-        nostr_relays: Some(relays),
         nostr_transfer_id: Some(transfer_id),
         nostr_filename: Some(filename),
     };
@@ -190,9 +183,6 @@ pub fn parse_code(code: &str) -> Result<WormholeToken> {
     if token.version == 2 && token.protocol == PROTOCOL_NOSTR {
         if token.nostr_sender_pubkey.is_none() {
             anyhow::bail!("Invalid v2 nostr token: missing sender pubkey");
-        }
-        if token.nostr_relays.is_none() {
-            anyhow::bail!("Invalid v2 nostr token: missing relay list");
         }
         if token.nostr_transfer_id.is_none() {
             anyhow::bail!("Invalid v2 nostr token: missing transfer ID");
