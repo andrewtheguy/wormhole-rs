@@ -8157,6 +8157,7 @@ dependencies = [
  "nostr-sdk",
  "rand 0.8.5",
  "reqwest",
+ "safelog",
  "serde",
  "serde_json",
  "tar",

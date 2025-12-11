@@ -3,6 +3,7 @@ use futures::StreamExt;
 use tokio::io::AsyncWriteExt;
 use tor_cell::relaycell::msg::Connected;
 use tor_hsservice::{config::OnionServiceConfigBuilder, handle_rend_requests};
+use safelog::DisplayRedacted; // <-- important
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -29,8 +30,8 @@ async fn main() -> anyhow::Result<()> {
         .ok_or_else(|| anyhow::anyhow!("No onion address available yet"))?;
 
     println!("\n=== ONION SERVICE READY ===");
-    // Display the full .onion address using Debug format (HsId does not implement Display directly)
-    println!("Address: {:?}", onion_addr);
+    // Display the full .onion address
+    println!("Address: {}", onion_addr.display_unredacted());
     println!("Waiting for receiver...\n");
 
     // Convert RendRequest stream to StreamRequest stream
