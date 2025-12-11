@@ -395,6 +395,62 @@ Base64url-encoded JSON token.
 └──────────┴─────────────────┴─────────────┘
 ```
 
+## Experimental: Onion Mode (Tor Hidden Services)
+
+> **Warning:** This feature is experimental and uses Arti (Tor's Rust implementation), which is not yet as secure as C-Tor. Do not use for security-sensitive purposes.
+
+An optional `onion` feature enables peer-to-peer transfers through Tor hidden services (.onion addresses). This provides:
+
+- **Anonymity** - Both sender and receiver are hidden behind Tor
+- **NAT traversal** - Works through any firewall without port forwarding
+- **Ephemeral services** - New .onion address generated for each transfer
+
+### Building with Onion Support
+
+```bash
+cargo build --release --features onion
+```
+
+### Usage
+
+**Sender (hosts the onion service):**
+
+```bash
+cargo run --bin onion_sender --features onion
+```
+
+The sender will:
+1. Bootstrap a Tor client (ephemeral, no persistent state)
+2. Launch a temporary onion service
+3. Print the .onion address
+4. Wait for the receiver to connect
+5. Send the test message
+
+**Receiver (connects to the onion service):**
+
+```bash
+cargo run --bin onion_receiver --features onion -- <address.onion>
+```
+
+The receiver will:
+1. Bootstrap a Tor client
+2. Connect to the .onion address (retries up to 5 times on timeout)
+3. Receive and display the message
+
+### Limitations
+
+- **Early stage** - This is a proof-of-concept for testing Arti's onion service capabilities
+- **Test binaries only** - Currently only sends a hardcoded test message
+- **Slow startup** - Tor bootstrapping and onion service publication takes time
+- **Not production ready** - Arti's onion services are still experimental
+
+### Dependencies (onion feature)
+
+- `arti-client` v0.37 - Tor client implementation
+- `tor-hsservice` v0.37 - Hidden service support
+- `tor-cell` v0.37 - Tor protocol cells
+- `safelog` v0.7 - Redacted logging for .onion addresses
+
 ## Project Structure
 
 ```
