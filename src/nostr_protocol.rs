@@ -79,7 +79,7 @@ async fn fetch_best_relays_from_api() -> Option<Vec<String>> {
         let b_rtt = b.rtt.as_ref().and_then(|r| r.open.as_ref()).map(|o| o.value);
 
         match (a_rtt, b_rtt) {
-            (Some(a_val), Some(b_val)) => a_val.partial_cmp(&b_val).unwrap_or(std::cmp::Ordering::Equal),
+            (Some(a_val), Some(b_val)) => a_val.total_cmp(&b_val),
             (Some(_), None) => std::cmp::Ordering::Less,
             (None, Some(_)) => std::cmp::Ordering::Greater,
             (None, None) => std::cmp::Ordering::Equal,
