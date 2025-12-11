@@ -103,6 +103,36 @@ Sender                                          Receiver
   | <==== Encrypted QUIC stream data ====>          |
 ```
 
+### HTTPS Analogy
+
+The security model is similar to HTTPS, where TLS provides end-to-end encryption:
+
+```
+HTTPS:
+  Browser (client) <---TLS---> Web Server
+         ^                           ^
+         |      CDN / Proxy          |
+         |   (cannot decrypt)        |
+         +---------------------------+
+
+wormhole-rs:
+  Sender <--------TLS 1.3--------> Receiver
+         ^                           ^
+         |     iroh Relay            |
+         |   (cannot decrypt)        |
+         +---------------------------+
+```
+
+| HTTPS | wormhole-rs | Role |
+|-------|-------------|------|
+| Browser | Sender or Receiver | Initiates or accepts connection |
+| Web Server | Receiver or Sender | The other endpoint |
+| CDN / Reverse Proxy | iroh Relay Server | Routes traffic, cannot decrypt |
+| Server's TLS Certificate | Sender's Ed25519 PublicKey | Proves identity |
+| Server's Private Key | Sender's Ed25519 SecretKey | Never leaves the machine |
+
+Just like a CDN or reverse proxy cannot read HTTPS traffic (they only see encrypted packets), the iroh relay server cannot read wormhole-rs traffic. The TLS session is established directly between sender and receiver, with the relay only forwarding opaque encrypted packets.
+
 ### Why the Relay Server Cannot Read Data
 
 The critical security property is that the **Ed25519 SecretKey never leaves the sender's machine**:
