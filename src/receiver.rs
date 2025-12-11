@@ -28,7 +28,9 @@ pub async fn receive_file(code: &str, output_dir: Option<PathBuf>) -> Result<()>
     }
 
     let key = token.key;
-    let addr = token.addr;
+    let addr = token
+        .addr
+        .context("No iroh endpoint address in wormhole code")?;
 
     println!("✅ Code valid. Connecting to sender...");
 
