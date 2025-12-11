@@ -151,7 +151,7 @@ async fn test_unencrypted_folder_transfer_type() {
 // =============================================================================
 
 #[tokio::test]
-async fn test_header_roundtrip() {
+async fn test_encrypted_header_roundtrip() {
     let (mut client, mut server) = duplex(4096);
     let key = generate_key();
     let header = FileHeader::new(TransferType::File, "test_file.txt".to_string(), 12345);
@@ -169,7 +169,7 @@ async fn test_header_roundtrip() {
 }
 
 #[tokio::test]
-async fn test_single_chunk_roundtrip() {
+async fn test_encrypted_single_chunk_roundtrip() {
     let (mut client, mut server) = duplex(4096);
     let key = generate_key();
     let data = b"Hello, World! This is test data for a single chunk.";
@@ -187,7 +187,7 @@ async fn test_single_chunk_roundtrip() {
 }
 
 #[tokio::test]
-async fn test_multi_chunk_roundtrip() {
+async fn test_encrypted_multi_chunk_roundtrip() {
     let (mut client, mut server) = duplex(65536);
     let key = generate_key();
 
@@ -218,7 +218,7 @@ async fn test_multi_chunk_roundtrip() {
 }
 
 #[tokio::test]
-async fn test_full_transfer_simulation() {
+async fn test_encrypted_full_transfer_simulation() {
     let (mut client, mut server) = duplex(65536);
     let key = generate_key();
 
@@ -255,7 +255,7 @@ async fn test_full_transfer_simulation() {
 }
 
 #[tokio::test]
-async fn test_empty_file_transfer() {
+async fn test_encrypted_empty_file_transfer() {
     let (mut client, mut server) = duplex(4096);
     let key = generate_key();
 
@@ -280,7 +280,7 @@ async fn test_empty_file_transfer() {
 }
 
 #[tokio::test]
-async fn test_exact_chunk_size_file() {
+async fn test_encrypted_exact_chunk_size_file() {
     // Test file that is exactly CHUNK_SIZE (16KB)
     let (mut client, mut server) = duplex(CHUNK_SIZE + 1024);
     let key = generate_key();
@@ -310,7 +310,7 @@ async fn test_exact_chunk_size_file() {
 }
 
 #[tokio::test]
-async fn test_large_file_multi_chunk() {
+async fn test_encrypted_large_file_multi_chunk() {
     // Test file larger than CHUNK_SIZE requiring multiple chunks
     let file_size = CHUNK_SIZE * 2 + 1000; // ~33KB, requires 3 chunks
     let (mut client, mut server) = duplex(file_size + 4096);
@@ -357,7 +357,7 @@ async fn test_large_file_multi_chunk() {
 }
 
 #[tokio::test]
-async fn test_special_characters_in_filename() {
+async fn test_encrypted_special_characters_in_filename() {
     let (mut client, mut server) = duplex(4096);
     let key = generate_key();
 
@@ -378,7 +378,7 @@ async fn test_special_characters_in_filename() {
 }
 
 #[tokio::test]
-async fn test_wrong_chunk_number_fails() {
+async fn test_encrypted_wrong_chunk_number_fails() {
     let (mut client, mut server) = duplex(4096);
     let key = generate_key();
     let data = b"Test data";
@@ -400,7 +400,7 @@ async fn test_wrong_chunk_number_fails() {
 }
 
 #[tokio::test]
-async fn test_wrong_encryption_key_fails_on_header() {
+async fn test_encrypted_wrong_key_fails_on_header() {
     let (mut client, mut server) = duplex(4096);
     let sender_key = generate_key();
     let receiver_key = generate_key(); // Different key!
@@ -421,7 +421,7 @@ async fn test_wrong_encryption_key_fails_on_header() {
 }
 
 #[tokio::test]
-async fn test_wrong_encryption_key_fails_on_chunk() {
+async fn test_encrypted_wrong_key_fails_on_chunk() {
     let (mut client, mut server) = duplex(4096);
     let sender_key = generate_key();
     let receiver_key = generate_key(); // Different key!
@@ -442,7 +442,7 @@ async fn test_wrong_encryption_key_fails_on_chunk() {
 }
 
 #[tokio::test]
-async fn test_different_keys_produce_different_payloads() {
+async fn test_encrypted_different_keys_produce_different_payloads() {
     use wormhole_rs::crypto::encrypt_chunk;
 
     // Same file content and metadata
@@ -478,7 +478,7 @@ async fn test_different_keys_produce_different_payloads() {
 }
 
 #[tokio::test]
-async fn test_different_keys_produce_different_headers() {
+async fn test_encrypted_different_keys_produce_different_headers() {
     use wormhole_rs::crypto::encrypt_chunk;
     use wormhole_rs::transfer::FileHeader;
 
@@ -502,7 +502,7 @@ async fn test_different_keys_produce_different_headers() {
 }
 
 #[tokio::test]
-async fn test_each_transfer_generates_unique_key() {
+async fn test_encrypted_each_transfer_generates_unique_key() {
     // Verify that generate_key() produces different keys each time
     // This ensures each file transfer has unique encryption
     let key1 = generate_key();
