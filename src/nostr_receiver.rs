@@ -8,7 +8,7 @@ use tokio::time::{timeout, Duration};
 
 use crate::crypto::decrypt_chunk;
 use crate::nostr_protocol::{
-    create_ack_event, get_best_relays, get_transfer_id, is_chunk_event, parse_chunk_event,
+    create_ack_event, get_transfer_id, is_chunk_event, parse_chunk_event,
 };
 use crate::transfer::format_bytes;
 use crate::wormhole::{parse_code, PROTOCOL_NOSTR};
@@ -21,8 +21,6 @@ const SUBSCRIPTION_SETUP_DELAY_SECS: u64 = 3; // Wait for subscription to propag
 pub async fn receive_file_nostr(
     code: &str,
     output_dir: Option<PathBuf>,
-    custom_relays: Option<Vec<String>>,
-    use_default_relays: bool,
 ) -> Result<()> {
     println!("🔮 Parsing wormhole code...");
 
@@ -58,21 +56,13 @@ pub async fn receive_file_nostr(
     println!("🆔 Transfer ID: {}", transfer_id);
 
     // Determine which relays to use
-    // Priority: custom CLI flag > use-default-relays flag > fetch from nostr.watch
-    // Note: We ignore relays from wormhole code to avoid ambiguity
-    let relay_urls = if let Some(relays) = custom_relays {
-        println!("📡 Using custom relays");
-        relays
-    } else if use_default_relays {
-        println!("📡 Using default hardcoded relays");
-        crate::nostr_protocol::DEFAULT_NOSTR_RELAYS
-            .iter()
-            .map(|s| s.to_string())
-            .collect()
-    } else {
-        // Always fetch best relays for receiver, ignore wormhole code relays
-        get_best_relays().await
-    };
+    // IMPORTANT: Receiver must use the same relays as sender to connect
+    // Wormhole code always contains the relay list - no overrides allowed
+    let relay_urls = token
+        .nostr_relays
+        .context("Missing relay list in wormhole code")?;
+
+    println!("📡 Using relays from wormhole code (same as sender)");
 
     println!("📡 Connecting to {} Nostr relays...", relay_urls.len());
     for url in &relay_urls {

@@ -75,14 +75,6 @@ enum Commands {
         /// Output directory (default: current directory)
         #[arg(short, long)]
         output: Option<PathBuf>,
-
-        /// Custom Nostr relay URLs (can be specified multiple times)
-        #[arg(long = "nostr-relay")]
-        relays: Vec<String>,
-
-        /// Use default hardcoded relays instead of fetching from nostr.watch
-        #[arg(long)]
-        use_default_relays: bool,
     },
 }
 
@@ -167,8 +159,6 @@ async fn main() -> Result<()> {
         Commands::ReceiveNostr {
             code,
             output,
-            relays,
-            use_default_relays,
         } => {
             if let Some(ref dir) = output {
                 if !dir.is_dir() {
@@ -186,12 +176,7 @@ async fn main() -> Result<()> {
                 }
             };
             wormhole::validate_code_format(&code)?;
-            let custom_relays = if relays.is_empty() {
-                None
-            } else {
-                Some(relays)
-            };
-            nostr_receiver::receive_file_nostr(&code, output, custom_relays, use_default_relays).await?;
+            nostr_receiver::receive_file_nostr(&code, output).await?;
         }
     }
 

@@ -123,6 +123,7 @@ pub async fn send_file_nostr(
         &encryption_key,
         sender_pubkey.to_hex(),
         transfer_id.clone(),
+        relay_urls.clone(),
         filename.clone(),
     )?;
 
