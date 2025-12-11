@@ -2,6 +2,11 @@ use anyhow::{Context, Result};
 use base64::{engine::general_purpose::STANDARD, Engine};
 use nostr_sdk::prelude::*;
 use rand::Rng;
+use serde::Deserialize;
+
+/// Chunk size for Nostr transfers (4KB)
+/// Smaller chunks for better compatibility with Nostr relays and reduced event size
+pub const NOSTR_CHUNK_SIZE: usize = 4 * 1024; // 4KB chunks
 
 /// Nostr event kind for file transfer (ephemeral range 20000-29999)
 /// Ephemeral events are not stored permanently by relays
@@ -9,12 +14,106 @@ pub fn nostr_file_transfer_kind() -> Kind {
     Kind::from_u16(24242)
 }
 
-/// Default public Nostr relays for file transfer
+/// Default public Nostr relays for file transfer (fallback if API fails)
 pub const DEFAULT_NOSTR_RELAYS: &[&str] = &[
     "wss://relay.damus.io",
     "wss://nos.lol",
     "wss://nostr.wine",
 ];
+
+/// Timeout for fetching relay list from nostr.watch API
+const RELAY_API_TIMEOUT_SECS: u64 = 5;
+
+/// Number of top relays to fetch from nostr.watch
+const TOP_RELAYS_COUNT: usize = 5;
+
+#[derive(Debug, Deserialize)]
+struct NostrWatchResponse {
+    relays: Vec<NostrWatchRelay>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NostrWatchRelay {
+    relay_url: String,
+    #[serde(default)]
+    rtt: Option<RttInfo>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RttInfo {
+    open: Option<RttValue>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RttValue {
+    value: f64,
+}
+
+/// Fetch best relays from nostr.watch API
+/// Returns a list of relay URLs on success, or None if the API call fails
+async fn fetch_best_relays_from_api() -> Option<Vec<String>> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(RELAY_API_TIMEOUT_SECS))
+        .build()
+        .ok()?;
+
+    let response = client
+        .get("https://api.nostr.watch/v2/relays")
+        .send()
+        .await
+        .ok()?;
+
+    let api_response: NostrWatchResponse = response.json().await.ok()?;
+
+    // Filter for wss:// relays only (secure websockets) and sort by RTT (lower is better)
+    let mut relays: Vec<_> = api_response
+        .relays
+        .into_iter()
+        .filter(|r| r.relay_url.starts_with("wss://"))
+        .collect();
+
+    // Sort by RTT (lower is better), putting relays without RTT at the end
+    relays.sort_by(|a, b| {
+        let a_rtt = a.rtt.as_ref().and_then(|r| r.open.as_ref()).map(|o| o.value);
+        let b_rtt = b.rtt.as_ref().and_then(|r| r.open.as_ref()).map(|o| o.value);
+
+        match (a_rtt, b_rtt) {
+            (Some(a_val), Some(b_val)) => a_val.partial_cmp(&b_val).unwrap_or(std::cmp::Ordering::Equal),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => std::cmp::Ordering::Equal,
+        }
+    });
+
+    // Take top relays
+    let relay_urls: Vec<String> = relays
+        .into_iter()
+        .take(TOP_RELAYS_COUNT)
+        .map(|r| r.relay_url)
+        .collect();
+
+    if relay_urls.is_empty() {
+        None
+    } else {
+        Some(relay_urls)
+    }
+}
+
+/// Get best relays for file transfer
+/// Tries to fetch from nostr.watch API, falls back to hardcoded defaults
+pub async fn get_best_relays() -> Vec<String> {
+    match fetch_best_relays_from_api().await {
+        Some(relays) if !relays.is_empty() => {
+            println!("📡 Using top {} relays from nostr.watch", relays.len());
+            relays
+        }
+        _ => {
+            println!("📡 Using default relays (nostr.watch unavailable)");
+            DEFAULT_NOSTR_RELAYS.iter().map(|s| s.to_string()).collect()
+        }
+    }
+}
 
 /// Event type tag values
 pub const EVENT_TYPE_CHUNK: &str = "chunk";

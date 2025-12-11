@@ -8,7 +8,7 @@ use tokio::time::{timeout, Duration};
 
 use crate::crypto::decrypt_chunk;
 use crate::nostr_protocol::{
-    create_ack_event, get_transfer_id, is_chunk_event, parse_chunk_event, DEFAULT_NOSTR_RELAYS,
+    create_ack_event, get_best_relays, get_transfer_id, is_chunk_event, parse_chunk_event,
 };
 use crate::transfer::format_bytes;
 use crate::wormhole::{parse_code, PROTOCOL_NOSTR};
@@ -56,12 +56,15 @@ pub async fn receive_file_nostr(
     println!("🆔 Transfer ID: {}", transfer_id);
 
     // Determine which relays to use
-    let relay_urls = custom_relays.or(token.nostr_relays).unwrap_or_else(|| {
-        DEFAULT_NOSTR_RELAYS
-            .iter()
-            .map(|s| s.to_string())
-            .collect()
-    });
+    let relay_urls = if let Some(relays) = custom_relays {
+        println!("📡 Using custom relays");
+        relays
+    } else if let Some(relays) = token.nostr_relays {
+        println!("📡 Using relays from wormhole code");
+        relays
+    } else {
+        get_best_relays().await
+    };
 
     println!("📡 Connecting to {} Nostr relays...", relay_urls.len());
     for url in &relay_urls {

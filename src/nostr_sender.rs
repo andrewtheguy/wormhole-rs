@@ -6,10 +6,10 @@ use tokio::fs::File;
 use tokio::io::AsyncReadExt;
 use tokio::time::{timeout, Duration};
 
-use crate::crypto::{encrypt_chunk, generate_key, CHUNK_SIZE};
+use crate::crypto::{encrypt_chunk, generate_key};
 use crate::nostr_protocol::{
-    create_chunk_event, generate_transfer_id, get_transfer_id, is_ack_event, parse_ack_event,
-    DEFAULT_NOSTR_RELAYS,
+    create_chunk_event, generate_transfer_id, get_best_relays, get_transfer_id, is_ack_event,
+    parse_ack_event, NOSTR_CHUNK_SIZE,
 };
 use crate::transfer::format_bytes;
 use crate::wormhole::generate_nostr_code;
@@ -62,12 +62,13 @@ pub async fn send_file_nostr(file_path: &Path, custom_relays: Option<Vec<String>
     println!("🔐 AES-256-GCM encryption enabled (mandatory for Nostr)");
 
     // Determine which relays to use
-    let relay_urls = custom_relays.unwrap_or_else(|| {
-        DEFAULT_NOSTR_RELAYS
-            .iter()
-            .map(|s| s.to_string())
-            .collect()
-    });
+    let relay_urls = match custom_relays {
+        Some(relays) => {
+            println!("📡 Using custom relays");
+            relays
+        }
+        None => get_best_relays().await,
+    };
 
     println!("📡 Connecting to {} Nostr relays...", relay_urls.len());
     for url in &relay_urls {
@@ -122,7 +123,7 @@ pub async fn send_file_nostr(file_path: &Path, custom_relays: Option<Vec<String>
     println!("Then enter the code above when prompted.\n");
 
     // Calculate total chunks
-    let total_chunks = ((file_size + CHUNK_SIZE as u64 - 1) / CHUNK_SIZE as u64) as u32;
+    let total_chunks = ((file_size + NOSTR_CHUNK_SIZE as u64 - 1) / NOSTR_CHUNK_SIZE as u64) as u32;
     println!("📊 File will be sent in {} chunks", total_chunks);
 
     // Subscribe to ACK events from any receiver for this transfer
@@ -169,7 +170,7 @@ pub async fn send_file_nostr(file_path: &Path, custom_relays: Option<Vec<String>
 
     // Open file and send chunks
     let mut file = File::open(file_path).await.context("Failed to open file")?;
-    let mut buffer = vec![0u8; CHUNK_SIZE];
+    let mut buffer = vec![0u8; NOSTR_CHUNK_SIZE];
     let mut bytes_sent = 0u64;
     let mut ack_tracker: HashMap<u32, bool> = HashMap::new();
 
