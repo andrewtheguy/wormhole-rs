@@ -25,7 +25,7 @@ pub struct WormholeToken {
 }
 
 /// Generate a wormhole code from endpoint address
-/// Format: base64url(postcard(WormholeToken))
+/// Format: base64url(json(WormholeToken))
 ///
 /// # Arguments
 /// * `addr` - The endpoint address to connect to
@@ -49,7 +49,7 @@ pub fn generate_code(
     };
 
     let serialized =
-        postcard::to_allocvec(&token).context("Failed to serialize wormhole token")?;
+        serde_json::to_vec(&token).context("Failed to serialize wormhole token")?;
 
     Ok(URL_SAFE_NO_PAD.encode(&serialized))
 }
@@ -103,7 +103,7 @@ pub fn parse_code(code: &str) -> Result<WormholeToken> {
         .decode(code.trim())
         .context("Failed to decode wormhole code")?;
 
-    let token: WormholeToken = postcard::from_bytes(&serialized).context(
+    let token: WormholeToken = serde_json::from_slice(&serialized).context(
         "Invalid wormhole code: failed to parse token. Make sure the code is correct.",
     )?;
 
