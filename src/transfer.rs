@@ -78,6 +78,24 @@ impl FileHeader {
     }
 }
 
+/// Send a header over the stream (unencrypted, relies on QUIC/TLS)
+/// Format: header_len (4 bytes) || header_data
+pub async fn send_header<W: AsyncWriteExt + Unpin>(
+    writer: &mut W,
+    header: &FileHeader,
+) -> Result<()> {
+    let header_bytes = header.to_bytes();
+
+    // Write length prefix
+    let len = header_bytes.len() as u32;
+    writer.write_all(&len.to_be_bytes()).await?;
+
+    // Write header
+    writer.write_all(&header_bytes).await?;
+
+    Ok(())
+}
+
 /// Send an encrypted header over the stream (uses chunk_num 0)
 /// Format: header_len (4 bytes) || encrypted_header
 pub async fn send_encrypted_header<W: AsyncWriteExt + Unpin>(
@@ -87,15 +105,35 @@ pub async fn send_encrypted_header<W: AsyncWriteExt + Unpin>(
 ) -> Result<()> {
     let header_bytes = header.to_bytes();
     let encrypted = encrypt_chunk(key, 0, &header_bytes)?;
-    
+
     // Write length prefix
     let len = encrypted.len() as u32;
     writer.write_all(&len.to_be_bytes()).await?;
-    
+
     // Write encrypted header
     writer.write_all(&encrypted).await?;
-    
+
     Ok(())
+}
+
+/// Receive a header from the stream (unencrypted, relies on QUIC/TLS)
+pub async fn recv_header<R: AsyncReadExt + Unpin>(reader: &mut R) -> Result<FileHeader> {
+    // Read length prefix
+    let mut len_buf = [0u8; 4];
+    reader
+        .read_exact(&mut len_buf)
+        .await
+        .context("Failed to read header length")?;
+    let len = u32::from_be_bytes(len_buf) as usize;
+
+    // Read header
+    let mut data = vec![0u8; len];
+    reader
+        .read_exact(&mut data)
+        .await
+        .context("Failed to read header data")?;
+
+    FileHeader::from_bytes(&data)
 }
 
 /// Receive and decrypt a header from the stream (uses chunk_num 0)
@@ -105,17 +143,36 @@ pub async fn recv_encrypted_header<R: AsyncReadExt + Unpin>(
 ) -> Result<FileHeader> {
     // Read length prefix
     let mut len_buf = [0u8; 4];
-    reader.read_exact(&mut len_buf).await.context("Failed to read header length")?;
+    reader
+        .read_exact(&mut len_buf)
+        .await
+        .context("Failed to read header length")?;
     let len = u32::from_be_bytes(len_buf) as usize;
-    
+
     // Read encrypted header
     let mut encrypted = vec![0u8; len];
-    reader.read_exact(&mut encrypted).await.context("Failed to read header data")?;
-    
+    reader
+        .read_exact(&mut encrypted)
+        .await
+        .context("Failed to read header data")?;
+
     // Decrypt
     let decrypted = decrypt_chunk(key, 0, &encrypted)?;
-    
+
     FileHeader::from_bytes(&decrypted)
+}
+
+/// Send a chunk over the stream (unencrypted, relies on QUIC/TLS)
+/// Format: chunk_len (4 bytes) || chunk_data
+pub async fn send_chunk<W: AsyncWriteExt + Unpin>(writer: &mut W, data: &[u8]) -> Result<()> {
+    // Write length prefix
+    let len = data.len() as u32;
+    writer.write_all(&len.to_be_bytes()).await?;
+
+    // Write data
+    writer.write_all(data).await?;
+
+    Ok(())
 }
 
 /// Send an encrypted chunk over the stream
@@ -127,15 +184,35 @@ pub async fn send_encrypted_chunk<W: AsyncWriteExt + Unpin>(
     data: &[u8],
 ) -> Result<()> {
     let encrypted = encrypt_chunk(key, chunk_num, data)?;
-    
+
     // Write length prefix
     let len = encrypted.len() as u32;
     writer.write_all(&len.to_be_bytes()).await?;
-    
+
     // Write encrypted data
     writer.write_all(&encrypted).await?;
-    
+
     Ok(())
+}
+
+/// Receive a chunk from the stream (unencrypted, relies on QUIC/TLS)
+pub async fn recv_chunk<R: AsyncReadExt + Unpin>(reader: &mut R) -> Result<Vec<u8>> {
+    // Read length prefix
+    let mut len_buf = [0u8; 4];
+    reader
+        .read_exact(&mut len_buf)
+        .await
+        .context("Failed to read chunk length")?;
+    let len = u32::from_be_bytes(len_buf) as usize;
+
+    // Read data
+    let mut data = vec![0u8; len];
+    reader
+        .read_exact(&mut data)
+        .await
+        .context("Failed to read chunk data")?;
+
+    Ok(data)
 }
 
 /// Receive and decrypt a chunk from the stream
@@ -146,13 +223,19 @@ pub async fn recv_encrypted_chunk<R: AsyncReadExt + Unpin>(
 ) -> Result<Vec<u8>> {
     // Read length prefix
     let mut len_buf = [0u8; 4];
-    reader.read_exact(&mut len_buf).await.context("Failed to read chunk length")?;
+    reader
+        .read_exact(&mut len_buf)
+        .await
+        .context("Failed to read chunk length")?;
     let len = u32::from_be_bytes(len_buf) as usize;
-    
+
     // Read encrypted data
     let mut encrypted = vec![0u8; len];
-    reader.read_exact(&mut encrypted).await.context("Failed to read chunk data")?;
-    
+    reader
+        .read_exact(&mut encrypted)
+        .await
+        .context("Failed to read chunk data")?;
+
     // Decrypt
     decrypt_chunk(key, chunk_num, &encrypted)
 }

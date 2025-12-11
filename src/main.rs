@@ -19,6 +19,10 @@ enum Commands {
     Send {
         /// Path to the file to send
         file: PathBuf,
+
+        /// Add extra AES-256-GCM encryption layer (for insecure transports)
+        #[arg(long)]
+        extra_encrypt: bool,
     },
     /// Receive a file
     Receive {
@@ -29,11 +33,19 @@ enum Commands {
         /// Output directory (default: current directory)
         #[arg(short, long)]
         output: Option<PathBuf>,
+
+        /// Expect extra AES-256-GCM encryption layer
+        #[arg(long)]
+        extra_encrypt: bool,
     },
     /// Send a folder (creates tar archive)
     SendFolder {
         /// Path to the folder to send
         folder: PathBuf,
+
+        /// Add extra AES-256-GCM encryption layer (for insecure transports)
+        #[arg(long)]
+        extra_encrypt: bool,
     },
     /// Receive a folder (extracts tar archive)
     ReceiveFolder {
@@ -44,6 +56,10 @@ enum Commands {
         /// Output directory (default: current directory)
         #[arg(short, long)]
         output: Option<PathBuf>,
+
+        /// Expect extra AES-256-GCM encryption layer
+        #[arg(long)]
+        extra_encrypt: bool,
     },
 }
 
@@ -52,16 +68,20 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Send { file } => {
+        Commands::Send { file, extra_encrypt } => {
             if !file.exists() {
                 anyhow::bail!("File not found: {}", file.display());
             }
             if !file.is_file() {
                 anyhow::bail!("Not a file: {}", file.display());
             }
-            sender::send_file(&file).await?;
+            sender::send_file(&file, extra_encrypt).await?;
         }
-        Commands::Receive { code, output } => {
+        Commands::Receive {
+            code,
+            output,
+            extra_encrypt,
+        } => {
             if let Some(ref dir) = output {
                 if !dir.is_dir() {
                     anyhow::bail!("Output directory does not exist: {}", dir.display());
@@ -78,18 +98,25 @@ async fn main() -> Result<()> {
                 }
             };
             wormhole::validate_code_format(&code)?;
-            receiver::receive_file(&code, output).await?;
+            receiver::receive_file(&code, output, extra_encrypt).await?;
         }
-        Commands::SendFolder { folder } => {
+        Commands::SendFolder {
+            folder,
+            extra_encrypt,
+        } => {
             if !folder.exists() {
                 anyhow::bail!("Folder not found: {}", folder.display());
             }
             if !folder.is_dir() {
                 anyhow::bail!("Not a directory: {}", folder.display());
             }
-            folder_sender::send_folder(&folder).await?;
+            folder_sender::send_folder(&folder, extra_encrypt).await?;
         }
-        Commands::ReceiveFolder { code, output } => {
+        Commands::ReceiveFolder {
+            code,
+            output,
+            extra_encrypt,
+        } => {
             if let Some(ref dir) = output {
                 if !dir.is_dir() {
                     anyhow::bail!("Output directory does not exist: {}", dir.display());
@@ -106,7 +133,7 @@ async fn main() -> Result<()> {
                 }
             };
             wormhole::validate_code_format(&code)?;
-            folder_receiver::receive_folder(&code, output).await?;
+            folder_receiver::receive_folder(&code, output, extra_encrypt).await?;
         }
     }
 

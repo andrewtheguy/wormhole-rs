@@ -1,9 +1,154 @@
 use tokio::io::duplex;
 use wormhole_rs::crypto::{generate_key, CHUNK_SIZE};
 use wormhole_rs::transfer::{
-    recv_encrypted_chunk, recv_encrypted_header, send_encrypted_chunk, send_encrypted_header,
-    FileHeader, TransferType,
+    recv_chunk, recv_encrypted_chunk, recv_encrypted_header, recv_header, send_chunk,
+    send_encrypted_chunk, send_encrypted_header, send_header, FileHeader, TransferType,
 };
+
+// =============================================================================
+// Unencrypted transfer tests (default mode, relies on QUIC/TLS)
+// =============================================================================
+
+#[tokio::test]
+async fn test_unencrypted_header_roundtrip() {
+    let (mut client, mut server) = duplex(4096);
+    let header = FileHeader::new(TransferType::File, "test_file.txt".to_string(), 12345);
+
+    let send_handle =
+        tokio::spawn(async move { send_header(&mut client, &header).await });
+
+    let received = recv_header(&mut server).await.unwrap();
+    send_handle.await.unwrap().unwrap();
+
+    assert_eq!(received.filename, "test_file.txt");
+    assert_eq!(received.file_size, 12345);
+}
+
+#[tokio::test]
+async fn test_unencrypted_single_chunk_roundtrip() {
+    let (mut client, mut server) = duplex(4096);
+    let data = b"Hello, World! This is test data for a single chunk.";
+
+    let data_clone = data.to_vec();
+    let send_handle = tokio::spawn(async move { send_chunk(&mut client, &data_clone).await });
+
+    let received = recv_chunk(&mut server).await.unwrap();
+    send_handle.await.unwrap().unwrap();
+
+    assert_eq!(received, data);
+}
+
+#[tokio::test]
+async fn test_unencrypted_multi_chunk_roundtrip() {
+    let (mut client, mut server) = duplex(65536);
+
+    let chunks: Vec<Vec<u8>> = vec![
+        b"First chunk of data".to_vec(),
+        b"Second chunk of data".to_vec(),
+        b"Third chunk of data".to_vec(),
+    ];
+
+    let chunks_clone = chunks.clone();
+    let send_handle = tokio::spawn(async move {
+        for chunk in chunks_clone.iter() {
+            send_chunk(&mut client, chunk).await.unwrap();
+        }
+    });
+
+    for expected in chunks.iter() {
+        let received = recv_chunk(&mut server).await.unwrap();
+        assert_eq!(&received, expected);
+    }
+
+    send_handle.await.unwrap();
+}
+
+#[tokio::test]
+async fn test_unencrypted_full_transfer_simulation() {
+    let (mut client, mut server) = duplex(65536);
+
+    let filename = "document.pdf".to_string();
+    let file_data = b"This is the content of the file being transferred.";
+    let file_size = file_data.len() as u64;
+
+    let filename_clone = filename.clone();
+    let file_data_clone = file_data.to_vec();
+    let send_handle = tokio::spawn(async move {
+        // Send header
+        let header = FileHeader::new(TransferType::File, filename_clone, file_size);
+        send_header(&mut client, &header).await.unwrap();
+
+        // Send file data
+        send_chunk(&mut client, &file_data_clone).await.unwrap();
+    });
+
+    // Receive header
+    let received_header = recv_header(&mut server).await.unwrap();
+    assert_eq!(received_header.filename, filename);
+    assert_eq!(received_header.file_size, file_size);
+
+    // Receive file data
+    let received_data = recv_chunk(&mut server).await.unwrap();
+    assert_eq!(received_data, file_data);
+
+    send_handle.await.unwrap();
+}
+
+#[tokio::test]
+async fn test_unencrypted_large_file_multi_chunk() {
+    // Test file larger than CHUNK_SIZE requiring multiple chunks
+    let file_size = CHUNK_SIZE * 2 + 1000; // ~33KB, requires 3 chunks
+    let (mut client, mut server) = duplex(file_size + 4096);
+
+    let file_data: Vec<u8> = (0..file_size).map(|i| (i % 256) as u8).collect();
+
+    let file_data_clone = file_data.clone();
+    let send_handle = tokio::spawn(async move {
+        let header =
+            FileHeader::new(TransferType::File, "large_file.bin".to_string(), file_size as u64);
+        send_header(&mut client, &header).await.unwrap();
+
+        // Send chunks
+        for chunk in file_data_clone.chunks(CHUNK_SIZE) {
+            send_chunk(&mut client, chunk).await.unwrap();
+        }
+    });
+
+    // Receive header
+    let received_header = recv_header(&mut server).await.unwrap();
+    assert_eq!(received_header.file_size, file_size as u64);
+
+    // Receive all chunks and reconstruct file
+    let mut received_data = Vec::new();
+    while received_data.len() < file_size {
+        let chunk = recv_chunk(&mut server).await.unwrap();
+        received_data.extend(chunk);
+    }
+
+    assert_eq!(received_data, file_data);
+
+    send_handle.await.unwrap();
+}
+
+#[tokio::test]
+async fn test_unencrypted_folder_transfer_type() {
+    let (mut client, mut server) = duplex(4096);
+    let header = FileHeader::new(TransferType::Folder, "myfolder.tar".to_string(), 54321);
+
+    let send_handle =
+        tokio::spawn(async move { send_header(&mut client, &header).await });
+
+    let received = recv_header(&mut server).await.unwrap();
+    send_handle.await.unwrap().unwrap();
+
+    assert_eq!(received.transfer_type, TransferType::Folder);
+    assert_eq!(received.filename, "myfolder.tar");
+    assert_eq!(received.file_size, 54321);
+}
+
+// =============================================================================
+// Encrypted transfer tests (--extra-encrypt mode)
+// =============================================================================
 
 #[tokio::test]
 async fn test_header_roundtrip() {
