@@ -44,7 +44,7 @@ reqwest = { version = "0.12", features = ["json"] }
 futures = "0.3"
 
 # Arti (Tor) - optional, behind feature gate
-arti-client = { version = "0.37", features = ["onion-service-service", "tokio"], optional = true }
+arti-client = { version = "0.37", features = ["onion-service-service", "onion-service-client", "tokio"], optional = true }
 tor-hsservice = { version = "0.37", optional = true }
 tor-cell = { version = "0.37", optional = true }
 safelog = { version = "0.7.1", optional = true }

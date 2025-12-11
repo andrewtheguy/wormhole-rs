@@ -1,6 +1,6 @@
 use arti_client::{TorClient, TorClientConfig};
 use futures::StreamExt;
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tor_cell::relaycell::msg::Connected;
 use tor_hsservice::{config::OnionServiceConfigBuilder, handle_rend_requests};
 use safelog::DisplayRedacted; // <-- important
@@ -47,9 +47,15 @@ async fn main() -> anyhow::Result<()> {
         // Send test message
         let message = b"Hello from onion service!";
         stream.write_all(message).await?;
-        stream.shutdown().await?;
+        stream.flush().await?;
 
-        println!("Message sent successfully!");
+        println!("Message sent! Waiting for receiver to close connection...");
+
+        // Wait for receiver to close their end (read will return 0 bytes when closed)
+        let mut buf = [0u8; 1];
+        let _ = stream.read(&mut buf).await;
+
+        println!("Connection closed. Done!");
     }
 
     Ok(())
