@@ -4,9 +4,13 @@
 
 This document provides a detailed walkthrough of the wormhole-rs implementation.
 
+wormhole-rs supports two transport modes:
+- **iroh mode** - Direct P2P transfers using iroh's QUIC/TLS stack
+- **Nostr mode** - Small file transfers (≤512KB) via Nostr relays with mandatory encryption
+
 ## Protocol Flow
 
-### Default Mode (Relies on iroh's QUIC/TLS)
+### iroh Mode - Default (Relies on iroh's QUIC/TLS)
 
 ```mermaid
 sequenceDiagram
@@ -30,7 +34,7 @@ sequenceDiagram
     end
 ```
 
-### Extra Encryption Mode (`--extra-encrypt`)
+### iroh Mode - Extra Encryption (`--extra-encrypt`)
 
 ```mermaid
 sequenceDiagram
@@ -55,7 +59,44 @@ sequenceDiagram
     end
 ```
 
+### Nostr Mode
+
+```mermaid
+sequenceDiagram
+    participant Sender
+    participant Relays as Nostr Relays
+    participant Receiver
+
+    Sender->>Sender: 1. Generate ephemeral keys
+    Sender->>Sender: 2. Generate AES-256 key
+    Sender->>Sender: 3. Generate transfer_id
+    Sender->>Sender: 4. Create wormhole code
+    Note over Sender: Code = base64(key + pubkey + transfer_id + relays + filename)
+
+    Sender->>Relays: 5. Connect to relays
+    Receiver->>Relays: 6. Connect to same relays
+    Receiver->>Relays: 7. Subscribe to transfer events
+    Receiver->>Relays: 8. Send ready ACK (seq=0)
+
+    Relays->>Sender: 9. Forward ready ACK
+
+    loop For each 16KB chunk
+        Sender->>Sender: Encrypt with AES-256-GCM
+        Sender->>Relays: Publish chunk event (kind 24242)
+        Relays->>Receiver: Forward chunk event
+        Receiver->>Receiver: Decrypt chunk
+        Receiver->>Relays: Send ACK event
+        Relays->>Sender: Forward ACK
+        Note over Sender: Retry if no ACK (up to 3 times)
+    end
+
+    Receiver->>Relays: 10. Send completion ACK (seq=-1)
+    Relays->>Sender: Forward completion ACK
+```
+
 ## Connection Types
+
+### iroh Mode
 
 | Type | Description |
 |------|-------------|
@@ -63,27 +104,61 @@ sequenceDiagram
 | `Relay(url)` | Via relay server (works through strict NAT) |
 | `Mixed` | Both available, upgrading to direct |
 
+### Nostr Mode
+
+Nostr mode always uses relays - there is no direct P2P connection. Sender and receiver must connect to at least one common relay.
+
 ## Module Descriptions
 
 ### `crypto.rs`
-Optional AES-256-GCM encryption for `--extra-encrypt` mode:
+AES-256-GCM encryption/decryption used by both modes:
 - `generate_key()` - Creates 256-bit random key
 - `encrypt_chunk(key, chunk_num, data)` - Encrypts with unique nonce
 - `decrypt_chunk(key, chunk_num, data)` - Decrypts and verifies
+- Optional for iroh mode (`--extra-encrypt`), mandatory for Nostr mode
 
 ### `wormhole.rs`
-Wormhole code generation and parsing:
+Wormhole code generation and parsing (version 2 tokens):
 
-**Default mode:**
-- Format: `base64(postcard(EndpointAddr))`
-- Contains: iroh EndpointAddr only
+**iroh mode (default):**
+```json
+{
+  "version": 2,
+  "protocol": "iroh",
+  "extra_encrypt": false,
+  "key": null,
+  "addr": <EndpointAddr>
+}
+```
 
-**Extra encryption mode:**
-- Format: `base64(postcard(AES_key + EndpointAddr))`
-- Contains: encryption key + iroh EndpointAddr
+**iroh mode (extra encryption):**
+```json
+{
+  "version": 2,
+  "protocol": "iroh",
+  "extra_encrypt": true,
+  "key": [<32 bytes>],
+  "addr": <EndpointAddr>
+}
+```
+
+**Nostr mode:**
+```json
+{
+  "version": 2,
+  "protocol": "nostr",
+  "extra_encrypt": true,
+  "key": [<32 bytes>],
+  "addr": null,
+  "nostr_sender_pubkey": "<hex>",
+  "nostr_relays": ["wss://..."],
+  "nostr_transfer_id": "<hex>",
+  "nostr_filename": "file.txt"
+}
+```
 
 ### `transfer.rs`
-Wire protocol implementation:
+Wire protocol implementation for iroh mode:
 
 **Default mode:**
 - Header: `len(u32) || transfer_type || filename_len || name || size`
@@ -93,23 +168,57 @@ Wire protocol implementation:
 - Encrypted header: `len(u32) || nonce || ciphertext || tag`
 - Encrypted chunks: `len(u32) || nonce || ciphertext || tag`
 
-### `sender.rs`
+### `sender.rs` (iroh mode)
 1. Creates iroh Endpoint with N0 + mDNS discovery
 2. Optionally generates encryption key (if `--extra-encrypt`)
 3. Creates wormhole code and waits for receiver
 4. Streams header + chunks (optionally encrypted)
 
-### `receiver.rs`
+### `receiver.rs` (iroh mode)
 1. Parses wormhole code to extract address (and key if encrypted)
 2. Connects to sender via TLS 1.3 (direct or via relay)
 3. Displays connection type (Direct/Relay/Mixed)
 4. Receives data, optionally decrypts, writes to output file
 
-### `folder_sender.rs` / `folder_receiver.rs`
+### `folder_sender.rs` / `folder_receiver.rs` (iroh mode)
 Same as file transfer but:
 - Creates tar archive of folder before sending
 - Extracts tar archive after receiving
 - Preserves file modes (Unix) where supported
+
+### `nostr_protocol.rs` (Nostr mode)
+Nostr protocol implementation:
+- Event structures (kind 24242, ephemeral range)
+- `create_chunk_event()` - Build chunk event with encrypted data
+- `create_ack_event()` - Build ACK event
+- `parse_chunk_event()` - Extract chunk data and metadata
+- `parse_ack_event()` - Extract ACK sequence number
+- `generate_transfer_id()` - Random 16-byte hex ID
+- `get_best_relays()` - Fetch from nostr.watch API or use defaults
+- Constants: `NOSTR_CHUNK_SIZE = 16KB`, `DEFAULT_NOSTR_RELAYS`
+
+### `nostr_sender.rs` (Nostr mode)
+1. Validates file size ≤ 512KB
+2. Generates ephemeral Nostr keypair
+3. Generates AES-256 key (always required)
+4. Connects to Nostr relays (from API, custom, or defaults)
+5. Generates wormhole code with Nostr metadata
+6. Waits for receiver ready signal (ACK seq=0)
+7. Sends encrypted chunks as Nostr events
+8. Waits for ACK after each chunk (30s timeout, 3 retries)
+9. Waits for completion ACK (seq=-1)
+
+### `nostr_receiver.rs` (Nostr mode)
+1. Parses wormhole code for Nostr metadata
+2. Generates ephemeral Nostr keypair
+3. Connects to relays specified in wormhole code (no override)
+4. Subscribes to chunk events (filter by transfer_id and sender pubkey)
+5. Sends ready ACK (seq=0)
+6. Collects chunks into HashMap by sequence number
+7. Sends ACK for each received chunk
+8. Decrypts chunks with AES-256-GCM
+9. Reassembles and writes to file atomically (NamedTempFile)
+10. Sends completion ACK (seq=-1)
 
 ## Security Model
 
