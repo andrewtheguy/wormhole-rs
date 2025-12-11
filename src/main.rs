@@ -2,7 +2,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use std::io::{self, Write};
 use std::path::PathBuf;
-use wormhole_rs::{folder_receiver, folder_sender, receiver, sender, wormhole};
+use wormhole_rs::{folder_receiver, folder_sender, nostr_receiver, nostr_sender, receiver, sender, wormhole};
 
 #[derive(Parser)]
 #[command(name = "wormhole-rs")]
@@ -52,6 +52,29 @@ enum Commands {
         /// Output directory (default: current directory)
         #[arg(short, long)]
         output: Option<PathBuf>,
+    },
+    /// Send a file via Nostr relays (max 512KB)
+    SendNostr {
+        /// Path to the file to send
+        file: PathBuf,
+
+        /// Custom Nostr relay URLs (can be specified multiple times)
+        #[arg(long = "nostr-relay")]
+        relays: Vec<String>,
+    },
+    /// Receive a file via Nostr relays
+    ReceiveNostr {
+        /// Wormhole code from sender (will prompt if not provided)
+        #[arg(short, long)]
+        code: Option<String>,
+
+        /// Output directory (default: current directory)
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+
+        /// Custom Nostr relay URLs (can be specified multiple times)
+        #[arg(long = "nostr-relay")]
+        relays: Vec<String>,
     },
 }
 
@@ -118,6 +141,48 @@ async fn main() -> Result<()> {
             };
             wormhole::validate_code_format(&code)?;
             folder_receiver::receive_folder(&code, output).await?;
+        }
+        Commands::SendNostr { file, relays } => {
+            if !file.exists() {
+                anyhow::bail!("File not found: {}", file.display());
+            }
+            if !file.is_file() {
+                anyhow::bail!("Not a file: {}", file.display());
+            }
+            let custom_relays = if relays.is_empty() {
+                None
+            } else {
+                Some(relays)
+            };
+            nostr_sender::send_file_nostr(&file, custom_relays).await?;
+        }
+        Commands::ReceiveNostr {
+            code,
+            output,
+            relays,
+        } => {
+            if let Some(ref dir) = output {
+                if !dir.is_dir() {
+                    anyhow::bail!("Output directory does not exist: {}", dir.display());
+                }
+            }
+            let code = match code {
+                Some(c) => c,
+                None => {
+                    print!("Enter wormhole code: ");
+                    io::stdout().flush()?;
+                    let mut input = String::new();
+                    io::stdin().read_line(&mut input)?;
+                    input.trim().to_string()
+                }
+            };
+            wormhole::validate_code_format(&code)?;
+            let custom_relays = if relays.is_empty() {
+                None
+            } else {
+                Some(relays)
+            };
+            nostr_receiver::receive_file_nostr(&code, output, custom_relays).await?;
         }
     }
 
