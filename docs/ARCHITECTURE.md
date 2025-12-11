@@ -137,7 +137,7 @@ Wormhole code generation and parsing (version 2 tokens):
   "version": 2,
   "protocol": "iroh",
   "extra_encrypt": true,
-  "key": [<32 bytes>],
+  "key": "<base64-encoded-32-bytes>",
   "addr": <EndpointAddr>
 }
 ```
@@ -148,7 +148,7 @@ Wormhole code generation and parsing (version 2 tokens):
   "version": 2,
   "protocol": "nostr",
   "extra_encrypt": true,
-  "key": [<32 bytes>],
+  "key": "<base64-encoded-32-bytes>",
   "addr": null,
   "nostr_sender_pubkey": "<hex>",
   "nostr_relays": ["wss://..."],

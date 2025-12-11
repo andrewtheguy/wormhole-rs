@@ -21,8 +21,9 @@ pub struct WormholeToken {
     pub protocol: String,
     /// Whether extra AES-256-GCM encryption layer is used
     pub extra_encrypt: bool,
-    /// AES-256-GCM key (only present if extra_encrypt is true)
-    pub key: Option<[u8; 32]>,
+    /// AES-256-GCM key as base64 string (only present if extra_encrypt is true)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub key: Option<String>,
     /// Endpoint address for connection (None for nostr-only transfers)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub addr: Option<EndpointAddr>,
@@ -62,7 +63,7 @@ pub fn generate_code(
         version: CURRENT_VERSION,
         protocol: PROTOCOL_IROH.to_string(),
         extra_encrypt,
-        key: key.copied(),
+        key: key.map(|k| URL_SAFE_NO_PAD.encode(k)),
         addr: Some(addr.clone()),
         nostr_sender_pubkey: None,
         nostr_relays: None,
@@ -96,7 +97,7 @@ pub fn generate_nostr_code(
         version: CURRENT_VERSION,
         protocol: PROTOCOL_NOSTR.to_string(),
         extra_encrypt: true, // Always true for Nostr
-        key: Some(*key),
+        key: Some(URL_SAFE_NO_PAD.encode(key)),
         addr: None,
         nostr_sender_pubkey: Some(sender_pubkey),
         nostr_relays: Some(relays),
@@ -176,6 +177,19 @@ pub fn parse_code(code: &str) -> Result<WormholeToken> {
         anyhow::bail!("Invalid token: extra_encrypt is true but no key provided");
     }
 
+    // Validate key format if present
+    if let Some(ref key_str) = token.key {
+        let key_bytes = URL_SAFE_NO_PAD
+            .decode(key_str)
+            .context("Invalid key format: not valid base64")?;
+        if key_bytes.len() != 32 {
+            anyhow::bail!(
+                "Invalid key length: expected 32 bytes, got {}",
+                key_bytes.len()
+            );
+        }
+    }
+
     // For version 1 tokens, ensure addr is present (backward compatibility)
     if token.version == 1 && token.addr.is_none() {
         anyhow::bail!("Invalid v1 token: missing endpoint address");
@@ -203,4 +217,22 @@ pub fn parse_code(code: &str) -> Result<WormholeToken> {
     }
 
     Ok(token)
+}
+
+/// Helper function to decode a base64 key from WormholeToken into a 32-byte array
+pub fn decode_key(key_str: &str) -> Result<[u8; 32]> {
+    let key_bytes = URL_SAFE_NO_PAD
+        .decode(key_str)
+        .context("Failed to decode base64 key")?;
+
+    if key_bytes.len() != 32 {
+        anyhow::bail!(
+            "Invalid key length: expected 32 bytes, got {}",
+            key_bytes.len()
+        );
+    }
+
+    let mut key = [0u8; 32];
+    key.copy_from_slice(&key_bytes);
+    Ok(key)
 }

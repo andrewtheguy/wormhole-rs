@@ -47,9 +47,13 @@ pub async fn receive_file_nostr(
         .nostr_transfer_id
         .context("Missing transfer ID in wormhole code")?;
 
-    let encryption_key = token
-        .key
-        .context("Missing encryption key in wormhole code")?;
+    let encryption_key = crate::wormhole::decode_key(
+        token
+            .key
+            .as_ref()
+            .context("Missing encryption key in wormhole code")?,
+    )
+    .context("Failed to decode encryption key")?;
 
     println!("🔐 AES-256-GCM encryption detected");
     println!("🔑 Sender pubkey: {}", sender_pubkey_hex);
