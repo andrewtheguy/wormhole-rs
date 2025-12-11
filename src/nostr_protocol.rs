@@ -4,9 +4,9 @@ use nostr_sdk::prelude::*;
 use rand::Rng;
 use serde::Deserialize;
 
-/// Chunk size for Nostr transfers (4KB)
-/// Smaller chunks for better compatibility with Nostr relays and reduced event size
-pub const NOSTR_CHUNK_SIZE: usize = 4 * 1024; // 4KB chunks
+/// Chunk size for Nostr transfers (16KB)
+/// Balances event size with transfer efficiency for Nostr relays
+pub const NOSTR_CHUNK_SIZE: usize = 16 * 1024; // 16KB chunks
 
 /// Nostr event kind for file transfer (ephemeral range 20000-29999)
 /// Ephemeral events are not stored permanently by relays
