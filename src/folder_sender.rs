@@ -144,7 +144,7 @@ pub async fn send_folder(folder_path: &Path, extra_encrypt: bool) -> Result<()> 
     println!("✅ Receiver connected!");
 
     // Open bi-directional stream
-    let (mut send_stream, _recv_stream) = conn.open_bi().await.context("Failed to open stream")?;
+    let (mut send_stream, mut recv_stream) = conn.open_bi().await.context("Failed to open stream")?;
 
     // Send header with Folder transfer type
     let header = FileHeader::new(TransferType::Folder, tar_filename.clone(), file_size);
@@ -205,11 +205,22 @@ pub async fn send_folder(folder_path: &Path, extra_encrypt: bool) -> Result<()> 
 
     println!("\n✅ Folder sent successfully!");
 
-    // Finish the stream
+    // Finish the send stream to signal we're done sending
     send_stream.finish().context("Failed to finish stream")?;
 
-    // Wait a moment for the receiver to process
-    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    // Wait for receiver to acknowledge completion
+    println!("⏳ Waiting for receiver to confirm...");
+    let mut ack_buf = [0u8; 3];
+    recv_stream
+        .read_exact(&mut ack_buf)
+        .await
+        .context("Failed to receive acknowledgment from receiver")?;
+
+    if &ack_buf != b"ACK" {
+        anyhow::bail!("Invalid acknowledgment from receiver");
+    }
+
+    println!("✅ Receiver confirmed!");
 
     // Close connection gracefully
     conn.close(0u32.into(), b"done");

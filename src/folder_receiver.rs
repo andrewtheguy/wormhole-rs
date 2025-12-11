@@ -140,7 +140,7 @@ pub async fn receive_folder(code: &str, output_dir: Option<PathBuf>) -> Result<(
     }
 
     // Accept bi-directional stream
-    let (send_stream, mut recv_stream) = conn
+    let (mut send_stream, mut recv_stream) = conn
         .accept_bi()
         .await
         .context("Failed to accept stream")?;
@@ -260,8 +260,16 @@ pub async fn receive_folder(code: &str, output_dir: Option<PathBuf>) -> Result<(
     println!("\n✅ Folder received successfully!");
     println!("📂 Extracted to: {}", extract_dir.display());
 
+    // Send acknowledgment to sender
+    send_stream
+        .write_all(b"ACK")
+        .await
+        .context("Failed to send acknowledgment")?;
+    send_stream
+        .finish()
+        .context("Failed to finish send stream")?;
+
     // Close connection gracefully
-    drop(send_stream);
     conn.closed().await;
     endpoint.close().await;
 
