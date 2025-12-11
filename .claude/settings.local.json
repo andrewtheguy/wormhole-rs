@@ -4,7 +4,8 @@
       "Bash(find:*)",
       "Bash(cargo check:*)",
       "Bash(cargo test:*)",
-      "Bash(cargo build:*)"
+      "Bash(cargo build:*)",
+      "Bash(cargo search:*)"
     ]
   }
 }

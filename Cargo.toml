@@ -11,6 +11,20 @@ path = "src/lib.rs"
 name = "wormhole-rs"
 path = "src/main.rs"
 
+[[bin]]
+name = "onion_sender"
+path = "src/bin/onion_sender.rs"
+required-features = ["onion"]
+
+[[bin]]
+name = "onion_receiver"
+path = "src/bin/onion_receiver.rs"
+required-features = ["onion"]
+
+[features]
+default = []
+onion = ["dep:arti-client", "dep:tor-hsservice", "dep:tor-cell"]
+
 [dependencies]
 iroh = { version = "0.95.1", features = ["discovery-local-network"] }
 tokio = { version = "1", features = ["full"] }
@@ -27,4 +41,10 @@ walkdir = "2"
 nostr-sdk = "0.44.1"
 hex = "0.4"
 reqwest = { version = "0.12", features = ["json"] }
+futures = "0.3"
+
+# Arti (Tor) - optional, behind feature gate
+arti-client = { version = "0.37", features = ["onion-service-service", "tokio"], optional = true }
+tor-hsservice = { version = "0.37", optional = true }
+tor-cell = { version = "0.37", optional = true }
 
