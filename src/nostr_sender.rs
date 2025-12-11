@@ -87,11 +87,10 @@ pub async fn send_file_nostr(
 
     // Create Nostr client and connect to relays (clone keys for client)
     let client = Client::new(sender_keys.clone());
-    let mut connected_count = 0;
     for relay_url in &relay_urls {
         match client.add_relay(relay_url).await {
             Ok(_) => {
-                connected_count += 1;
+                // Relay added to client
             }
             Err(e) => {
                 eprintln!("⚠️  Failed to add relay {}: {}", relay_url, e);
@@ -104,6 +103,35 @@ pub async fn send_file_nostr(
 
     // Wait a moment for connections to establish
     tokio::time::sleep(Duration::from_secs(2)).await;
+
+    // Check actual connection status
+    let relay_statuses = client.relays().await;
+    let mut connected_count = 0;
+    let mut failed_relays = Vec::new();
+
+    for relay_url_str in &relay_urls {
+        // Parse string to RelayUrl for lookup
+        if let Ok(relay_url) = RelayUrl::parse(relay_url_str) {
+            if let Some(relay) = relay_statuses.get(&relay_url) {
+                if relay.is_connected() {
+                    connected_count += 1;
+                } else {
+                    failed_relays.push(relay_url_str.as_str());
+                }
+            } else {
+                failed_relays.push(relay_url_str.as_str());
+            }
+        } else {
+            failed_relays.push(relay_url_str.as_str());
+        }
+    }
+
+    // Log failed relays
+    if !failed_relays.is_empty() {
+        for failed in &failed_relays {
+            eprintln!("⚠️  Failed to connect to relay: {}", failed);
+        }
+    }
 
     // Check if we have enough relays
     if connected_count < MIN_RELAYS_REQUIRED {

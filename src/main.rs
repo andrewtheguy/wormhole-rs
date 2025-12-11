@@ -149,6 +149,17 @@ async fn main() -> Result<()> {
             if !file.is_file() {
                 anyhow::bail!("Not a file: {}", file.display());
             }
+            // Enforce 512KB file size limit for Nostr transfers
+            let metadata = std::fs::metadata(&file)?;
+            let file_size = metadata.len();
+            const MAX_NOSTR_FILE_SIZE: u64 = 512 * 1024; // 512KB
+            if file_size > MAX_NOSTR_FILE_SIZE {
+                anyhow::bail!(
+                    "File too large for Nostr transfer (max 512KB): {} bytes\n\
+                     Use regular 'send' command for larger files via iroh.",
+                    file_size
+                );
+            }
             let custom_relays = if relays.is_empty() {
                 None
             } else {

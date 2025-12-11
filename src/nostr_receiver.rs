@@ -80,11 +80,10 @@ pub async fn receive_file_nostr(
 
     // Create Nostr client and connect to relays
     let client = Client::new(receiver_keys.clone());
-    let mut connected_count = 0;
     for relay_url in &relay_urls {
         match client.add_relay(relay_url).await {
             Ok(_) => {
-                connected_count += 1;
+                // Relay added to client
             }
             Err(e) => {
                 eprintln!("⚠️  Failed to add relay {}: {}", relay_url, e);
@@ -97,6 +96,35 @@ pub async fn receive_file_nostr(
 
     // Wait a moment for connections to establish
     tokio::time::sleep(Duration::from_secs(2)).await;
+
+    // Check actual connection status
+    let relay_statuses = client.relays().await;
+    let mut connected_count = 0;
+    let mut failed_relays = Vec::new();
+
+    for relay_url_str in &relay_urls {
+        // Parse string to RelayUrl for lookup
+        if let Ok(relay_url) = RelayUrl::parse(relay_url_str) {
+            if let Some(relay) = relay_statuses.get(&relay_url) {
+                if relay.is_connected() {
+                    connected_count += 1;
+                } else {
+                    failed_relays.push(relay_url_str.as_str());
+                }
+            } else {
+                failed_relays.push(relay_url_str.as_str());
+            }
+        } else {
+            failed_relays.push(relay_url_str.as_str());
+        }
+    }
+
+    // Log failed relays
+    if !failed_relays.is_empty() {
+        for failed in &failed_relays {
+            eprintln!("⚠️  Failed to connect to relay: {}", failed);
+        }
+    }
 
     // Check if we have enough relays
     if connected_count < MIN_RELAYS_REQUIRED {
@@ -252,9 +280,14 @@ pub async fn receive_file_nostr(
     println!("📁 File size: {}", format_bytes(file_size));
 
     // Extract filename from wormhole code, or use default if missing
-    let filename = token
-        .nostr_filename
-        .unwrap_or_else(|| format!("received_file_{}.bin", transfer_id[..8].to_string()));
+    let filename = token.nostr_filename.unwrap_or_else(|| {
+        // Safely truncate transfer_id to 8 characters
+        let truncated_id = transfer_id
+            .chars()
+            .take(8)
+            .collect::<String>();
+        format!("received_file_{}.bin", truncated_id)
+    });
 
     println!("📄 Filename: {}", filename);
 

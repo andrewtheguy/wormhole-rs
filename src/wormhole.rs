@@ -172,6 +172,18 @@ pub fn parse_code(code: &str) -> Result<WormholeToken> {
         );
     }
 
+    // Validate protocol for v2 tokens
+    if token.version == 2 {
+        if token.protocol != PROTOCOL_IROH && token.protocol != PROTOCOL_NOSTR {
+            anyhow::bail!(
+                "Invalid protocol '{}' in v2 token. Supported protocols: '{}', '{}'",
+                token.protocol,
+                PROTOCOL_IROH,
+                PROTOCOL_NOSTR
+            );
+        }
+    }
+
     // Validate key consistency
     if token.extra_encrypt && token.key.is_none() {
         anyhow::bail!("Invalid token: extra_encrypt is true but no key provided");
