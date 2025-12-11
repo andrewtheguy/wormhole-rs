@@ -6,6 +6,14 @@
 **Audit Date**: December 2025
 **Finding**: iroh provides zero-knowledge end-to-end encryption at the transport layer, making application-level AES-256-GCM encryption **redundant** for the default use case.
 
+> **WARNING**: This audit is specific to iroh v0.95.1. If the iroh dependency is upgraded to a newer version, this security audit must be re-performed to verify that:
+> 1. The `SecretKey` is still never transmitted or serialized
+> 2. The `EndpointAddr` structure still contains only public information
+> 3. TLS 1.3 with raw public keys (RFC 7250) is still used for authentication
+> 4. The relay server still cannot participate in the TLS handshake
+>
+> Check `Cargo.lock` for the current iroh version before relying on this audit.
+
 ## Key Finding
 
 The custom AES-256-GCM encryption layer in wormhole-rs was found to be unnecessary for security purposes when using iroh's default transport. iroh already provides three layers of encryption that prevent relay servers from reading transferred data.
