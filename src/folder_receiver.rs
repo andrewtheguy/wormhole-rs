@@ -13,7 +13,7 @@ use crate::transfer::{
     format_bytes, recv_chunk, recv_encrypted_chunk, recv_encrypted_header, recv_header,
     TransferType,
 };
-use crate::wormhole::{parse_code, parse_code_encrypted};
+use crate::wormhole::parse_code;
 
 const ALPN: &[u8] = b"wormhole-transfer/1";
 
@@ -98,22 +98,18 @@ impl<R: tokio::io::AsyncReadExt + Unpin + Send> Read for StreamingReader<R> {
 /// especially when receiving from Unix on Windows or vice versa. Windows does not
 /// support Unix permission modes (rwx), so files may have different permissions
 /// after extraction.
-pub async fn receive_folder(
-    code: &str,
-    output_dir: Option<PathBuf>,
-    extra_encrypt: bool,
-) -> Result<()> {
+pub async fn receive_folder(code: &str, output_dir: Option<PathBuf>) -> Result<()> {
     println!("🔮 Parsing wormhole code...");
 
-    // Parse the wormhole code
-    let (key, addr) = if extra_encrypt {
-        println!("🔐 Expecting extra AES-256-GCM encryption");
-        let (k, a) = parse_code_encrypted(code).context("Failed to parse wormhole code")?;
-        (Some(k), a)
-    } else {
-        let a = parse_code(code).context("Failed to parse wormhole code")?;
-        (None, a)
-    };
+    // Parse the wormhole code (auto-detects encryption mode)
+    let token = parse_code(code).context("Failed to parse wormhole code")?;
+
+    if token.extra_encrypt {
+        println!("🔐 Extra AES-256-GCM encryption detected");
+    }
+
+    let key = token.key;
+    let addr = token.addr;
 
     println!("✅ Code valid. Connecting to sender...");
 

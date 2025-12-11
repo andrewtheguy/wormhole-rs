@@ -12,27 +12,23 @@ use crate::transfer::{
     format_bytes, num_chunks, recv_chunk, recv_encrypted_chunk, recv_encrypted_header, recv_header,
     TransferType,
 };
-use crate::wormhole::{parse_code, parse_code_encrypted};
+use crate::wormhole::parse_code;
 
 const ALPN: &[u8] = b"wormhole-transfer/1";
 
 /// Receive a file using a wormhole code
-pub async fn receive_file(
-    code: &str,
-    output_dir: Option<PathBuf>,
-    extra_encrypt: bool,
-) -> Result<()> {
+pub async fn receive_file(code: &str, output_dir: Option<PathBuf>) -> Result<()> {
     println!("🔮 Parsing wormhole code...");
 
-    // Parse the wormhole code
-    let (key, addr) = if extra_encrypt {
-        println!("🔐 Expecting extra AES-256-GCM encryption");
-        let (k, a) = parse_code_encrypted(code).context("Failed to parse wormhole code")?;
-        (Some(k), a)
-    } else {
-        let a = parse_code(code).context("Failed to parse wormhole code")?;
-        (None, a)
-    };
+    // Parse the wormhole code (auto-detects encryption mode)
+    let token = parse_code(code).context("Failed to parse wormhole code")?;
+
+    if token.extra_encrypt {
+        println!("🔐 Extra AES-256-GCM encryption detected");
+    }
+
+    let key = token.key;
+    let addr = token.addr;
 
     println!("✅ Code valid. Connecting to sender...");
 

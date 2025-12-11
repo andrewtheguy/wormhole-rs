@@ -33,10 +33,6 @@ enum Commands {
         /// Output directory (default: current directory)
         #[arg(short, long)]
         output: Option<PathBuf>,
-
-        /// Expect extra AES-256-GCM encryption layer
-        #[arg(long)]
-        extra_encrypt: bool,
     },
     /// Send a folder (creates tar archive)
     SendFolder {
@@ -56,10 +52,6 @@ enum Commands {
         /// Output directory (default: current directory)
         #[arg(short, long)]
         output: Option<PathBuf>,
-
-        /// Expect extra AES-256-GCM encryption layer
-        #[arg(long)]
-        extra_encrypt: bool,
     },
 }
 
@@ -77,11 +69,7 @@ async fn main() -> Result<()> {
             }
             sender::send_file(&file, extra_encrypt).await?;
         }
-        Commands::Receive {
-            code,
-            output,
-            extra_encrypt,
-        } => {
+        Commands::Receive { code, output } => {
             if let Some(ref dir) = output {
                 if !dir.is_dir() {
                     anyhow::bail!("Output directory does not exist: {}", dir.display());
@@ -98,7 +86,7 @@ async fn main() -> Result<()> {
                 }
             };
             wormhole::validate_code_format(&code)?;
-            receiver::receive_file(&code, output, extra_encrypt).await?;
+            receiver::receive_file(&code, output).await?;
         }
         Commands::SendFolder {
             folder,
@@ -112,11 +100,7 @@ async fn main() -> Result<()> {
             }
             folder_sender::send_folder(&folder, extra_encrypt).await?;
         }
-        Commands::ReceiveFolder {
-            code,
-            output,
-            extra_encrypt,
-        } => {
+        Commands::ReceiveFolder { code, output } => {
             if let Some(ref dir) = output {
                 if !dir.is_dir() {
                     anyhow::bail!("Output directory does not exist: {}", dir.display());
@@ -133,7 +117,7 @@ async fn main() -> Result<()> {
                 }
             };
             wormhole::validate_code_format(&code)?;
-            folder_receiver::receive_folder(&code, output, extra_encrypt).await?;
+            folder_receiver::receive_folder(&code, output).await?;
         }
     }
 

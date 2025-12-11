@@ -13,7 +13,7 @@ use crate::transfer::{
     format_bytes, num_chunks, send_chunk, send_encrypted_chunk, send_encrypted_header,
     send_header, FileHeader, TransferType,
 };
-use crate::wormhole::{generate_code, generate_code_encrypted};
+use crate::wormhole::generate_code;
 
 const ALPN: &[u8] = b"wormhole-transfer/1";
 
@@ -61,19 +61,11 @@ pub async fn send_file(file_path: &Path, extra_encrypt: bool) -> Result<()> {
     let addr = endpoint.addr();
 
     // Generate wormhole code
-    let code = if let Some(ref k) = key {
-        generate_code_encrypted(k, &addr)?
-    } else {
-        generate_code(&addr)?
-    };
+    let code = generate_code(&addr, extra_encrypt, key.as_ref())?;
 
     println!("\n🔮 Wormhole code:\n{}\n", code);
     println!("On the receiving end, run:");
-    if extra_encrypt {
-        println!("  wormhole-rs receive --extra-encrypt\n");
-    } else {
-        println!("  wormhole-rs receive\n");
-    }
+    println!("  wormhole-rs receive\n");
     println!("Then enter the code above when prompted.\n");
     println!("⏳ Waiting for receiver to connect...");
 

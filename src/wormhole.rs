@@ -1,45 +1,57 @@
 use anyhow::{Context, Result};
-use base64::{engine::general_purpose::STANDARD, Engine};
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use iroh::EndpointAddr;
 
-/// Payload structure for unencrypted mode (default)
-/// Only contains the endpoint address - encryption relies on iroh's QUIC/TLS
-#[derive(serde::Serialize, serde::Deserialize)]
-struct WormholePayload {
-    addr: EndpointAddr,
+/// Current token format version
+pub const CURRENT_VERSION: u8 = 1;
+
+/// Protocol identifier for iroh transport
+pub const PROTOCOL_IROH: &str = "iroh";
+
+/// Wormhole token containing all transfer metadata
+/// This is a self-describing format that includes version, protocol, and encryption info
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct WormholeToken {
+    /// Token format version (for future compatibility checks)
+    pub version: u8,
+    /// Protocol identifier (e.g., "iroh")
+    pub protocol: String,
+    /// Whether extra AES-256-GCM encryption layer is used
+    pub extra_encrypt: bool,
+    /// AES-256-GCM key (only present if extra_encrypt is true)
+    pub key: Option<[u8; 32]>,
+    /// Endpoint address for connection
+    pub addr: EndpointAddr,
 }
 
-/// Payload structure for encrypted mode (--extra-encrypt)
-/// Contains both the AES-256-GCM key and endpoint address
-#[derive(serde::Serialize, serde::Deserialize)]
-struct WormholePayloadEncrypted {
-    key: [u8; 32],
-    addr: EndpointAddr,
-}
+/// Generate a wormhole code from endpoint address
+/// Format: base64url(postcard(WormholeToken))
+///
+/// # Arguments
+/// * `addr` - The endpoint address to connect to
+/// * `extra_encrypt` - Whether to include an AES-256-GCM encryption key
+/// * `key` - The encryption key (required if extra_encrypt is true)
+pub fn generate_code(
+    addr: &EndpointAddr,
+    extra_encrypt: bool,
+    key: Option<&[u8; 32]>,
+) -> Result<String> {
+    if extra_encrypt && key.is_none() {
+        anyhow::bail!("Encryption key required when extra_encrypt is true");
+    }
 
-/// Generate a wormhole code from endpoint address (default, unencrypted mode)
-/// Format: base64(postcard(addr))
-pub fn generate_code(addr: &EndpointAddr) -> Result<String> {
-    let payload = WormholePayload { addr: addr.clone() };
-
-    let serialized =
-        postcard::to_allocvec(&payload).context("Failed to serialize wormhole payload")?;
-
-    Ok(STANDARD.encode(&serialized))
-}
-
-/// Generate a wormhole code with encryption key (--extra-encrypt mode)
-/// Format: base64(postcard(key + addr))
-pub fn generate_code_encrypted(key: &[u8; 32], addr: &EndpointAddr) -> Result<String> {
-    let payload = WormholePayloadEncrypted {
-        key: *key,
+    let token = WormholeToken {
+        version: CURRENT_VERSION,
+        protocol: PROTOCOL_IROH.to_string(),
+        extra_encrypt,
+        key: key.copied(),
         addr: addr.clone(),
     };
 
     let serialized =
-        postcard::to_allocvec(&payload).context("Failed to serialize wormhole payload")?;
+        postcard::to_allocvec(&token).context("Failed to serialize wormhole token")?;
 
-    Ok(STANDARD.encode(&serialized))
+    Ok(URL_SAFE_NO_PAD.encode(&serialized))
 }
 
 /// Validate wormhole code format without fully parsing it
@@ -51,28 +63,29 @@ pub fn validate_code_format(code: &str) -> Result<()> {
         anyhow::bail!("Wormhole code cannot be empty");
     }
 
-    // Check for invalid characters (base64 standard uses A-Z, a-z, 0-9, +, /, =)
+    // Check for invalid characters (base64 URL-safe uses A-Z, a-z, 0-9, -, _)
+    // Note: no padding (=) in URL_SAFE_NO_PAD
     if !code
         .chars()
-        .all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '/' || c == '=')
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
     {
         anyhow::bail!(
-            "Invalid wormhole code: contains invalid characters. Expected base64-encoded string."
+            "Invalid wormhole code: contains invalid characters. Expected base64url-encoded string."
         );
     }
 
-    // Minimum length check: minimal EndpointAddr data (no key in default mode)
+    // Minimum length check: minimal token data
     // Base64 encodes 3 bytes into 4 chars, so minimum ~20+ bytes payload = ~30+ chars
     if code.len() < 30 {
         anyhow::bail!("Invalid wormhole code: too short. Make sure you copied the entire code.");
     }
 
     // Try to decode base64
-    let decoded = STANDARD
+    let decoded = URL_SAFE_NO_PAD
         .decode(code)
-        .context("Invalid wormhole code: not valid base64 encoding")?;
+        .context("Invalid wormhole code: not valid base64url encoding")?;
 
-    // Check minimum decoded length (some bytes for EndpointAddr)
+    // Check minimum decoded length (some bytes for token)
     if decoded.len() < 10 {
         anyhow::bail!("Invalid wormhole code: decoded data too short");
     }
@@ -80,34 +93,33 @@ pub fn validate_code_format(code: &str) -> Result<()> {
     Ok(())
 }
 
-/// Parse a wormhole code to extract endpoint address (default, unencrypted mode)
-pub fn parse_code(code: &str) -> Result<EndpointAddr> {
+/// Parse a wormhole code to extract the token
+/// Returns a WormholeToken containing all transfer metadata
+pub fn parse_code(code: &str) -> Result<WormholeToken> {
     // Validate format first for better error messages
     validate_code_format(code)?;
 
-    let serialized = STANDARD
+    let serialized = URL_SAFE_NO_PAD
         .decode(code.trim())
         .context("Failed to decode wormhole code")?;
 
-    let payload: WormholePayload = postcard::from_bytes(&serialized).context(
-        "Invalid wormhole code: failed to parse payload. Make sure the code is correct.",
+    let token: WormholeToken = postcard::from_bytes(&serialized).context(
+        "Invalid wormhole code: failed to parse token. Make sure the code is correct.",
     )?;
 
-    Ok(payload.addr)
-}
+    // Validate version
+    if token.version != CURRENT_VERSION {
+        anyhow::bail!(
+            "Unsupported token version {}. This receiver supports version {}.",
+            token.version,
+            CURRENT_VERSION
+        );
+    }
 
-/// Parse a wormhole code to extract key and endpoint address (--extra-encrypt mode)
-pub fn parse_code_encrypted(code: &str) -> Result<([u8; 32], EndpointAddr)> {
-    // Validate format first for better error messages
-    validate_code_format(code)?;
+    // Validate key consistency
+    if token.extra_encrypt && token.key.is_none() {
+        anyhow::bail!("Invalid token: extra_encrypt is true but no key provided");
+    }
 
-    let serialized = STANDARD
-        .decode(code.trim())
-        .context("Failed to decode wormhole code")?;
-
-    let payload: WormholePayloadEncrypted = postcard::from_bytes(&serialized).context(
-        "Invalid wormhole code: failed to parse payload. Make sure the code is correct.",
-    )?;
-
-    Ok((payload.key, payload.addr))
+    Ok(token)
 }
