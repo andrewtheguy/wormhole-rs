@@ -23,14 +23,12 @@ mod tests {
     #[test]
     fn test_chunk_event_creation_and_parsing() {
         let sender_keys = Keys::generate();
-        let receiver_keys = Keys::generate();
         let transfer_id = generate_transfer_id();
         let encrypted_data = b"test_encrypted_chunk_data";
 
         // Create chunk event
         let event = create_chunk_event(
             &sender_keys,
-            &receiver_keys.public_key(),
             &transfer_id,
             5,
             10,

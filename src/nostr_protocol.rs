@@ -37,14 +37,12 @@ pub fn generate_transfer_id() -> String {
 ///
 /// # Arguments
 /// * `keys` - Sender's keys for signing
-/// * `receiver_pubkey` - Receiver's public key
 /// * `transfer_id` - Unique transfer session ID
 /// * `seq` - Chunk sequence number (0-indexed)
 /// * `total` - Total number of chunks
 /// * `encrypted_chunk` - AES-256-GCM encrypted chunk data
 pub fn create_chunk_event(
     keys: &Keys,
-    receiver_pubkey: &PublicKey,
     transfer_id: &str,
     seq: u32,
     total: u32,
@@ -54,9 +52,9 @@ pub fn create_chunk_event(
     let content = STANDARD.encode(encrypted_chunk);
 
     // Build event with tags
+    // Note: No 'p' tag needed - receiver filters by sender's pubkey (event author) and transfer_id
     let event = EventBuilder::new(nostr_file_transfer_kind(), content)
         .tags(vec![
-            Tag::public_key(*receiver_pubkey),
             Tag::custom(
                 TagKind::Custom(TAG_TRANSFER_ID.into()),
                 vec![transfer_id.to_string()],

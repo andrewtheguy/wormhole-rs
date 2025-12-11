@@ -107,10 +107,6 @@ pub async fn send_file_nostr(file_path: &Path, custom_relays: Option<Vec<String>
 
     println!("✅ Connected to {} relays", connected_count);
 
-    // Generate receiver keypair (for wormhole code)
-    let receiver_keys = Keys::generate();
-    let receiver_pubkey = receiver_keys.public_key();
-
     // Generate and display wormhole code
     let code = generate_nostr_code(
         &encryption_key,
@@ -128,14 +124,18 @@ pub async fn send_file_nostr(file_path: &Path, custom_relays: Option<Vec<String>
     let total_chunks = ((file_size + CHUNK_SIZE as u64 - 1) / CHUNK_SIZE as u64) as u32;
     println!("📊 File will be sent in {} chunks", total_chunks);
 
-    // Subscribe to ACK events from receiver
+    // Subscribe to ACK events from any receiver for this transfer
+    // ACK events will have: kind=24242, t=<transfer_id>, p=<sender_pubkey>, type=ack
     let filter = Filter::new()
         .kind(crate::nostr_protocol::nostr_file_transfer_kind())
         .custom_tag(
             SingleLetterTag::lowercase(Alphabet::T),
             transfer_id.clone(),
         )
-        .pubkey(receiver_pubkey);
+        .custom_tag(
+            SingleLetterTag::lowercase(Alphabet::P),
+            sender_pubkey.to_hex(),
+        );
 
     let _ = client.subscribe(filter, None).await;
 
@@ -196,7 +196,6 @@ pub async fn send_file_nostr(file_path: &Path, custom_relays: Option<Vec<String>
             // Create and publish chunk event
             let chunk_event = create_chunk_event(
                 &sender_keys,
-                &receiver_pubkey,
                 &transfer_id,
                 seq,
                 total_chunks,
