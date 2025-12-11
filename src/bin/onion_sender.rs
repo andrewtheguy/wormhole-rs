@@ -1,22 +1,32 @@
-use arti_client::{TorClient, TorClientConfig};
+use arti_client::{config::TorClientConfigBuilder, TorClient};
 use futures::StreamExt;
+use rand::Rng;
+use safelog::DisplayRedacted;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tor_cell::relaycell::msg::Connected;
 use tor_hsservice::{config::OnionServiceConfigBuilder, handle_rend_requests};
-use safelog::DisplayRedacted; // <-- important
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    println!("Bootstrapping Tor client...");
+    // Create a temporary directory for ephemeral state (new keys each run)
+    let temp_dir = tempfile::tempdir()?;
+    let state_dir = temp_dir.path().join("state");
+    let cache_dir = temp_dir.path().join("cache");
 
-    let config = TorClientConfig::default();
+    println!("Bootstrapping Tor client (ephemeral mode)...");
+
+    let config = TorClientConfigBuilder::from_directories(state_dir, cache_dir).build()?;
     let tor_client = TorClient::create_bootstrapped(config).await?;
 
     println!("Tor client bootstrapped!");
 
-    // Configure onion service
+    // Generate a random nickname for truly ephemeral service (new address each time)
+    let random_suffix: u64 = rand::thread_rng().gen();
+    let nickname = format!("wh_{:016x}", random_suffix);
+
+    // Configure onion service with random nickname
     let hs_config = OnionServiceConfigBuilder::default()
-        .nickname("wormhole_test".parse()?)
+        .nickname(nickname.parse()?)
         .build()?;
 
     // Launch service - returns Option<(RunningOnionService, Stream<RendRequest>)>
