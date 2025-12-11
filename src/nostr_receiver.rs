@@ -192,16 +192,14 @@ pub async fn receive_file_nostr(
                             create_ack_event(&receiver_keys, &sender_pubkey, &transfer_id, seq as i32)?;
                         client.send_event(&ack_event).await?;
 
-                        // Progress update
+                        // Progress update for every chunk
                         let progress = (received_chunks.len() as f64 / total as f64 * 100.0) as u32;
-                        if received_chunks.len() % 5 == 0 || received_chunks.len() == total as usize {
-                            println!(
-                                "   Progress: {}% ({}/{})",
-                                progress,
-                                received_chunks.len(),
-                                total
-                            );
-                        }
+                        println!(
+                            "   Progress: {}% ({}/{})",
+                            progress,
+                            received_chunks.len(),
+                            total
+                        );
 
                         // Check if we have all chunks
                         if received_chunks.len() == total as usize {

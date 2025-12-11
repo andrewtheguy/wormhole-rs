@@ -259,18 +259,16 @@ pub async fn send_file_nostr(
 
         bytes_sent += bytes_read as u64;
 
-        // Progress update every 5 chunks or on last chunk
-        if (seq + 1) % 5 == 0 || bytes_sent == file_size {
-            let percent = (bytes_sent as f64 / file_size as f64 * 100.0) as u32;
-            println!(
-                "   Progress: {}% ({}/{}) - Chunk {}/{}",
-                percent,
-                format_bytes(bytes_sent),
-                format_bytes(file_size),
-                seq + 1,
-                total_chunks
-            );
-        }
+        // Progress update for every chunk
+        let percent = (bytes_sent as f64 / file_size as f64 * 100.0) as u32;
+        println!(
+            "   Progress: {}% ({}/{}) - Chunk {}/{}",
+            percent,
+            format_bytes(bytes_sent),
+            format_bytes(file_size),
+            seq + 1,
+            total_chunks
+        );
 
         // Small delay between chunks to avoid overwhelming relays
         tokio::time::sleep(Duration::from_millis(100)).await;
