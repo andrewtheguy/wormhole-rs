@@ -135,6 +135,9 @@ pub async fn send_file_nostr(
     let total_chunks = ((file_size + NOSTR_CHUNK_SIZE as u64 - 1) / NOSTR_CHUNK_SIZE as u64) as u32;
     println!("📊 File will be sent in {} chunks", total_chunks);
 
+    // Single notifications stream to avoid dropping events between polls
+    let mut notifications = client.notifications();
+
     // Subscribe to ACK events from any receiver for this transfer
     // ACK events will have: kind=24242, t=<transfer_id>, p=<sender_pubkey>, type=ack
     let filter = Filter::new()
@@ -161,7 +164,6 @@ pub async fn send_file_nostr(
     let start_time = tokio::time::Instant::now();
 
     while !receiver_ready && start_time.elapsed() < ready_timeout {
-        let mut notifications = client.notifications();
         match timeout(Duration::from_secs(5), notifications.recv()).await {
             Ok(Ok(RelayPoolNotification::Event { event, .. })) => {
                 if is_ack_event(&event) && get_transfer_id(&event).as_deref() == Some(&transfer_id)
@@ -225,7 +227,6 @@ pub async fn send_file_nostr(
             let ack_deadline = tokio::time::Instant::now() + Duration::from_secs(ACK_TIMEOUT_SECS);
 
             while tokio::time::Instant::now() < ack_deadline {
-                let mut notifications = client.notifications();
                 match timeout(Duration::from_secs(1), notifications.recv()).await {
                     Ok(Ok(RelayPoolNotification::Event { event, .. })) => {
                         if is_ack_event(&event)
@@ -283,7 +284,6 @@ pub async fn send_file_nostr(
     let mut final_ack_received = false;
 
     while tokio::time::Instant::now() < final_ack_deadline {
-        let mut notifications = client.notifications();
         match timeout(Duration::from_secs(1), notifications.recv()).await {
             Ok(Ok(RelayPoolNotification::Event { event, .. })) => {
                 if is_ack_event(&event) && get_transfer_id(&event).as_deref() == Some(&transfer_id)

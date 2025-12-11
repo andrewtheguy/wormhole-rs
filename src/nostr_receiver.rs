@@ -117,6 +117,9 @@ pub async fn receive_file_nostr(
 
     println!("✅ Connected to {} relays", connected_count);
 
+    // Single notifications stream to avoid dropping events between polls
+    let mut notifications = client.notifications();
+
     // Subscribe to chunk events from sender
     let filter = Filter::new()
         .kind(crate::nostr_protocol::nostr_file_transfer_kind())
@@ -165,7 +168,6 @@ pub async fn receive_file_nostr(
         }
 
         // Wait for events
-        let mut notifications = client.notifications();
         match timeout(Duration::from_secs(5), notifications.recv()).await {
             Ok(Ok(RelayPoolNotification::Event { event, .. })) => {
                 // Check if this is a chunk event for our transfer
