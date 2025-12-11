@@ -78,7 +78,7 @@ cargo build --release
 ### Send a file
 
 ```bash
-./target/release/wormhole-rs send /path/to/file
+wormhole-rs send /path/to/file
 ```
 
 This will display a wormhole code to share with the receiver.
@@ -86,19 +86,19 @@ This will display a wormhole code to share with the receiver.
 ### Receive a file
 
 ```bash
-./target/release/wormhole-rs receive
+wormhole-rs receive
 ```
 
 You will be prompted to enter the wormhole code. Alternatively, provide it directly:
 
 ```bash
-./target/release/wormhole-rs receive --code <WORMHOLE_CODE>
+wormhole-rs receive --code <WORMHOLE_CODE>
 ```
 
 Optionally specify an output directory:
 
 ```bash
-./target/release/wormhole-rs receive --output /path/to/dir
+wormhole-rs receive --output /path/to/dir
 ```
 
 ## How It Works
