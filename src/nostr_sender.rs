@@ -13,10 +13,21 @@ use crate::nostr_protocol::{
 };
 use crate::transfer::format_bytes;
 use crate::wormhole::generate_nostr_code;
+
 const ACK_TIMEOUT_SECS: u64 = 30; // Increased from 10s to 30s for better reliability
 const MAX_RETRIES: u32 = 3;
 const MIN_RELAYS_REQUIRED: usize = 2;
 const SUBSCRIPTION_SETUP_DELAY_SECS: u64 = 3; // Wait for subscription to propagate
+
+/// Get connected relay URLs from the client
+async fn get_connected_relays(client: &Client) -> Vec<String> {
+    let relay_statuses = client.relays().await;
+    relay_statuses
+        .iter()
+        .filter(|(_, relay)| relay.is_connected())
+        .map(|(url, _)| url.to_string())
+        .collect()
+}
 
 /// Send a file via Nostr relays
 pub async fn send_file_nostr(
@@ -215,7 +226,13 @@ pub async fn send_file_nostr(
     let mut bytes_sent = 0u64;
     let mut ack_tracker: HashMap<u32, bool> = HashMap::new();
 
-    println!("📤 Sending {} chunks...", total_chunks);
+    // Get list of connected relays for round-robin distribution
+    let connected_relays = get_connected_relays(&client).await;
+    println!(
+        "📤 Sending {} chunks (round-robin across {} relays)...",
+        total_chunks,
+        connected_relays.len()
+    );
 
     for seq in 0..total_chunks {
         let bytes_read = file.read(&mut buffer).await.context("Failed to read file")?;
@@ -228,6 +245,10 @@ pub async fn send_file_nostr(
         // Encrypt chunk
         let encrypted_chunk =
             encrypt_chunk(&encryption_key, seq as u64, chunk_data).context("Failed to encrypt chunk")?;
+
+        // Select relay for this chunk using round-robin
+        let relay_index = (seq as usize) % connected_relays.len();
+        let target_relay = &connected_relays[relay_index];
 
         // Try sending chunk with retries
         let mut attempt = 0;
@@ -245,8 +266,9 @@ pub async fn send_file_nostr(
                 &encrypted_chunk,
             )?;
 
+            // Send to specific relay (round-robin distribution)
             client
-                .send_event(&chunk_event)
+                .send_event_to([target_relay.as_str()], &chunk_event)
                 .await
                 .context("Failed to send chunk event")?;
 
@@ -285,15 +307,22 @@ pub async fn send_file_nostr(
 
         bytes_sent += bytes_read as u64;
 
-        // Progress update for every chunk
+        // Progress update for every chunk (show which relay was used)
         let percent = (bytes_sent as f64 / file_size as f64 * 100.0) as u32;
+        // Extract just the host from the relay URL for cleaner output
+        let relay_host = target_relay
+            .replace("wss://", "")
+            .replace("ws://", "")
+            .trim_end_matches('/')
+            .to_string();
         println!(
-            "   Progress: {}% ({}/{}) - Chunk {}/{}",
+            "   Progress: {}% ({}/{}) - Chunk {}/{} → {}",
             percent,
             format_bytes(bytes_sent),
             format_bytes(file_size),
             seq + 1,
-            total_chunks
+            total_chunks,
+            relay_host
         );
 
         // Small delay between chunks to avoid overwhelming relays
