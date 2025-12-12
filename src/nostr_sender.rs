@@ -65,7 +65,10 @@ pub async fn send_file_nostr(
     // Generate ephemeral keypair for this transfer
     let sender_keys = Keys::generate();
     let sender_pubkey = sender_keys.public_key();
-    println!("🔑 Generated ephemeral sender key: {}", sender_pubkey.to_hex());
+    println!(
+        "🔑 Generated ephemeral sender key: {}",
+        sender_pubkey.to_hex()
+    );
 
     // Generate transfer ID
     let transfer_id = generate_transfer_id();
@@ -180,10 +183,7 @@ pub async fn send_file_nostr(
     // ACK events will have: kind=24242, t=<transfer_id>, p=<sender_pubkey>, type=ack
     let filter = Filter::new()
         .kind(crate::nostr_protocol::nostr_file_transfer_kind())
-        .custom_tag(
-            SingleLetterTag::lowercase(Alphabet::T),
-            transfer_id.clone(),
-        )
+        .custom_tag(SingleLetterTag::lowercase(Alphabet::T), transfer_id.clone())
         .custom_tag(
             SingleLetterTag::lowercase(Alphabet::P),
             sender_pubkey.to_hex(),
@@ -228,6 +228,9 @@ pub async fn send_file_nostr(
 
     // Get list of connected relays for round-robin distribution
     let connected_relays = get_connected_relays(&client).await;
+    if connected_relays.is_empty() {
+        anyhow::bail!("No connected relays available to send chunks");
+    }
     println!(
         "📤 Sending {} chunks (round-robin across {} relays)...",
         total_chunks,
@@ -235,7 +238,10 @@ pub async fn send_file_nostr(
     );
 
     for seq in 0..total_chunks {
-        let bytes_read = file.read(&mut buffer).await.context("Failed to read file")?;
+        let bytes_read = file
+            .read(&mut buffer)
+            .await
+            .context("Failed to read file")?;
         if bytes_read == 0 {
             break;
         }
@@ -243,12 +249,8 @@ pub async fn send_file_nostr(
         let chunk_data = &buffer[..bytes_read];
 
         // Encrypt chunk
-        let encrypted_chunk =
-            encrypt_chunk(&encryption_key, seq as u64, chunk_data).context("Failed to encrypt chunk")?;
-
-        // Select relay for this chunk using round-robin
-        let relay_index = (seq as usize) % connected_relays.len();
-        let target_relay = &connected_relays[relay_index];
+        let encrypted_chunk = encrypt_chunk(&encryption_key, seq as u64, chunk_data)
+            .context("Failed to encrypt chunk")?;
 
         // Try sending chunk with retries
         let mut attempt = 0;
@@ -256,6 +258,10 @@ pub async fn send_file_nostr(
 
         while attempt < MAX_RETRIES && !ack_received {
             attempt += 1;
+
+            // Select relay for this attempt using round-robin
+            let relay_index = ((seq as usize) + (attempt as usize - 1)) % connected_relays.len();
+            let target_relay = &connected_relays[relay_index];
 
             // Create and publish chunk event
             let chunk_event = create_chunk_event(
@@ -297,7 +303,15 @@ pub async fn send_file_nostr(
             }
 
             if !ack_received && attempt < MAX_RETRIES {
-                eprintln!("⚠️  Chunk {} ACK timeout, retrying ({}/{})", seq, attempt, MAX_RETRIES);
+                let relay_host = target_relay
+                    .replace("wss://", "")
+                    .replace("ws://", "")
+                    .trim_end_matches('/')
+                    .to_string();
+                eprintln!(
+                    "⚠️  Chunk {} ACK timeout via {}, retrying on next relay ({}/{})",
+                    seq, relay_host, attempt, MAX_RETRIES
+                );
             }
         }
 
@@ -310,7 +324,8 @@ pub async fn send_file_nostr(
         // Progress update for every chunk (show which relay was used)
         let percent = (bytes_sent as f64 / file_size as f64 * 100.0) as u32;
         // Extract just the host from the relay URL for cleaner output
-        let relay_host = target_relay
+        let relay_index = ((seq as usize) + (attempt as usize - 1)) % connected_relays.len();
+        let relay_host = connected_relays[relay_index]
             .replace("wss://", "")
             .replace("ws://", "")
             .trim_end_matches('/')

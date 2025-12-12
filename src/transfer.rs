@@ -67,8 +67,7 @@ impl FileHeader {
             .context("Invalid filename encoding")?;
 
         let size_start = 3 + filename_len;
-        let file_size =
-            u64::from_be_bytes(data[size_start..size_start + 8].try_into().unwrap());
+        let file_size = u64::from_be_bytes(data[size_start..size_start + 8].try_into().unwrap());
 
         Ok(Self {
             transfer_type,

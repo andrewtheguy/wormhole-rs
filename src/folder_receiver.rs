@@ -147,10 +147,8 @@ pub async fn receive_folder(code: &str, output_dir: Option<PathBuf>) -> Result<(
     }
 
     // Accept bi-directional stream
-    let (mut send_stream, mut recv_stream) = conn
-        .accept_bi()
-        .await
-        .context("Failed to accept stream")?;
+    let (mut send_stream, mut recv_stream) =
+        conn.accept_bi().await.context("Failed to accept stream")?;
 
     // Read header
     let header = if let Some(ref k) = key {
@@ -221,7 +219,10 @@ pub async fn receive_folder(code: &str, output_dir: Option<PathBuf>) -> Result<(
 
         for entry in archive.entries().context("Failed to read tar entries")? {
             let mut entry = entry.context("Failed to read tar entry")?;
-            let path = entry.path().context("Failed to get entry path")?.into_owned();
+            let path = entry
+                .path()
+                .context("Failed to get entry path")?
+                .into_owned();
 
             // Check entry type
             let entry_type = entry.header().entry_type();

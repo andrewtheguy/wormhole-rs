@@ -66,10 +66,8 @@ pub async fn receive_file(code: &str, output_dir: Option<PathBuf>) -> Result<()>
     }
 
     // Accept bi-directional stream
-    let (mut send_stream, mut recv_stream) = conn
-        .accept_bi()
-        .await
-        .context("Failed to accept stream")?;
+    let (mut send_stream, mut recv_stream) =
+        conn.accept_bi().await.context("Failed to accept stream")?;
 
     // Read file header
     let header = if let Some(ref k) = key {

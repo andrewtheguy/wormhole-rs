@@ -27,14 +27,7 @@ mod tests {
         let encrypted_data = b"test_encrypted_chunk_data";
 
         // Create chunk event
-        let event = create_chunk_event(
-            &sender_keys,
-            &transfer_id,
-            5,
-            10,
-            encrypted_data,
-        )
-        .unwrap();
+        let event = create_chunk_event(&sender_keys, &transfer_id, 5, 10, encrypted_data).unwrap();
 
         // Verify event properties
         assert_eq!(event.kind, nostr_file_transfer_kind());

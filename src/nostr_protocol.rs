@@ -67,7 +67,9 @@ fn relay_list_kind() -> Kind {
 /// Returns (relay_url, info_document, response_time) on success
 async fn fetch_relay_info(relay_url: &str) -> Option<(String, RelayInformationDocument, Duration)> {
     // Convert wss:// to https:// for HTTP request
-    let http_url = relay_url.replace("wss://", "https://").replace("ws://", "http://");
+    let http_url = relay_url
+        .replace("wss://", "https://")
+        .replace("ws://", "http://");
 
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(RELAY_INFO_TIMEOUT_SECS))
@@ -167,23 +169,16 @@ async fn discover_relays_from_seeds() -> HashSet<String> {
 
     // Query for NIP-66 relay discovery events (kind 30166)
     // These are published by relay monitors
-    let nip66_filter = Filter::new()
-        .kind(relay_discovery_kind())
-        .limit(100);
+    let nip66_filter = Filter::new().kind(relay_discovery_kind()).limit(100);
 
     // Query for NIP-65 relay list events (kind 10002)
     // These are published by users listing their preferred relays
-    let nip65_filter = Filter::new()
-        .kind(relay_list_kind())
-        .limit(100);
+    let nip65_filter = Filter::new().kind(relay_list_kind()).limit(100);
 
     let timeout = Duration::from_secs(RELAY_DISCOVERY_TIMEOUT_SECS);
 
     // Fetch NIP-66 events
-    if let Ok(nip66_events) = client
-        .fetch_events(nip66_filter, timeout)
-        .await
-    {
+    if let Ok(nip66_events) = client.fetch_events(nip66_filter, timeout).await {
         for event in nip66_events.iter() {
             if let Some(relay_url) = extract_relay_from_nip66(event) {
                 discovered.insert(relay_url);
@@ -192,10 +187,7 @@ async fn discover_relays_from_seeds() -> HashSet<String> {
     }
 
     // Fetch NIP-65 events
-    if let Ok(nip65_events) = client
-        .fetch_events(nip65_filter, timeout)
-        .await
-    {
+    if let Ok(nip65_events) = client.fetch_events(nip65_filter, timeout).await {
         for event in nip65_events.iter() {
             for relay_url in extract_relays_from_nip65(event) {
                 discovered.insert(relay_url);
@@ -227,10 +219,7 @@ async fn discover_best_relays() -> Vec<String> {
     }
 
     // Limit number of relays to probe to avoid too many requests
-    let relays_to_probe: Vec<_> = discovered
-        .into_iter()
-        .take(MAX_RELAYS_TO_PROBE)
-        .collect();
+    let relays_to_probe: Vec<_> = discovered.into_iter().take(MAX_RELAYS_TO_PROBE).collect();
 
     // Probe discovered relays in parallel via NIP-11
     let futures: Vec<_> = relays_to_probe
@@ -370,7 +359,10 @@ pub fn create_ack_event(
 pub fn parse_chunk_event(event: &Event) -> Result<(u32, u32, Vec<u8>)> {
     // Validate event kind
     if event.kind != nostr_file_transfer_kind() {
-        anyhow::bail!("Invalid event kind: expected {}", nostr_file_transfer_kind());
+        anyhow::bail!(
+            "Invalid event kind: expected {}",
+            nostr_file_transfer_kind()
+        );
     }
 
     // Extract sequence number
@@ -413,7 +405,10 @@ pub fn parse_chunk_event(event: &Event) -> Result<(u32, u32, Vec<u8>)> {
 pub fn parse_ack_event(event: &Event) -> Result<i32> {
     // Validate event kind
     if event.kind != nostr_file_transfer_kind() {
-        anyhow::bail!("Invalid event kind: expected {}", nostr_file_transfer_kind());
+        anyhow::bail!(
+            "Invalid event kind: expected {}",
+            nostr_file_transfer_kind()
+        );
     }
 
     // Extract sequence number

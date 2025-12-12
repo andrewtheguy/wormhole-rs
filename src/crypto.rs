@@ -63,14 +63,14 @@ pub fn decrypt_chunk(key: &[u8; 32], chunk_num: u64, encrypted: &[u8]) -> Result
     }
 
     let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(key));
-    
+
     // Extract nonce and verify it matches expected
     let nonce_bytes = &encrypted[..NONCE_SIZE];
     let expected_nonce = derive_nonce(chunk_num);
     if nonce_bytes != expected_nonce {
         anyhow::bail!("Nonce mismatch - possible replay attack or corruption");
     }
-    
+
     let nonce = Nonce::from_slice(nonce_bytes);
     let ciphertext = &encrypted[NONCE_SIZE..];
 

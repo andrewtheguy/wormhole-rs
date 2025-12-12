@@ -10,8 +10,8 @@ use tokio::io::AsyncReadExt;
 
 use crate::crypto::{generate_key, CHUNK_SIZE};
 use crate::transfer::{
-    format_bytes, num_chunks, send_chunk, send_encrypted_chunk, send_encrypted_header,
-    send_header, FileHeader, TransferType,
+    format_bytes, num_chunks, send_chunk, send_encrypted_chunk, send_encrypted_header, send_header,
+    FileHeader, TransferType,
 };
 use crate::wormhole::generate_code;
 
@@ -80,7 +80,8 @@ pub async fn send_file(file_path: &Path, extra_encrypt: bool) -> Result<()> {
     println!("✅ Receiver connected!");
 
     // Open bi-directional stream
-    let (mut send_stream, mut recv_stream) = conn.open_bi().await.context("Failed to open stream")?;
+    let (mut send_stream, mut recv_stream) =
+        conn.open_bi().await.context("Failed to open stream")?;
 
     // Send file header
     let header = FileHeader::new(TransferType::File, filename.clone(), file_size);
@@ -104,7 +105,10 @@ pub async fn send_file(file_path: &Path, extra_encrypt: bool) -> Result<()> {
     println!("📤 Sending {} chunks...", total_chunks);
 
     loop {
-        let bytes_read = file.read(&mut buffer).await.context("Failed to read file")?;
+        let bytes_read = file
+            .read(&mut buffer)
+            .await
+            .context("Failed to read file")?;
         if bytes_read == 0 {
             break;
         }

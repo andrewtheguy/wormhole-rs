@@ -71,8 +71,7 @@ pub fn generate_code(
         nostr_filename: None,
     };
 
-    let serialized =
-        serde_json::to_vec(&token).context("Failed to serialize wormhole token")?;
+    let serialized = serde_json::to_vec(&token).context("Failed to serialize wormhole token")?;
 
     Ok(URL_SAFE_NO_PAD.encode(&serialized))
 }
@@ -105,8 +104,7 @@ pub fn generate_nostr_code(
         nostr_filename: Some(filename),
     };
 
-    let serialized =
-        serde_json::to_vec(&token).context("Failed to serialize wormhole token")?;
+    let serialized = serde_json::to_vec(&token).context("Failed to serialize wormhole token")?;
 
     Ok(URL_SAFE_NO_PAD.encode(&serialized))
 }
@@ -160,9 +158,8 @@ pub fn parse_code(code: &str) -> Result<WormholeToken> {
         .decode(code.trim())
         .context("Failed to decode wormhole code")?;
 
-    let token: WormholeToken = serde_json::from_slice(&serialized).context(
-        "Invalid wormhole code: failed to parse token. Make sure the code is correct.",
-    )?;
+    let token: WormholeToken = serde_json::from_slice(&serialized)
+        .context("Invalid wormhole code: failed to parse token. Make sure the code is correct.")?;
 
     // Validate version (support both v1 and v2)
     if token.version != 1 && token.version != 2 {

@@ -7,9 +7,7 @@ use tempfile::NamedTempFile;
 use tokio::time::{timeout, Duration};
 
 use crate::crypto::decrypt_chunk;
-use crate::nostr_protocol::{
-    create_ack_event, get_transfer_id, is_chunk_event, parse_chunk_event,
-};
+use crate::nostr_protocol::{create_ack_event, get_transfer_id, is_chunk_event, parse_chunk_event};
 use crate::transfer::format_bytes;
 use crate::wormhole::{parse_code, PROTOCOL_NOSTR};
 
@@ -18,10 +16,7 @@ const MIN_RELAYS_REQUIRED: usize = 2;
 const SUBSCRIPTION_SETUP_DELAY_SECS: u64 = 3; // Wait for subscription to propagate
 
 /// Receive a file via Nostr relays
-pub async fn receive_file_nostr(
-    code: &str,
-    output_dir: Option<PathBuf>,
-) -> Result<()> {
+pub async fn receive_file_nostr(code: &str, output_dir: Option<PathBuf>) -> Result<()> {
     println!("🔮 Parsing wormhole code...");
 
     // Parse the wormhole code
@@ -76,7 +71,10 @@ pub async fn receive_file_nostr(
     // Generate ephemeral keypair for this receive session
     let receiver_keys = Keys::generate();
     let receiver_pubkey = receiver_keys.public_key();
-    println!("🔑 Generated ephemeral receiver key: {}", receiver_pubkey.to_hex());
+    println!(
+        "🔑 Generated ephemeral receiver key: {}",
+        receiver_pubkey.to_hex()
+    );
 
     // Create Nostr client and connect to relays
     let client = Client::new(receiver_keys.clone());
@@ -145,10 +143,7 @@ pub async fn receive_file_nostr(
     // Subscribe to chunk events from sender
     let filter = Filter::new()
         .kind(crate::nostr_protocol::nostr_file_transfer_kind())
-        .custom_tag(
-            SingleLetterTag::lowercase(Alphabet::T),
-            transfer_id.clone(),
-        )
+        .custom_tag(SingleLetterTag::lowercase(Alphabet::T), transfer_id.clone())
         .author(sender_pubkey);
 
     let _ = client.subscribe(filter, None).await;
@@ -220,8 +215,12 @@ pub async fn receive_file_nostr(
                         last_chunk_time = tokio::time::Instant::now();
 
                         // Send ACK for this chunk
-                        let ack_event =
-                            create_ack_event(&receiver_keys, &sender_pubkey, &transfer_id, seq as i32)?;
+                        let ack_event = create_ack_event(
+                            &receiver_keys,
+                            &sender_pubkey,
+                            &transfer_id,
+                            seq as i32,
+                        )?;
                         client.send_event(&ack_event).await?;
 
                         // Progress update for every chunk
@@ -282,10 +281,7 @@ pub async fn receive_file_nostr(
     // Extract filename from wormhole code, or use default if missing
     let filename = token.nostr_filename.unwrap_or_else(|| {
         // Safely truncate transfer_id to 8 characters
-        let truncated_id = transfer_id
-            .chars()
-            .take(8)
-            .collect::<String>();
+        let truncated_id = transfer_id.chars().take(8).collect::<String>();
         format!("received_file_{}.bin", truncated_id)
     });
 

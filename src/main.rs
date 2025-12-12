@@ -2,7 +2,10 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use std::io::{self, Write};
 use std::path::PathBuf;
-use wormhole_rs::{folder_receiver, folder_sender, nostr_protocol, nostr_receiver, nostr_sender, receiver, sender, wormhole};
+use wormhole_rs::{
+    folder_receiver, folder_sender, nostr_protocol, nostr_receiver, nostr_sender, receiver, sender,
+    wormhole,
+};
 
 #[derive(Parser)]
 #[command(name = "wormhole-rs")]
@@ -83,7 +86,10 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Send { file, extra_encrypt } => {
+        Commands::Send {
+            file,
+            extra_encrypt,
+        } => {
             if !file.exists() {
                 anyhow::bail!("File not found: {}", file.display());
             }
@@ -142,7 +148,11 @@ async fn main() -> Result<()> {
             wormhole::validate_code_format(&code)?;
             folder_receiver::receive_folder(&code, output).await?;
         }
-        Commands::SendNostr { file, relays, use_default_relays } => {
+        Commands::SendNostr {
+            file,
+            relays,
+            use_default_relays,
+        } => {
             if !file.exists() {
                 anyhow::bail!("File not found: {}", file.display());
             }
@@ -166,10 +176,7 @@ async fn main() -> Result<()> {
             };
             nostr_sender::send_file_nostr(&file, custom_relays, use_default_relays).await?;
         }
-        Commands::ReceiveNostr {
-            code,
-            output,
-        } => {
+        Commands::ReceiveNostr { code, output } => {
             if let Some(ref dir) = output {
                 if !dir.is_dir() {
                     anyhow::bail!("Output directory does not exist: {}", dir.display());

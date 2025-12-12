@@ -14,8 +14,8 @@ use walkdir::WalkDir;
 
 use crate::crypto::{generate_key, CHUNK_SIZE};
 use crate::transfer::{
-    format_bytes, num_chunks, send_chunk, send_encrypted_chunk, send_encrypted_header,
-    send_header, FileHeader, TransferType,
+    format_bytes, num_chunks, send_chunk, send_encrypted_chunk, send_encrypted_header, send_header,
+    FileHeader, TransferType,
 };
 use crate::wormhole::generate_code;
 
@@ -144,7 +144,8 @@ pub async fn send_folder(folder_path: &Path, extra_encrypt: bool) -> Result<()> 
     println!("✅ Receiver connected!");
 
     // Open bi-directional stream
-    let (mut send_stream, mut recv_stream) = conn.open_bi().await.context("Failed to open stream")?;
+    let (mut send_stream, mut recv_stream) =
+        conn.open_bi().await.context("Failed to open stream")?;
 
     // Send header with Folder transfer type
     let header = FileHeader::new(TransferType::Folder, tar_filename.clone(), file_size);

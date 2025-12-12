@@ -14,8 +14,7 @@ async fn test_unencrypted_header_roundtrip() {
     let (mut client, mut server) = duplex(4096);
     let header = FileHeader::new(TransferType::File, "test_file.txt".to_string(), 12345);
 
-    let send_handle =
-        tokio::spawn(async move { send_header(&mut client, &header).await });
+    let send_handle = tokio::spawn(async move { send_header(&mut client, &header).await });
 
     let received = recv_header(&mut server).await.unwrap();
     send_handle.await.unwrap().unwrap();
@@ -104,8 +103,11 @@ async fn test_unencrypted_large_file_multi_chunk() {
 
     let file_data_clone = file_data.clone();
     let send_handle = tokio::spawn(async move {
-        let header =
-            FileHeader::new(TransferType::File, "large_file.bin".to_string(), file_size as u64);
+        let header = FileHeader::new(
+            TransferType::File,
+            "large_file.bin".to_string(),
+            file_size as u64,
+        );
         send_header(&mut client, &header).await.unwrap();
 
         // Send chunks
@@ -135,8 +137,7 @@ async fn test_unencrypted_folder_transfer_type() {
     let (mut client, mut server) = duplex(4096);
     let header = FileHeader::new(TransferType::Folder, "myfolder.tar".to_string(), 54321);
 
-    let send_handle =
-        tokio::spawn(async move { send_header(&mut client, &header).await });
+    let send_handle = tokio::spawn(async move { send_header(&mut client, &header).await });
 
     let received = recv_header(&mut server).await.unwrap();
     send_handle.await.unwrap().unwrap();
@@ -157,9 +158,8 @@ async fn test_encrypted_header_roundtrip() {
     let header = FileHeader::new(TransferType::File, "test_file.txt".to_string(), 12345);
 
     let key_clone = key;
-    let send_handle = tokio::spawn(async move {
-        send_encrypted_header(&mut client, &key_clone, &header).await
-    });
+    let send_handle =
+        tokio::spawn(async move { send_encrypted_header(&mut client, &key_clone, &header).await });
 
     let received = recv_encrypted_header(&mut server, &key).await.unwrap();
     send_handle.await.unwrap().unwrap();
@@ -176,9 +176,10 @@ async fn test_encrypted_single_chunk_roundtrip() {
 
     let key_clone = key;
     let data_clone = data.to_vec();
-    let send_handle = tokio::spawn(async move {
-        send_encrypted_chunk(&mut client, &key_clone, 1, &data_clone).await
-    });
+    let send_handle =
+        tokio::spawn(
+            async move { send_encrypted_chunk(&mut client, &key_clone, 1, &data_clone).await },
+        );
 
     let received = recv_encrypted_chunk(&mut server, &key, 1).await.unwrap();
     send_handle.await.unwrap().unwrap();
@@ -321,7 +322,11 @@ async fn test_encrypted_large_file_multi_chunk() {
     let key_clone = key;
     let file_data_clone = file_data.clone();
     let send_handle = tokio::spawn(async move {
-        let header = FileHeader::new(TransferType::File, "large_file.bin".to_string(), file_size as u64);
+        let header = FileHeader::new(
+            TransferType::File,
+            "large_file.bin".to_string(),
+            file_size as u64,
+        );
         send_encrypted_header(&mut client, &key_clone, &header)
             .await
             .unwrap();
