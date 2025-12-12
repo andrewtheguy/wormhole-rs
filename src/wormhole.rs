@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-use iroh::EndpointAddr;
+use iroh::{EndpointAddr, RelayUrl};
 
 /// Current token format version
 pub const CURRENT_VERSION: u8 = 2;
@@ -10,6 +10,44 @@ pub const PROTOCOL_IROH: &str = "iroh";
 
 /// Protocol identifier for nostr transport
 pub const PROTOCOL_NOSTR: &str = "nostr";
+
+/// Minimal address for serialization - only contains node ID and relay URL
+/// IP addresses are auto-discovered by iroh, so we don't need them in the wormhole code
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct MinimalAddr {
+    /// Node ID (hex-encoded public key)
+    pub id: String,
+    /// Optional relay URL
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub relay: Option<String>,
+}
+
+impl MinimalAddr {
+    /// Create from a full EndpointAddr, stripping IP addresses
+    pub fn from_endpoint_addr(addr: &EndpointAddr) -> Self {
+        let relay = addr.relay_urls().next().map(|r| r.to_string());
+        Self {
+            id: addr.id.to_string(),
+            relay,
+        }
+    }
+
+    /// Convert back to EndpointAddr
+    pub fn to_endpoint_addr(&self) -> Result<EndpointAddr> {
+        let id = self
+            .id
+            .parse()
+            .context("Failed to parse endpoint ID from wormhole code")?;
+        let mut addr = EndpointAddr::new(id);
+        if let Some(ref relay_str) = self.relay {
+            let relay_url: RelayUrl = relay_str
+                .parse()
+                .context("Failed to parse relay URL from wormhole code")?;
+            addr = addr.with_relay_url(relay_url);
+        }
+        Ok(addr)
+    }
+}
 
 /// Wormhole token containing all transfer metadata
 /// This is a self-describing format that includes version, protocol, and encryption info
@@ -24,9 +62,10 @@ pub struct WormholeToken {
     /// AES-256-GCM key as base64 string (only present if extra_encrypt is true)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub key: Option<String>,
-    /// Endpoint address for connection (None for nostr-only transfers)
+    /// Minimal endpoint address for connection (None for nostr-only transfers)
+    /// Contains only node ID and relay URL - IP addresses are auto-discovered
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub addr: Option<EndpointAddr>,
+    pub addr: Option<MinimalAddr>,
 
     // Version 2 fields (Nostr-specific):
     /// Sender's ephemeral Nostr public key (hex)
@@ -59,12 +98,15 @@ pub fn generate_code(
         anyhow::bail!("Encryption key required when extra_encrypt is true");
     }
 
+    // Use MinimalAddr to strip IP addresses - they're auto-discovered by iroh
+    let minimal_addr = MinimalAddr::from_endpoint_addr(addr);
+
     let token = WormholeToken {
         version: CURRENT_VERSION,
         protocol: PROTOCOL_IROH.to_string(),
         extra_encrypt,
         key: key.map(|k| URL_SAFE_NO_PAD.encode(k)),
-        addr: Some(addr.clone()),
+        addr: Some(minimal_addr),
         nostr_sender_pubkey: None,
         nostr_relays: None,
         nostr_transfer_id: None,

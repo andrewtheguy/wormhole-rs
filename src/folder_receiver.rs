@@ -111,7 +111,9 @@ pub async fn receive_folder(code: &str, output_dir: Option<PathBuf>, relay_urls:
         .context("Failed to decode encryption key")?;
     let addr = token
         .addr
-        .context("No iroh endpoint address in wormhole code")?;
+        .context("No iroh endpoint address in wormhole code")?
+        .to_endpoint_addr()
+        .context("Failed to parse endpoint address")?;
 
     println!("✅ Code valid. Connecting to sender...");
 
