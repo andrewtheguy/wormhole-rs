@@ -38,6 +38,9 @@ pub const DEFAULT_NOSTR_RELAYS: &[&str] = &[
 /// Timeout for fetching NIP-11 relay information
 const RELAY_INFO_TIMEOUT_SECS: u64 = 5;
 
+/// Timeout for WebSocket connectivity test
+const RELAY_CONNECT_TIMEOUT_SECS: u64 = 5;
+
 /// Timeout for relay discovery queries
 const RELAY_DISCOVERY_TIMEOUT_SECS: u64 = 10;
 
@@ -64,17 +67,18 @@ fn relay_list_kind() -> Kind {
 }
 
 /// Fetch NIP-11 relay information document from a relay
-/// Returns (relay_url, info_document, response_time) on success
-async fn fetch_relay_info(relay_url: &str) -> Option<(String, RelayInformationDocument, Duration)> {
+/// Returns the info document on success, or None if fetch fails
+async fn fetch_relay_info(relay_url: &str) -> Option<RelayInformationDocument> {
     // Convert wss:// to https:// for HTTP request
-    let http_url = relay_url.replace("wss://", "https://").replace("ws://", "http://");
+    let http_url = relay_url
+        .replace("wss://", "https://")
+        .replace("ws://", "http://");
 
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(RELAY_INFO_TIMEOUT_SECS))
         .build()
         .ok()?;
 
-    let start = Instant::now();
     let response = client
         .get(&http_url)
         .header("Accept", "application/nostr+json")
@@ -82,11 +86,61 @@ async fn fetch_relay_info(relay_url: &str) -> Option<(String, RelayInformationDo
         .await
         .ok()?;
 
-    let elapsed = start.elapsed();
     let json = response.text().await.ok()?;
-    let info = RelayInformationDocument::from_json(&json).ok()?;
+    RelayInformationDocument::from_json(&json).ok()
+}
 
-    Some((relay_url.to_string(), info, elapsed))
+/// Test WebSocket connectivity to a relay and measure response time
+/// Returns (relay_url, response_time) on success
+async fn test_relay_connectivity(relay_url: &str) -> Option<(String, Duration)> {
+    let start = Instant::now();
+
+    // Create a temporary client to test connectivity
+    let client = Client::default();
+
+    // Add the relay
+    if client.add_relay(relay_url).await.is_err() {
+        return None;
+    }
+
+    // Try to connect (spawns background task)
+    client.connect().await;
+
+    // Wait for connection with timeout
+    let timeout = Duration::from_secs(RELAY_CONNECT_TIMEOUT_SECS);
+    let relay = client.relay(relay_url).await.ok()?;
+
+    // Wait for relay to connect or timeout
+    relay.wait_for_connection(timeout).await;
+
+    // Check if actually connected
+    if !relay.is_connected() {
+        client.disconnect().await;
+        return None;
+    }
+
+    let elapsed = start.elapsed();
+
+    // Disconnect after test
+    client.disconnect().await;
+
+    Some((relay_url.to_string(), elapsed))
+}
+
+/// Probe a relay: check NIP-11 capabilities and test WebSocket connectivity
+/// Returns (relay_url, response_time) if relay passes all checks
+async fn probe_relay(relay_url: &str) -> Option<(String, Duration)> {
+    // First, fetch NIP-11 to check capabilities
+    if let Some(info) = fetch_relay_info(relay_url).await {
+        if !is_relay_suitable(&info) {
+            return None;
+        }
+    }
+    // If NIP-11 fetch fails, we still try connectivity
+    // (some relays don't serve NIP-11 but still work fine)
+
+    // Test actual WebSocket connectivity
+    test_relay_connectivity(relay_url).await
 }
 
 /// Check if a relay has suitable capabilities for our file transfer use case
@@ -209,10 +263,10 @@ async fn discover_relays_from_seeds() -> HashSet<String> {
     discovered
 }
 
-/// Discover best relays by querying seed relays and probing via NIP-11
+/// Discover best relays by querying seed relays and probing
 /// 1. Query seed relays for NIP-66/NIP-65 events to discover more relays
-/// 2. Probe discovered relays via NIP-11 to check capabilities
-/// 3. Sort by response time and return top relays
+/// 2. Probe discovered relays: check NIP-11 capabilities + test WebSocket connectivity
+/// 3. Sort by WebSocket response time and return top relays
 async fn discover_best_relays() -> Vec<String> {
     // Discover relays from seed relays via NIP-66 and NIP-65
     let discovered = discover_relays_from_seeds().await;
@@ -226,48 +280,44 @@ async fn discover_best_relays() -> Vec<String> {
         );
     }
 
-    // Limit number of relays to probe to avoid too many requests
+    // Limit number of relays to probe to avoid too many connections
     let relays_to_probe: Vec<_> = discovered
         .into_iter()
         .take(MAX_RELAYS_TO_PROBE)
         .collect();
 
-    // Probe discovered relays in parallel via NIP-11
+    // Probe relays in parallel: NIP-11 capability check + WebSocket connectivity test
     let futures: Vec<_> = relays_to_probe
         .iter()
-        .map(|url| fetch_relay_info(url))
+        .map(|url| probe_relay(url))
         .collect();
 
     let results = join_all(futures).await;
 
-    // Filter successful probes and check capabilities
-    let mut suitable_relays: Vec<_> = results
-        .into_iter()
-        .flatten()
-        .filter(|(_, info, _)| is_relay_suitable(info))
-        .collect();
+    // Filter successful probes
+    let mut responsive_relays: Vec<_> = results.into_iter().flatten().collect();
 
-    // Sort by response time (faster = better)
-    suitable_relays.sort_by(|a, b| a.2.cmp(&b.2));
+    // Sort by WebSocket response time (faster = better)
+    responsive_relays.sort_by(|a, b| a.1.cmp(&b.1));
 
     // Take top relays
-    suitable_relays
+    responsive_relays
         .into_iter()
         .take(TOP_RELAYS_COUNT)
-        .map(|(url, _, _)| url)
+        .map(|(url, _)| url)
         .collect()
 }
 
 /// Get best relays for file transfer
-/// Probes relays via NIP-11, falls back to hardcoded defaults if none respond
+/// Discovers relays via NIP-65/NIP-66, probes them, falls back to defaults if none respond
 pub async fn get_best_relays() -> Vec<String> {
     let relays = discover_best_relays().await;
 
     if !relays.is_empty() {
-        println!("📡 Using {} relays (discovered via NIP-11)", relays.len());
+        println!("📡 Using {} fastest responding relays", relays.len());
         relays
     } else {
-        println!("📡 Using default relays (NIP-11 discovery failed)");
+        println!("📡 Using default relays (discovery failed)");
         DEFAULT_NOSTR_RELAYS
             .iter()
             .take(TOP_RELAYS_COUNT)
