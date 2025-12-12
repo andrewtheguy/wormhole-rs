@@ -37,6 +37,8 @@ pub const DEFAULT_NOSTR_RELAYS: &[&str] = &[
 
 /// Timeout for fetching NIP-11 relay information
 const RELAY_INFO_TIMEOUT_SECS: u64 = 5;
+/// How long to wait for a relay to report connected during responsiveness probe
+const RELAY_PROBE_WAIT_SECS: u64 = 2;
 
 /// Timeout for relay discovery queries
 const RELAY_DISCOVERY_TIMEOUT_SECS: u64 = 10;
@@ -120,6 +122,43 @@ fn is_relay_suitable(info: &RelayInformationDocument) -> bool {
     }
 
     true
+}
+
+/// Filter relays down to those that respond to a quick websocket connect attempt
+pub async fn filter_responsive_relays(relay_urls: &[String]) -> Vec<String> {
+    if relay_urls.is_empty() {
+        return Vec::new();
+    }
+
+    let probe_client = Client::new(Keys::generate());
+
+    for relay_url in relay_urls {
+        let _ = probe_client.add_relay(relay_url.clone()).await;
+    }
+
+    probe_client.connect().await;
+
+    // Give connections a moment to complete
+    tokio::time::sleep(Duration::from_secs(RELAY_PROBE_WAIT_SECS)).await;
+
+    let relay_statuses = probe_client.relays().await;
+    let responsive: Vec<String> = relay_urls
+        .iter()
+        .filter_map(|relay_url_str| {
+            let Ok(relay_url) = RelayUrl::parse(relay_url_str) else {
+                return None;
+            };
+
+            relay_statuses
+                .get(&relay_url)
+                .filter(|relay| relay.is_connected())
+                .map(|_| relay_url_str.clone())
+        })
+        .collect();
+
+    probe_client.disconnect().await;
+
+    responsive
 }
 
 /// Extract relay URL from a NIP-66 relay discovery event (kind 30166)

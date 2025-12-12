@@ -8,8 +8,8 @@ use tokio::time::{timeout, Duration};
 
 use crate::crypto::{encrypt_chunk, generate_key};
 use crate::nostr_protocol::{
-    create_chunk_event, generate_transfer_id, get_best_relays, get_transfer_id, is_ack_event,
-    parse_ack_event, MAX_NOSTR_FILE_SIZE, NOSTR_CHUNK_SIZE,
+    create_chunk_event, filter_responsive_relays, generate_transfer_id, get_best_relays,
+    get_transfer_id, is_ack_event, parse_ack_event, MAX_NOSTR_FILE_SIZE, NOSTR_CHUNK_SIZE,
 };
 use crate::transfer::format_bytes;
 use crate::wormhole::generate_nostr_code;
@@ -79,7 +79,7 @@ pub async fn send_file_nostr(
     println!("🔐 AES-256-GCM encryption enabled (mandatory for Nostr)");
 
     // Determine which relays to use
-    let relay_urls = if let Some(relays) = custom_relays {
+    let mut relay_urls = if let Some(relays) = custom_relays {
         println!("📡 Using custom relays");
         relays
     } else if use_default_relays {
@@ -91,6 +91,23 @@ pub async fn send_file_nostr(
     } else {
         get_best_relays().await
     };
+
+    // Drop relays that fail to respond to a quick connection probe
+    let responsive_relays = filter_responsive_relays(&relay_urls).await;
+    if responsive_relays.is_empty() {
+        eprintln!(
+            "⚠️  No relays responded during probe; continuing with unfiltered list ({})",
+            relay_urls.len()
+        );
+    } else {
+        if responsive_relays.len() < relay_urls.len() {
+            eprintln!(
+                "⚠️  Filtered out {} unresponsive relays",
+                relay_urls.len() - responsive_relays.len()
+            );
+        }
+        relay_urls = responsive_relays;
+    }
 
     println!("📡 Connecting to {} Nostr relays...", relay_urls.len());
     for url in &relay_urls {
