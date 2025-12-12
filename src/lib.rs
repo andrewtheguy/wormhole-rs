@@ -1,6 +1,7 @@
 pub mod crypto;
 pub mod folder_receiver;
 pub mod folder_sender;
+pub mod iroh_common;
 pub mod nostr_protocol;
 pub mod nostr_receiver;
 pub mod nostr_sender;

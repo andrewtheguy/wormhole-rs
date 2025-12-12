@@ -1,30 +1,15 @@
 use anyhow::{Context, Result};
-use iroh::{
-    discovery::{dns::DnsDiscovery, mdns::MdnsDiscovery, pkarr::PkarrPublisher},
-    endpoint::RelayMode,
-    Endpoint, RelayUrl, Watcher,
-};
+use iroh::Watcher;
 use std::io::Write;
 use std::path::PathBuf;
 use tempfile::NamedTempFile;
 
+use crate::iroh_common::{create_receiver_endpoint, ALPN};
 use crate::transfer::{
     format_bytes, num_chunks, recv_chunk, recv_encrypted_chunk, recv_encrypted_header, recv_header,
     TransferType,
 };
 use crate::wormhole::parse_code;
-
-const ALPN: &[u8] = b"wormhole-transfer/1";
-
-fn parse_relay_mode(relay_url: Option<String>) -> Result<RelayMode> {
-    match relay_url {
-        Some(url) => {
-            let relay_url: RelayUrl = url.parse().context("Invalid relay URL")?;
-            Ok(RelayMode::Custom(relay_url.into()))
-        }
-        None => Ok(RelayMode::Default),
-    }
-}
 
 /// Receive a file using a wormhole code
 pub async fn receive_file(code: &str, output_dir: Option<PathBuf>, relay_url: Option<String>) -> Result<()> {
@@ -49,21 +34,8 @@ pub async fn receive_file(code: &str, output_dir: Option<PathBuf>, relay_url: Op
 
     println!("✅ Code valid. Connecting to sender...");
 
-    // Parse relay mode
-    let relay_mode = parse_relay_mode(relay_url)?;
-    let using_custom_relay = !matches!(relay_mode, RelayMode::Default);
-    if using_custom_relay {
-        println!("Using custom relay server");
-    }
-
-    // Create iroh endpoint with N0 discovery + local mDNS
-    let endpoint = Endpoint::empty_builder(relay_mode)
-        .discovery(PkarrPublisher::n0_dns())
-        .discovery(DnsDiscovery::n0_dns())
-        .discovery(MdnsDiscovery::builder())
-        .bind()
-        .await
-        .context("Failed to create endpoint")?;
+    // Create iroh endpoint
+    let endpoint = create_receiver_endpoint(relay_url).await?;
 
     // Connect to sender
     let conn = endpoint

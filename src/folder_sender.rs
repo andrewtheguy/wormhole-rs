@@ -1,9 +1,4 @@
 use anyhow::{Context, Result};
-use iroh::{
-    discovery::{dns::DnsDiscovery, mdns::MdnsDiscovery, pkarr::PkarrPublisher},
-    endpoint::RelayMode,
-    Endpoint, RelayUrl,
-};
 use std::fs;
 use std::path::Path;
 use tar::Builder;
@@ -13,23 +8,12 @@ use tokio::io::AsyncReadExt;
 use walkdir::WalkDir;
 
 use crate::crypto::{generate_key, CHUNK_SIZE};
+use crate::iroh_common::create_sender_endpoint;
 use crate::transfer::{
     format_bytes, num_chunks, send_chunk, send_encrypted_chunk, send_encrypted_header,
     send_header, FileHeader, TransferType,
 };
 use crate::wormhole::generate_code;
-
-const ALPN: &[u8] = b"wormhole-transfer/1";
-
-fn parse_relay_mode(relay_url: Option<String>) -> Result<RelayMode> {
-    match relay_url {
-        Some(url) => {
-            let relay_url: RelayUrl = url.parse().context("Invalid relay URL")?;
-            Ok(RelayMode::Custom(relay_url.into()))
-        }
-        None => Ok(RelayMode::Default),
-    }
-}
 
 /// Send a folder as a tar archive.
 ///
@@ -118,25 +102,8 @@ pub async fn send_folder(folder_path: &Path, extra_encrypt: bool, relay_url: Opt
         None
     };
 
-    // Parse relay mode
-    let relay_mode = parse_relay_mode(relay_url)?;
-    let using_custom_relay = !matches!(relay_mode, RelayMode::Default);
-    if using_custom_relay {
-        println!("Using custom relay server");
-    }
-
-    // Create iroh endpoint with N0 discovery + local mDNS
-    let endpoint = Endpoint::empty_builder(relay_mode)
-        .alpns(vec![ALPN.to_vec()])
-        .discovery(PkarrPublisher::n0_dns())
-        .discovery(DnsDiscovery::n0_dns())
-        .discovery(MdnsDiscovery::builder())
-        .bind()
-        .await
-        .context("Failed to create endpoint")?;
-
-    // Wait for endpoint to be online (connected to relay)
-    endpoint.online().await;
+    // Create iroh endpoint
+    let endpoint = create_sender_endpoint(relay_url).await?;
 
     // Get our address
     let addr = endpoint.addr();
