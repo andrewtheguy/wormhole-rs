@@ -8,7 +8,7 @@ use tokio::time::{timeout, Duration};
 
 use crate::crypto::decrypt_chunk;
 use crate::nostr_protocol::{
-    create_ack_event, get_transfer_id, is_chunk_event, parse_chunk_event,
+    create_ack_event, discover_sender_relays, get_transfer_id, is_chunk_event, parse_chunk_event,
 };
 use crate::transfer::format_bytes;
 use crate::wormhole::{parse_code, PROTOCOL_NOSTR};
@@ -60,13 +60,37 @@ pub async fn receive_file_nostr(
     println!("🆔 Transfer ID: {}", transfer_id);
 
     // Determine which relays to use
-    // IMPORTANT: Receiver must use the same relays as sender to connect
-    // Wormhole code always contains the relay list - no overrides allowed
-    let relay_urls = token
-        .nostr_relays
-        .context("Missing relay list in wormhole code")?;
+    let relay_urls = if token.nostr_use_outbox.unwrap_or(false) {
+        // NIP-65 Outbox model: discover sender's relays from bridge relays
+        println!("📡 Discovering sender's relay list via NIP-65 Outbox model...");
 
-    println!("📡 Using relays from wormhole code (same as sender)");
+        match discover_sender_relays(
+            &sender_pubkey,
+            token.nostr_bridge_relays.as_deref(),
+            None,
+        )
+        .await
+        {
+            Ok(relays) => {
+                println!("✅ Discovered {} relays from sender's NIP-65 event", relays.len());
+                relays
+            }
+            Err(e) => {
+                // Fallback to relay hints from wormhole code
+                eprintln!("⚠️  NIP-65 discovery failed: {}. Using relay hints.", e);
+                token
+                    .nostr_relays
+                    .clone()
+                    .context("No relay hints available and NIP-65 discovery failed")?
+            }
+        }
+    } else {
+        // Legacy mode: use relays from wormhole code directly
+        println!("📡 Using relays from wormhole code (same as sender)");
+        token
+            .nostr_relays
+            .context("Missing relay list in wormhole code")?
+    };
 
     println!("📡 Connecting to {} Nostr relays...", relay_urls.len());
     for url in &relay_urls {

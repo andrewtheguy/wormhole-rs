@@ -9,7 +9,8 @@ use tokio::time::{timeout, Duration};
 use crate::crypto::{encrypt_chunk, generate_key};
 use crate::nostr_protocol::{
     create_chunk_event, generate_transfer_id, get_best_relays, get_transfer_id, is_ack_event,
-    parse_ack_event, MAX_NOSTR_FILE_SIZE, NOSTR_CHUNK_SIZE,
+    parse_ack_event, publish_relay_list_event, DEFAULT_NOSTR_RELAYS, MAX_NOSTR_FILE_SIZE,
+    NOSTR_CHUNK_SIZE,
 };
 use crate::transfer::format_bytes;
 use crate::wormhole::generate_nostr_code;
@@ -19,10 +20,17 @@ const MIN_RELAYS_REQUIRED: usize = 2;
 const SUBSCRIPTION_SETUP_DELAY_SECS: u64 = 3; // Wait for subscription to propagate
 
 /// Send a file via Nostr relays
+///
+/// # Arguments
+/// * `file_path` - Path to the file to send
+/// * `custom_relays` - Optional custom relay URLs to use for transfer
+/// * `use_default_relays` - Use hardcoded default relays instead of discovering
+/// * `use_outbox` - Enable NIP-65 Outbox model for relay discovery
 pub async fn send_file_nostr(
     file_path: &Path,
     custom_relays: Option<Vec<String>>,
     use_default_relays: bool,
+    use_outbox: bool,
 ) -> Result<()> {
     // Get file metadata
     let metadata = tokio::fs::metadata(file_path)
@@ -144,6 +152,15 @@ pub async fn send_file_nostr(
 
     println!("✅ Connected to {} relays", connected_count);
 
+    // If using outbox model, publish NIP-65 relay list to bridge relays
+    let bridge_relays: Vec<String> = DEFAULT_NOSTR_RELAYS.iter().map(|s| s.to_string()).collect();
+
+    if use_outbox {
+        println!("📡 Publishing relay list to bridge relays (NIP-65 Outbox model)...");
+        publish_relay_list_event(&sender_keys, &relay_urls, &bridge_relays).await?;
+        println!("✅ Relay list published to {} bridge relays", bridge_relays.len());
+    }
+
     // Generate and display wormhole code
     let code = generate_nostr_code(
         &encryption_key,
@@ -151,6 +168,8 @@ pub async fn send_file_nostr(
         transfer_id.clone(),
         relay_urls.clone(),
         filename.clone(),
+        use_outbox,
+        if use_outbox { Some(bridge_relays) } else { None },
     )?;
 
     println!("\n🔮 Wormhole code:\n{}\n", code);
