@@ -585,26 +585,18 @@ pub async fn publish_relay_list_event(
     Ok(())
 }
 
-/// Discover sender's relay list by querying their NIP-65 event from bridge relays
+/// Discover sender's relay list by querying their NIP-65 event from well-known bridge relays
+///
+/// Uses DEFAULT_NOSTR_RELAYS as bridge relays for discovery.
 ///
 /// # Arguments
 /// * `sender_pubkey` - Sender's public key (from wormhole code)
-/// * `bridge_relays` - Relays to query for NIP-65 event (defaults to DEFAULT_NOSTR_RELAYS)
-/// * `timeout_secs` - Maximum time to wait for discovery
 ///
 /// # Returns
 /// * `Ok(Vec<String>)` - List of relay URLs the sender uses
 /// * `Err` - If NIP-65 event not found or discovery fails
-pub async fn discover_sender_relays(
-    sender_pubkey: &PublicKey,
-    bridge_relays: Option<&[String]>,
-    timeout_secs: Option<u64>,
-) -> Result<Vec<String>> {
-    let bridges: Vec<String> = bridge_relays
-        .map(|r| r.to_vec())
-        .unwrap_or_else(|| DEFAULT_NOSTR_RELAYS.iter().map(|s| s.to_string()).collect());
-
-    let timeout = timeout_secs.unwrap_or(NIP65_DISCOVERY_TIMEOUT_SECS);
+pub async fn discover_sender_relays(sender_pubkey: &PublicKey) -> Result<Vec<String>> {
+    let bridges: Vec<String> = DEFAULT_NOSTR_RELAYS.iter().map(|s| s.to_string()).collect();
 
     let client = Client::default();
     for relay in &bridges {
@@ -622,7 +614,7 @@ pub async fn discover_sender_relays(
         .limit(1);
 
     let events = client
-        .fetch_events(filter, Duration::from_secs(timeout))
+        .fetch_events(filter, Duration::from_secs(NIP65_DISCOVERY_TIMEOUT_SECS))
         .await
         .context("Failed to fetch NIP-65 events from bridge relays")?;
 

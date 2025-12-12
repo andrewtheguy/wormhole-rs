@@ -152,24 +152,24 @@ pub async fn send_file_nostr(
 
     println!("✅ Connected to {} relays", connected_count);
 
-    // If using outbox model, publish NIP-65 relay list to bridge relays
-    let bridge_relays: Vec<String> = DEFAULT_NOSTR_RELAYS.iter().map(|s| s.to_string()).collect();
-
+    // If using outbox model, publish NIP-65 relay list to well-known bridge relays
     if use_outbox {
+        let bridge_relays: Vec<String> = DEFAULT_NOSTR_RELAYS.iter().map(|s| s.to_string()).collect();
         println!("📡 Publishing relay list to bridge relays (NIP-65 Outbox model)...");
         publish_relay_list_event(&sender_keys, &relay_urls, &bridge_relays).await?;
         println!("✅ Relay list published to {} bridge relays", bridge_relays.len());
     }
 
     // Generate and display wormhole code
+    // In outbox mode: no relays in code (receiver discovers via NIP-65)
+    // In legacy mode: include relays in code
     let code = generate_nostr_code(
         &encryption_key,
         sender_pubkey.to_hex(),
         transfer_id.clone(),
-        relay_urls.clone(),
+        if use_outbox { None } else { Some(relay_urls.clone()) },
         filename.clone(),
         use_outbox,
-        if use_outbox { Some(bridge_relays) } else { None },
     )?;
 
     println!("\n🔮 Wormhole code:\n{}\n", code);

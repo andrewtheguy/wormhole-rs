@@ -71,7 +71,7 @@ pub struct WormholeToken {
     /// Sender's ephemeral Nostr public key (hex)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub nostr_sender_pubkey: Option<String>,
-    /// List of Nostr relay URLs (hints for fallback if NIP-65 discovery fails)
+    /// List of Nostr relay URLs (only for legacy mode; omitted in outbox mode)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub nostr_relays: Option<Vec<String>>,
     /// Unique transfer session ID
@@ -81,11 +81,9 @@ pub struct WormholeToken {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub nostr_filename: Option<String>,
     /// Whether to use NIP-65 Outbox model for relay discovery
+    /// When true, receiver discovers relays via NIP-65 from well-known bridge relays
     #[serde(skip_serializing_if = "Option::is_none")]
     pub nostr_use_outbox: Option<bool>,
-    /// Bridge relays where sender published their NIP-65 event
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub nostr_bridge_relays: Option<Vec<String>>,
 }
 
 /// Generate a wormhole code from endpoint address
@@ -118,7 +116,6 @@ pub fn generate_code(
         nostr_transfer_id: None,
         nostr_filename: None,
         nostr_use_outbox: None,
-        nostr_bridge_relays: None,
     };
 
     let serialized =
@@ -134,18 +131,16 @@ pub fn generate_code(
 /// * `key` - The AES-256-GCM encryption key (always required for Nostr)
 /// * `sender_pubkey` - Sender's ephemeral Nostr public key (hex)
 /// * `transfer_id` - Unique transfer session ID
-/// * `relays` - List of Nostr relay URLs (hints for fallback if NIP-65 discovery fails)
+/// * `relays` - List of Nostr relay URLs (required for legacy mode, None for outbox mode)
 /// * `filename` - Original filename
 /// * `use_outbox` - Whether to use NIP-65 Outbox model for relay discovery
-/// * `bridge_relays` - Bridge relays where sender published their NIP-65 event
 pub fn generate_nostr_code(
     key: &[u8; 32],
     sender_pubkey: String,
     transfer_id: String,
-    relays: Vec<String>,
+    relays: Option<Vec<String>>,
     filename: String,
     use_outbox: bool,
-    bridge_relays: Option<Vec<String>>,
 ) -> Result<String> {
     let token = WormholeToken {
         version: CURRENT_VERSION,
@@ -154,11 +149,10 @@ pub fn generate_nostr_code(
         key: Some(URL_SAFE_NO_PAD.encode(key)),
         addr: None,
         nostr_sender_pubkey: Some(sender_pubkey),
-        nostr_relays: Some(relays),
+        nostr_relays: relays,
         nostr_transfer_id: Some(transfer_id),
         nostr_filename: Some(filename),
         nostr_use_outbox: if use_outbox { Some(true) } else { None },
-        nostr_bridge_relays: bridge_relays,
     };
 
     let serialized =

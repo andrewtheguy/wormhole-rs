@@ -61,29 +61,15 @@ pub async fn receive_file_nostr(
 
     // Determine which relays to use
     let relay_urls = if token.nostr_use_outbox.unwrap_or(false) {
-        // NIP-65 Outbox model: discover sender's relays from bridge relays
+        // NIP-65 Outbox model: discover sender's relays from well-known bridge relays
         println!("📡 Discovering sender's relay list via NIP-65 Outbox model...");
 
-        match discover_sender_relays(
-            &sender_pubkey,
-            token.nostr_bridge_relays.as_deref(),
-            None,
-        )
-        .await
-        {
-            Ok(relays) => {
-                println!("✅ Discovered {} relays from sender's NIP-65 event", relays.len());
-                relays
-            }
-            Err(e) => {
-                // Fallback to relay hints from wormhole code
-                eprintln!("⚠️  NIP-65 discovery failed: {}. Using relay hints.", e);
-                token
-                    .nostr_relays
-                    .clone()
-                    .context("No relay hints available and NIP-65 discovery failed")?
-            }
-        }
+        let relays = discover_sender_relays(&sender_pubkey)
+            .await
+            .context("Failed to discover sender's relays via NIP-65")?;
+
+        println!("✅ Discovered {} relays from sender's NIP-65 event", relays.len());
+        relays
     } else {
         // Legacy mode: use relays from wormhole code directly
         println!("📡 Using relays from wormhole code (same as sender)");
