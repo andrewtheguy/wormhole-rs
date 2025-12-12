@@ -1,8 +1,10 @@
 use anyhow::{Context, Result};
 use base64::{engine::general_purpose::STANDARD, Engine};
+use futures::future::join_all;
 use nostr_sdk::prelude::*;
 use rand::Rng;
-use serde::Deserialize;
+use std::collections::HashSet;
+use std::time::{Duration, Instant};
 
 /// Maximum file size for Nostr transfers (512KB)
 /// Nostr relays have message size limits, so we restrict file size
@@ -18,104 +20,259 @@ pub fn nostr_file_transfer_kind() -> Kind {
     Kind::from_u16(24242)
 }
 
-/// Default public Nostr relays for file transfer (fallback if API fails)
+/// Default public Nostr relays for file transfer
+/// These are probed via NIP-11 to find the best relays
 pub const DEFAULT_NOSTR_RELAYS: &[&str] = &[
     "wss://relay.damus.io",
     "wss://nos.lol",
     "wss://nostr.wine",
+    // "wss://relay.nostr.band",
+    // "wss://relay.snort.social",
+    // "wss://purplepag.es",
+    // "wss://nostr.mom",
+    // "wss://relay.primal.net",
+    // "wss://nostr.land",
+    // "wss://nostr-pub.wellorder.net",
 ];
 
-/// Timeout for fetching relay list from nostr.watch API
-const RELAY_API_TIMEOUT_SECS: u64 = 5;
+/// Timeout for fetching NIP-11 relay information
+const RELAY_INFO_TIMEOUT_SECS: u64 = 5;
 
-/// Number of top relays to fetch from nostr.watch
+/// Timeout for relay discovery queries
+const RELAY_DISCOVERY_TIMEOUT_SECS: u64 = 10;
+
+/// Number of top relays to use for file transfer
 const TOP_RELAYS_COUNT: usize = 5;
 
-#[derive(Debug, Deserialize)]
-struct NostrWatchResponse {
-    relays: Vec<NostrWatchRelay>,
+/// Maximum number of relays to probe after discovery
+const MAX_RELAYS_TO_PROBE: usize = 30;
+
+/// Minimum max_message_length required (24KB: 16KB chunk + base64 overhead + tags)
+const MIN_MESSAGE_LENGTH: i32 = 24 * 1024;
+
+/// Minimum max_content_length required (22KB: base64 encoded 16KB chunk)
+const MIN_CONTENT_LENGTH: i32 = 22 * 1024;
+
+/// NIP-66 Relay Discovery event kind
+fn relay_discovery_kind() -> Kind {
+    Kind::from_u16(30166)
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct NostrWatchRelay {
-    relay_url: String,
-    #[serde(default)]
-    rtt: Option<RttInfo>,
+/// NIP-65 Relay List Metadata event kind
+fn relay_list_kind() -> Kind {
+    Kind::from_u16(10002)
 }
 
-#[derive(Debug, Deserialize)]
-struct RttInfo {
-    open: Option<RttValue>,
-}
+/// Fetch NIP-11 relay information document from a relay
+/// Returns (relay_url, info_document, response_time) on success
+async fn fetch_relay_info(relay_url: &str) -> Option<(String, RelayInformationDocument, Duration)> {
+    // Convert wss:// to https:// for HTTP request
+    let http_url = relay_url.replace("wss://", "https://").replace("ws://", "http://");
 
-#[derive(Debug, Deserialize)]
-struct RttValue {
-    value: f64,
-}
-
-/// Fetch best relays from nostr.watch API
-/// Returns a list of relay URLs on success, or None if the API call fails
-async fn fetch_best_relays_from_api() -> Option<Vec<String>> {
     let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(RELAY_API_TIMEOUT_SECS))
+        .timeout(Duration::from_secs(RELAY_INFO_TIMEOUT_SECS))
         .build()
         .ok()?;
 
+    let start = Instant::now();
     let response = client
-        .get("https://api.nostr.watch/v2/relays")
+        .get(&http_url)
+        .header("Accept", "application/nostr+json")
         .send()
         .await
         .ok()?;
 
-    let api_response: NostrWatchResponse = response.json().await.ok()?;
+    let elapsed = start.elapsed();
+    let json = response.text().await.ok()?;
+    let info = RelayInformationDocument::from_json(&json).ok()?;
 
-    // Filter for wss:// relays only (secure websockets) and sort by RTT (lower is better)
-    let mut relays: Vec<_> = api_response
-        .relays
+    Some((relay_url.to_string(), info, elapsed))
+}
+
+/// Check if a relay has suitable capabilities for our file transfer use case
+fn is_relay_suitable(info: &RelayInformationDocument) -> bool {
+    if let Some(ref limitation) = info.limitation {
+        // Check message length limit
+        if let Some(max_msg) = limitation.max_message_length {
+            if max_msg < MIN_MESSAGE_LENGTH {
+                return false;
+            }
+        }
+
+        // Check content length limit
+        if let Some(max_content) = limitation.max_content_length {
+            if max_content < MIN_CONTENT_LENGTH {
+                return false;
+            }
+        }
+
+        // Skip relays requiring payment (we want free public relays)
+        if limitation.payment_required == Some(true) {
+            return false;
+        }
+
+        // Skip relays requiring auth (ephemeral events shouldn't need auth)
+        if limitation.auth_required == Some(true) {
+            return false;
+        }
+    }
+
+    true
+}
+
+/// Extract relay URL from a NIP-66 relay discovery event (kind 30166)
+/// The relay URL is stored in the 'd' tag
+fn extract_relay_from_nip66(event: &Event) -> Option<String> {
+    event
+        .tags
+        .iter()
+        .find(|t| t.kind() == TagKind::d())
+        .and_then(|t| t.content())
+        .map(|s| s.to_string())
+        .filter(|url| url.starts_with("wss://") || url.starts_with("ws://"))
+}
+
+/// Extract relay URLs from a NIP-65 relay list event (kind 10002)
+/// Relay URLs are stored in 'r' tags
+fn extract_relays_from_nip65(event: &Event) -> Vec<String> {
+    event
+        .tags
+        .iter()
+        .filter(|t| t.kind() == TagKind::Relay)
+        .filter_map(|t| t.content())
+        .map(|s| s.to_string())
+        .filter(|url| url.starts_with("wss://") || url.starts_with("ws://"))
+        .collect()
+}
+
+/// Discover relays by querying seed relays for NIP-66 and NIP-65 events
+async fn discover_relays_from_seeds() -> HashSet<String> {
+    let mut discovered: HashSet<String> = HashSet::new();
+
+    // Add seed relays to discovered set
+    for relay in DEFAULT_NOSTR_RELAYS {
+        discovered.insert(relay.to_string());
+    }
+
+    // Create a temporary client to query seed relays
+    let client = Client::default();
+
+    // Add seed relays
+    for relay_url in DEFAULT_NOSTR_RELAYS {
+        let _ = client.add_relay(relay_url.to_string()).await;
+    }
+
+    // Connect to relays
+    client.connect().await;
+
+    // Query for NIP-66 relay discovery events (kind 30166)
+    // These are published by relay monitors
+    let nip66_filter = Filter::new()
+        .kind(relay_discovery_kind())
+        .limit(100);
+
+    // Query for NIP-65 relay list events (kind 10002)
+    // These are published by users listing their preferred relays
+    let nip65_filter = Filter::new()
+        .kind(relay_list_kind())
+        .limit(100);
+
+    let timeout = Duration::from_secs(RELAY_DISCOVERY_TIMEOUT_SECS);
+
+    // Fetch NIP-66 events
+    if let Ok(nip66_events) = client
+        .fetch_events(nip66_filter, timeout)
+        .await
+    {
+        for event in nip66_events.iter() {
+            if let Some(relay_url) = extract_relay_from_nip66(event) {
+                discovered.insert(relay_url);
+            }
+        }
+    }
+
+    // Fetch NIP-65 events
+    if let Ok(nip65_events) = client
+        .fetch_events(nip65_filter, timeout)
+        .await
+    {
+        for event in nip65_events.iter() {
+            for relay_url in extract_relays_from_nip65(event) {
+                discovered.insert(relay_url);
+            }
+        }
+    }
+
+    // Disconnect from seed relays
+    client.disconnect().await;
+
+    discovered
+}
+
+/// Discover best relays by querying seed relays and probing via NIP-11
+/// 1. Query seed relays for NIP-66/NIP-65 events to discover more relays
+/// 2. Probe discovered relays via NIP-11 to check capabilities
+/// 3. Sort by response time and return top relays
+async fn discover_best_relays() -> Vec<String> {
+    // Discover relays from seed relays via NIP-66 and NIP-65
+    let discovered = discover_relays_from_seeds().await;
+
+    let relay_count = discovered.len();
+    if relay_count > DEFAULT_NOSTR_RELAYS.len() {
+        println!(
+            "📡 Discovered {} relays from {} seeds",
+            relay_count,
+            DEFAULT_NOSTR_RELAYS.len()
+        );
+    }
+
+    // Limit number of relays to probe to avoid too many requests
+    let relays_to_probe: Vec<_> = discovered
         .into_iter()
-        .filter(|r| r.relay_url.starts_with("wss://"))
+        .take(MAX_RELAYS_TO_PROBE)
         .collect();
 
-    // Sort by RTT (lower is better), putting relays without RTT at the end
-    relays.sort_by(|a, b| {
-        let a_rtt = a.rtt.as_ref().and_then(|r| r.open.as_ref()).map(|o| o.value);
-        let b_rtt = b.rtt.as_ref().and_then(|r| r.open.as_ref()).map(|o| o.value);
+    // Probe discovered relays in parallel via NIP-11
+    let futures: Vec<_> = relays_to_probe
+        .iter()
+        .map(|url| fetch_relay_info(url))
+        .collect();
 
-        match (a_rtt, b_rtt) {
-            (Some(a_val), Some(b_val)) => a_val.total_cmp(&b_val),
-            (Some(_), None) => std::cmp::Ordering::Less,
-            (None, Some(_)) => std::cmp::Ordering::Greater,
-            (None, None) => std::cmp::Ordering::Equal,
-        }
-    });
+    let results = join_all(futures).await;
+
+    // Filter successful probes and check capabilities
+    let mut suitable_relays: Vec<_> = results
+        .into_iter()
+        .flatten()
+        .filter(|(_, info, _)| is_relay_suitable(info))
+        .collect();
+
+    // Sort by response time (faster = better)
+    suitable_relays.sort_by(|a, b| a.2.cmp(&b.2));
 
     // Take top relays
-    let relay_urls: Vec<String> = relays
+    suitable_relays
         .into_iter()
         .take(TOP_RELAYS_COUNT)
-        .map(|r| r.relay_url)
-        .collect();
-
-    if relay_urls.is_empty() {
-        None
-    } else {
-        Some(relay_urls)
-    }
+        .map(|(url, _, _)| url)
+        .collect()
 }
 
 /// Get best relays for file transfer
-/// Tries to fetch from nostr.watch API, falls back to hardcoded defaults
+/// Probes relays via NIP-11, falls back to hardcoded defaults if none respond
 pub async fn get_best_relays() -> Vec<String> {
-    match fetch_best_relays_from_api().await {
-        Some(relays) if !relays.is_empty() => {
-            println!("📡 Using top {} relays from nostr.watch", relays.len());
-            relays
-        }
-        _ => {
-            println!("📡 Using default relays (nostr.watch unavailable)");
-            DEFAULT_NOSTR_RELAYS.iter().map(|s| s.to_string()).collect()
-        }
+    let relays = discover_best_relays().await;
+
+    if !relays.is_empty() {
+        println!("📡 Using {} relays (discovered via NIP-11)", relays.len());
+        relays
+    } else {
+        println!("📡 Using default relays (NIP-11 discovery failed)");
+        DEFAULT_NOSTR_RELAYS
+            .iter()
+            .take(TOP_RELAYS_COUNT)
+            .map(|s| s.to_string())
+            .collect()
     }
 }
 
