@@ -237,8 +237,6 @@ iroh v0.95.1 provides three layers of encryption:
 2. Session keys are derived from handshake (relay doesn't have them)
 3. All QUIC packets are encrypted with session keys
 
-See [SECURITY_AUDIT.md](SECURITY_AUDIT.md) for detailed analysis.
-
 ### Out-of-Band Code Sharing
 
 The wormhole code is shared manually (copy/paste, voice, etc.):
