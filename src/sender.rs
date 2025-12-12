@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use iroh::{
     discovery::{dns::DnsDiscovery, mdns::MdnsDiscovery, pkarr::PkarrPublisher},
     endpoint::RelayMode,
-    Endpoint,
+    Endpoint, RelayUrl,
 };
 use std::path::Path;
 use tokio::fs::File;
@@ -17,8 +17,18 @@ use crate::wormhole::generate_code;
 
 const ALPN: &[u8] = b"wormhole-transfer/1";
 
+fn parse_relay_mode(relay_url: Option<String>) -> Result<RelayMode> {
+    match relay_url {
+        Some(url) => {
+            let relay_url: RelayUrl = url.parse().context("Invalid relay URL")?;
+            Ok(RelayMode::Custom(relay_url.into()))
+        }
+        None => Ok(RelayMode::Default),
+    }
+}
+
 /// Send a file and return the wormhole code
-pub async fn send_file(file_path: &Path, extra_encrypt: bool) -> Result<()> {
+pub async fn send_file(file_path: &Path, extra_encrypt: bool, relay_url: Option<String>) -> Result<()> {
     // Get file metadata
     let metadata = tokio::fs::metadata(file_path)
         .await
@@ -44,8 +54,15 @@ pub async fn send_file(file_path: &Path, extra_encrypt: bool) -> Result<()> {
         None
     };
 
+    // Parse relay mode
+    let relay_mode = parse_relay_mode(relay_url)?;
+    let using_custom_relay = !matches!(relay_mode, RelayMode::Default);
+    if using_custom_relay {
+        println!("Using custom relay server");
+    }
+
     // Create iroh endpoint with N0 discovery + local mDNS
-    let endpoint = Endpoint::empty_builder(RelayMode::Default)
+    let endpoint = Endpoint::empty_builder(relay_mode)
         .alpns(vec![ALPN.to_vec()])
         .discovery(PkarrPublisher::n0_dns())
         .discovery(DnsDiscovery::n0_dns())

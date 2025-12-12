@@ -23,6 +23,11 @@ enum Commands {
         /// Add extra AES-256-GCM encryption layer (for insecure transports)
         #[arg(long)]
         extra_encrypt: bool,
+
+        /// Custom relay server URL (e.g., https://your-relay.example.com)
+        /// If not provided, uses iroh's default public relays
+        #[arg(long)]
+        relay_url: Option<String>,
     },
     /// Receive a file
     Receive {
@@ -33,6 +38,11 @@ enum Commands {
         /// Output directory (default: current directory)
         #[arg(short, long)]
         output: Option<PathBuf>,
+
+        /// Custom relay server URL (e.g., https://your-relay.example.com)
+        /// If not provided, uses iroh's default public relays
+        #[arg(long)]
+        relay_url: Option<String>,
     },
     /// Send a folder (creates tar archive)
     SendFolder {
@@ -42,6 +52,11 @@ enum Commands {
         /// Add extra AES-256-GCM encryption layer (for insecure transports)
         #[arg(long)]
         extra_encrypt: bool,
+
+        /// Custom relay server URL (e.g., https://your-relay.example.com)
+        /// If not provided, uses iroh's default public relays
+        #[arg(long)]
+        relay_url: Option<String>,
     },
     /// Receive a folder (extracts tar archive)
     ReceiveFolder {
@@ -52,6 +67,11 @@ enum Commands {
         /// Output directory (default: current directory)
         #[arg(short, long)]
         output: Option<PathBuf>,
+
+        /// Custom relay server URL (e.g., https://your-relay.example.com)
+        /// If not provided, uses iroh's default public relays
+        #[arg(long)]
+        relay_url: Option<String>,
     },
     /// Send a file via Nostr relays (max 512KB)
     SendNostr {
@@ -83,16 +103,16 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Send { file, extra_encrypt } => {
+        Commands::Send { file, extra_encrypt, relay_url } => {
             if !file.exists() {
                 anyhow::bail!("File not found: {}", file.display());
             }
             if !file.is_file() {
                 anyhow::bail!("Not a file: {}", file.display());
             }
-            sender::send_file(&file, extra_encrypt).await?;
+            sender::send_file(&file, extra_encrypt, relay_url).await?;
         }
-        Commands::Receive { code, output } => {
+        Commands::Receive { code, output, relay_url } => {
             if let Some(ref dir) = output {
                 if !dir.is_dir() {
                     anyhow::bail!("Output directory does not exist: {}", dir.display());
@@ -109,11 +129,12 @@ async fn main() -> Result<()> {
                 }
             };
             wormhole::validate_code_format(&code)?;
-            receiver::receive_file(&code, output).await?;
+            receiver::receive_file(&code, output, relay_url).await?;
         }
         Commands::SendFolder {
             folder,
             extra_encrypt,
+            relay_url,
         } => {
             if !folder.exists() {
                 anyhow::bail!("Folder not found: {}", folder.display());
@@ -121,9 +142,9 @@ async fn main() -> Result<()> {
             if !folder.is_dir() {
                 anyhow::bail!("Not a directory: {}", folder.display());
             }
-            folder_sender::send_folder(&folder, extra_encrypt).await?;
+            folder_sender::send_folder(&folder, extra_encrypt, relay_url).await?;
         }
-        Commands::ReceiveFolder { code, output } => {
+        Commands::ReceiveFolder { code, output, relay_url } => {
             if let Some(ref dir) = output {
                 if !dir.is_dir() {
                     anyhow::bail!("Output directory does not exist: {}", dir.display());
@@ -140,7 +161,7 @@ async fn main() -> Result<()> {
                 }
             };
             wormhole::validate_code_format(&code)?;
-            folder_receiver::receive_folder(&code, output).await?;
+            folder_receiver::receive_folder(&code, output, relay_url).await?;
         }
         Commands::SendNostr { file, relays, use_default_relays } => {
             if !file.exists() {

@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use iroh::{
     discovery::{dns::DnsDiscovery, mdns::MdnsDiscovery, pkarr::PkarrPublisher},
     endpoint::RelayMode,
-    Endpoint,
+    Endpoint, RelayUrl,
 };
 use std::fs;
 use std::path::Path;
@@ -21,13 +21,23 @@ use crate::wormhole::generate_code;
 
 const ALPN: &[u8] = b"wormhole-transfer/1";
 
+fn parse_relay_mode(relay_url: Option<String>) -> Result<RelayMode> {
+    match relay_url {
+        Some(url) => {
+            let relay_url: RelayUrl = url.parse().context("Invalid relay URL")?;
+            Ok(RelayMode::Custom(relay_url.into()))
+        }
+        None => Ok(RelayMode::Default),
+    }
+}
+
 /// Send a folder as a tar archive.
 ///
 /// Note: File permissions may not be fully preserved in cross-platform transfers,
 /// especially when sending from Unix to Windows or vice versa. Windows does not
 /// support Unix permission modes (rwx), so files may have different permissions
 /// after extraction on Windows.
-pub async fn send_folder(folder_path: &Path, extra_encrypt: bool) -> Result<()> {
+pub async fn send_folder(folder_path: &Path, extra_encrypt: bool, relay_url: Option<String>) -> Result<()> {
     // Validate folder
     if !folder_path.is_dir() {
         anyhow::bail!("Not a directory: {}", folder_path.display());
@@ -108,8 +118,15 @@ pub async fn send_folder(folder_path: &Path, extra_encrypt: bool) -> Result<()> 
         None
     };
 
+    // Parse relay mode
+    let relay_mode = parse_relay_mode(relay_url)?;
+    let using_custom_relay = !matches!(relay_mode, RelayMode::Default);
+    if using_custom_relay {
+        println!("Using custom relay server");
+    }
+
     // Create iroh endpoint with N0 discovery + local mDNS
-    let endpoint = Endpoint::empty_builder(RelayMode::Default)
+    let endpoint = Endpoint::empty_builder(relay_mode)
         .alpns(vec![ALPN.to_vec()])
         .discovery(PkarrPublisher::n0_dns())
         .discovery(DnsDiscovery::n0_dns())

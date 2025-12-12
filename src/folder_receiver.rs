@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use iroh::{
     discovery::{dns::DnsDiscovery, mdns::MdnsDiscovery, pkarr::PkarrPublisher},
     endpoint::RelayMode,
-    Endpoint, Watcher,
+    Endpoint, RelayUrl, Watcher,
 };
 use std::cmp;
 use std::io::Read;
@@ -16,6 +16,16 @@ use crate::transfer::{
 use crate::wormhole::parse_code;
 
 const ALPN: &[u8] = b"wormhole-transfer/1";
+
+fn parse_relay_mode(relay_url: Option<String>) -> Result<RelayMode> {
+    match relay_url {
+        Some(url) => {
+            let relay_url: RelayUrl = url.parse().context("Invalid relay URL")?;
+            Ok(RelayMode::Custom(relay_url.into()))
+        }
+        None => Ok(RelayMode::Default),
+    }
+}
 
 /// Wrapper to bridge async chunk receiving with sync tar reading.
 /// Implements std::io::Read by fetching chunks on demand.
@@ -98,7 +108,7 @@ impl<R: tokio::io::AsyncReadExt + Unpin + Send> Read for StreamingReader<R> {
 /// especially when receiving from Unix on Windows or vice versa. Windows does not
 /// support Unix permission modes (rwx), so files may have different permissions
 /// after extraction.
-pub async fn receive_folder(code: &str, output_dir: Option<PathBuf>) -> Result<()> {
+pub async fn receive_folder(code: &str, output_dir: Option<PathBuf>, relay_url: Option<String>) -> Result<()> {
     println!("🔮 Parsing wormhole code...");
 
     // Parse the wormhole code (auto-detects encryption mode)
@@ -120,8 +130,15 @@ pub async fn receive_folder(code: &str, output_dir: Option<PathBuf>) -> Result<(
 
     println!("✅ Code valid. Connecting to sender...");
 
+    // Parse relay mode
+    let relay_mode = parse_relay_mode(relay_url)?;
+    let using_custom_relay = !matches!(relay_mode, RelayMode::Default);
+    if using_custom_relay {
+        println!("Using custom relay server");
+    }
+
     // Create iroh endpoint with N0 discovery + local mDNS
-    let endpoint = Endpoint::empty_builder(RelayMode::Default)
+    let endpoint = Endpoint::empty_builder(relay_mode)
         .discovery(PkarrPublisher::n0_dns())
         .discovery(DnsDiscovery::n0_dns())
         .discovery(MdnsDiscovery::builder())
