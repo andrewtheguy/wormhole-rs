@@ -150,7 +150,7 @@ Use Nostr mode when iroh is unavailable or blocked. Nostr transfers are always e
 wormhole-rs send-nostr /path/to/file
 ```
 
-The tool will automatically fetch the best relays from [nostr.watch](https://nostr.watch) or use hardcoded defaults if the API fails.
+By default, wormhole-rs uses the **NIP-65 Outbox model** which allows sender and receiver to use different relays. The sender publishes their relay list to well-known bridge relays, and the receiver discovers the sender's relays automatically.
 
 **Use custom relays:**
 
@@ -164,13 +164,21 @@ wormhole-rs send-nostr /path/to/file --nostr-relay wss://relay.damus.io --nostr-
 wormhole-rs send-nostr /path/to/file --use-default-relays
 ```
 
+**Legacy mode (disable NIP-65 Outbox):**
+
+For compatibility with older receivers, you can disable the outbox model. In legacy mode, the relay list is embedded in the wormhole code and both parties must use the same relays:
+
+```bash
+wormhole-rs send-nostr /path/to/file --no-outbox
+```
+
 **Receive a file:**
 
 ```bash
 wormhole-rs receive-nostr
 ```
 
-You will be prompted to enter the wormhole code. The relay list is embedded in the code - sender and receiver must use the same relays.
+You will be prompted to enter the wormhole code. In outbox mode, the receiver automatically discovers the sender's relays via NIP-65. In legacy mode, the relay list is embedded in the code.
 
 **With code:**
 
@@ -221,6 +229,27 @@ Both connection types use the same QUIC/TLS 1.3 encryption. The TLS handshake is
 
 ### Nostr Mode - Transfer Flow
 
+**NIP-65 Outbox Model (Default):**
+
+```
+    ┌────────┐         ┌───────────────┐         ┌──────────┐
+    │ Sender │────────►│ Bridge Relays │◄────────│ Receiver │
+    └────────┘         │ (NIP-65 event)│         └──────────┘
+         │             └───────────────┘               │
+         │                                             │
+         │  1. Publish NIP-65 relay list               │  2. Query NIP-65
+         │     to bridge relays                        │     to discover
+         │                                             │     sender's relays
+         │                                             │
+         ▼                                             ▼
+    ┌────────┐         ┌───────────────┐         ┌──────────┐
+    │ Sender │────────►│Sender's Relays│◄────────│ Receiver │
+    └────────┘         │ (file chunks) │         └──────────┘
+                       └───────────────┘
+```
+
+**Transfer Phase:**
+
 ```
     ┌────────┐           ┌─────────────┐           ┌──────────┐
     │ Sender │──────────►│Nostr Relays │◄──────────│ Receiver │
@@ -239,12 +268,13 @@ Both connection types use the same QUIC/TLS 1.3 encryption. The TLS handshake is
 ```
 
 **Nostr Protocol:**
+- **NIP-65 Outbox model** - Sender publishes their relay list to well-known bridge relays; receiver discovers relays automatically
 - Each file chunk is published as a separate Nostr event (kind 24242)
 - Receiver sends ACK events for each received chunk
 - Sender retries unacknowledged chunks up to 3 times
 - All chunks are AES-256-GCM encrypted before publishing
 - Ephemeral events are not stored permanently by relays
-- Sender and receiver must connect to at least one common relay
+- Legacy mode (`--no-outbox`) requires sender and receiver to use the same relays
 
 ## Security & Encryption Model
 
@@ -380,21 +410,53 @@ Base64url-encoded JSON token.
 
 ### Nostr Mode
 
-**Wormhole Code (Version 2):**
+**Wormhole Code - Outbox Mode (Default):**
 ```json
 {
   "version": 2,
   "protocol": "nostr",
   "extra_encrypt": true,
   "key": "<base64-encoded-32-bytes>",
-  "addr": null,
+  "nostr_sender_pubkey": "<hex_pubkey>",
+  "nostr_transfer_id": "<hex_transfer_id>",
+  "nostr_filename": "example.txt",
+  "nostr_use_outbox": true
+}
+```
+In outbox mode, the relay list is omitted - receiver discovers relays via NIP-65.
+
+**Wormhole Code - Legacy Mode (`--no-outbox`):**
+```json
+{
+  "version": 2,
+  "protocol": "nostr",
+  "extra_encrypt": true,
+  "key": "<base64-encoded-32-bytes>",
   "nostr_sender_pubkey": "<hex_pubkey>",
   "nostr_relays": ["wss://relay1.com", "wss://relay2.com"],
   "nostr_transfer_id": "<hex_transfer_id>",
   "nostr_filename": "example.txt"
 }
 ```
+In legacy mode, the relay list is embedded and both parties must use the same relays.
+
 Base64url-encoded JSON token.
+
+**NIP-65 Relay List Event (Outbox Mode):**
+```json
+{
+  "kind": 10002,
+  "pubkey": "<sender_ephemeral_pubkey>",
+  "created_at": <unix_timestamp>,
+  "tags": [
+    ["r", "wss://relay1.com"],
+    ["r", "wss://relay2.com"]
+  ],
+  "content": "",
+  "sig": "<signature>"
+}
+```
+Published to well-known bridge relays (damus.io, nos.lol, nostr.wine) for receiver discovery.
 
 **Chunk Event:**
 ```json
