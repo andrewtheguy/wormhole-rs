@@ -10,7 +10,7 @@ A secure peer-to-peer file transfer tool with two transport modes:
 - 🌐 **Dual transport modes** - Choose between iroh P2P or Nostr relays
 - 🏠 **Local discovery** - mDNS for same-network transfers (iroh mode)
 - 📡 **Connection info** - Shows if transfer is Direct, Relay, or Mixed (iroh mode)
-- 🔧 **Custom relay servers** - Use your own private relay for iroh mode
+- 🔧 **Custom relay servers** - Use your own private relays with automatic failover (iroh mode)
 - 📊 **Progress display** - Real-time transfer progress for both modes
 - 💻 **Cross-platform** - Single binary with no dependencies, supports macOS, Linux, and Windows
 
@@ -110,7 +110,7 @@ wormhole-rs receive --output /path/to/dir
 
 By default, wormhole-rs uses iroh's public relay servers. For production use or private networks, you can run your own relay server and use it with the `--relay-url` option.
 
-**Both sender and receiver must use the same relay URL to connect through your private relay.**
+**Both sender and receiver must use the same relay URL(s) to connect through your private relay.**
 
 **Send with custom relay:**
 
@@ -122,6 +122,15 @@ wormhole-rs send --relay-url https://your-relay.example.com /path/to/file
 
 ```bash
 wormhole-rs receive --relay-url https://your-relay.example.com
+```
+
+**Multiple relays for failover:**
+
+You can specify multiple relay URLs for automatic failover. iroh will select the best relay based on latency:
+
+```bash
+wormhole-rs send --relay-url https://relay1.example.com --relay-url https://relay2.example.com /path/to/file
+wormhole-rs receive --relay-url https://relay1.example.com --relay-url https://relay2.example.com
 ```
 
 **Folder transfers also support custom relays:**

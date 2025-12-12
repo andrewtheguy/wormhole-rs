@@ -4,23 +4,27 @@ use anyhow::{Context, Result};
 use iroh::{
     discovery::{dns::DnsDiscovery, mdns::MdnsDiscovery, pkarr::PkarrPublisher},
     endpoint::RelayMode,
-    Endpoint, RelayUrl,
+    Endpoint, RelayMap, RelayUrl,
 };
 
 /// Application-Layer Protocol Negotiation identifier for wormhole transfers.
 pub const ALPN: &[u8] = b"wormhole-transfer/1";
 
-/// Parse an optional relay URL string into a RelayMode.
+/// Parse relay URL strings into a RelayMode.
 ///
-/// If a URL is provided, returns `RelayMode::Custom` with the parsed URL.
-/// If no URL is provided, returns `RelayMode::Default` to use iroh's public relays.
-pub fn parse_relay_mode(relay_url: Option<String>) -> Result<RelayMode> {
-    match relay_url {
-        Some(url) => {
-            let relay_url: RelayUrl = url.parse().context("Invalid relay URL")?;
-            Ok(RelayMode::Custom(relay_url.into()))
-        }
-        None => Ok(RelayMode::Default),
+/// If URLs are provided, returns `RelayMode::Custom` with a RelayMap containing all URLs.
+/// If no URLs are provided, returns `RelayMode::Default` to use iroh's public relays.
+/// Multiple relays provide automatic failover - iroh selects the best one based on latency.
+pub fn parse_relay_mode(relay_urls: Vec<String>) -> Result<RelayMode> {
+    if relay_urls.is_empty() {
+        Ok(RelayMode::Default)
+    } else {
+        let parsed_urls: Vec<RelayUrl> = relay_urls
+            .iter()
+            .map(|url| url.parse().context(format!("Invalid relay URL: {}", url)))
+            .collect::<Result<Vec<_>>>()?;
+        let relay_map = RelayMap::from_iter(parsed_urls);
+        Ok(RelayMode::Custom(relay_map))
     }
 }
 
@@ -28,11 +32,16 @@ pub fn parse_relay_mode(relay_url: Option<String>) -> Result<RelayMode> {
 ///
 /// Sets up N0 DNS discovery, pkarr publishing, and local mDNS discovery.
 /// The endpoint is configured with ALPN for wormhole transfers.
-pub async fn create_sender_endpoint(relay_url: Option<String>) -> Result<Endpoint> {
-    let relay_mode = parse_relay_mode(relay_url)?;
+/// Multiple relay URLs provide automatic failover based on latency.
+pub async fn create_sender_endpoint(relay_urls: Vec<String>) -> Result<Endpoint> {
+    let relay_mode = parse_relay_mode(relay_urls.clone())?;
     let using_custom_relay = !matches!(relay_mode, RelayMode::Default);
     if using_custom_relay {
-        println!("Using custom relay server");
+        if relay_urls.len() == 1 {
+            println!("Using custom relay server");
+        } else {
+            println!("Using {} custom relay servers (with failover)", relay_urls.len());
+        }
     }
 
     let endpoint = Endpoint::empty_builder(relay_mode)
@@ -54,11 +63,16 @@ pub async fn create_sender_endpoint(relay_url: Option<String>) -> Result<Endpoin
 ///
 /// Sets up N0 DNS discovery, pkarr publishing, and local mDNS discovery.
 /// Does not set ALPN as the receiver specifies it when connecting.
-pub async fn create_receiver_endpoint(relay_url: Option<String>) -> Result<Endpoint> {
-    let relay_mode = parse_relay_mode(relay_url)?;
+/// Multiple relay URLs provide automatic failover based on latency.
+pub async fn create_receiver_endpoint(relay_urls: Vec<String>) -> Result<Endpoint> {
+    let relay_mode = parse_relay_mode(relay_urls.clone())?;
     let using_custom_relay = !matches!(relay_mode, RelayMode::Default);
     if using_custom_relay {
-        println!("Using custom relay server");
+        if relay_urls.len() == 1 {
+            println!("Using custom relay server");
+        } else {
+            println!("Using {} custom relay servers (with failover)", relay_urls.len());
+        }
     }
 
     let endpoint = Endpoint::empty_builder(relay_mode)

@@ -93,7 +93,7 @@ impl<R: tokio::io::AsyncReadExt + Unpin + Send> Read for StreamingReader<R> {
 /// especially when receiving from Unix on Windows or vice versa. Windows does not
 /// support Unix permission modes (rwx), so files may have different permissions
 /// after extraction.
-pub async fn receive_folder(code: &str, output_dir: Option<PathBuf>, relay_url: Option<String>) -> Result<()> {
+pub async fn receive_folder(code: &str, output_dir: Option<PathBuf>, relay_urls: Vec<String>) -> Result<()> {
     println!("🔮 Parsing wormhole code...");
 
     // Parse the wormhole code (auto-detects encryption mode)
@@ -116,7 +116,7 @@ pub async fn receive_folder(code: &str, output_dir: Option<PathBuf>, relay_url: 
     println!("✅ Code valid. Connecting to sender...");
 
     // Create iroh endpoint
-    let endpoint = create_receiver_endpoint(relay_url).await?;
+    let endpoint = create_receiver_endpoint(relay_urls).await?;
 
     // Connect to sender
     let conn = endpoint

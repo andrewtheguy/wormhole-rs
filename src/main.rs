@@ -24,10 +24,10 @@ enum Commands {
         #[arg(long)]
         extra_encrypt: bool,
 
-        /// Custom relay server URL (e.g., https://your-relay.example.com)
+        /// Custom relay server URLs (can be specified multiple times for failover)
         /// If not provided, uses iroh's default public relays
         #[arg(long)]
-        relay_url: Option<String>,
+        relay_url: Vec<String>,
     },
     /// Receive a file
     Receive {
@@ -39,10 +39,10 @@ enum Commands {
         #[arg(short, long)]
         output: Option<PathBuf>,
 
-        /// Custom relay server URL (e.g., https://your-relay.example.com)
+        /// Custom relay server URLs (can be specified multiple times for failover)
         /// If not provided, uses iroh's default public relays
         #[arg(long)]
-        relay_url: Option<String>,
+        relay_url: Vec<String>,
     },
     /// Send a folder (creates tar archive)
     SendFolder {
@@ -53,10 +53,10 @@ enum Commands {
         #[arg(long)]
         extra_encrypt: bool,
 
-        /// Custom relay server URL (e.g., https://your-relay.example.com)
+        /// Custom relay server URLs (can be specified multiple times for failover)
         /// If not provided, uses iroh's default public relays
         #[arg(long)]
-        relay_url: Option<String>,
+        relay_url: Vec<String>,
     },
     /// Receive a folder (extracts tar archive)
     ReceiveFolder {
@@ -68,10 +68,10 @@ enum Commands {
         #[arg(short, long)]
         output: Option<PathBuf>,
 
-        /// Custom relay server URL (e.g., https://your-relay.example.com)
+        /// Custom relay server URLs (can be specified multiple times for failover)
         /// If not provided, uses iroh's default public relays
         #[arg(long)]
-        relay_url: Option<String>,
+        relay_url: Vec<String>,
     },
     /// Send a file via Nostr relays (max 512KB)
     SendNostr {

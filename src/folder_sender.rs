@@ -21,7 +21,7 @@ use crate::wormhole::generate_code;
 /// especially when sending from Unix to Windows or vice versa. Windows does not
 /// support Unix permission modes (rwx), so files may have different permissions
 /// after extraction on Windows.
-pub async fn send_folder(folder_path: &Path, extra_encrypt: bool, relay_url: Option<String>) -> Result<()> {
+pub async fn send_folder(folder_path: &Path, extra_encrypt: bool, relay_urls: Vec<String>) -> Result<()> {
     // Validate folder
     if !folder_path.is_dir() {
         anyhow::bail!("Not a directory: {}", folder_path.display());
@@ -103,7 +103,7 @@ pub async fn send_folder(folder_path: &Path, extra_encrypt: bool, relay_url: Opt
     };
 
     // Create iroh endpoint
-    let endpoint = create_sender_endpoint(relay_url).await?;
+    let endpoint = create_sender_endpoint(relay_urls).await?;
 
     // Get our address
     let addr = endpoint.addr();

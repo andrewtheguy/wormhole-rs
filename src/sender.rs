@@ -12,7 +12,7 @@ use crate::transfer::{
 use crate::wormhole::generate_code;
 
 /// Send a file and return the wormhole code
-pub async fn send_file(file_path: &Path, extra_encrypt: bool, relay_url: Option<String>) -> Result<()> {
+pub async fn send_file(file_path: &Path, extra_encrypt: bool, relay_urls: Vec<String>) -> Result<()> {
     // Get file metadata
     let metadata = tokio::fs::metadata(file_path)
         .await
@@ -39,7 +39,7 @@ pub async fn send_file(file_path: &Path, extra_encrypt: bool, relay_url: Option<
     };
 
     // Create iroh endpoint
-    let endpoint = create_sender_endpoint(relay_url).await?;
+    let endpoint = create_sender_endpoint(relay_urls).await?;
 
     // Get our address
     let addr = endpoint.addr();

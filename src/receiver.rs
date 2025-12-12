@@ -12,7 +12,7 @@ use crate::transfer::{
 use crate::wormhole::parse_code;
 
 /// Receive a file using a wormhole code
-pub async fn receive_file(code: &str, output_dir: Option<PathBuf>, relay_url: Option<String>) -> Result<()> {
+pub async fn receive_file(code: &str, output_dir: Option<PathBuf>, relay_urls: Vec<String>) -> Result<()> {
     println!("🔮 Parsing wormhole code...");
 
     // Parse the wormhole code (auto-detects encryption mode)
@@ -35,7 +35,7 @@ pub async fn receive_file(code: &str, output_dir: Option<PathBuf>, relay_url: Op
     println!("✅ Code valid. Connecting to sender...");
 
     // Create iroh endpoint
-    let endpoint = create_receiver_endpoint(relay_url).await?;
+    let endpoint = create_receiver_endpoint(relay_urls).await?;
 
     // Connect to sender
     let conn = endpoint
