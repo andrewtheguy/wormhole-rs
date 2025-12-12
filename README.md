@@ -6,7 +6,7 @@ A secure peer-to-peer file transfer tool with two transport modes:
 
 ## Features
 
-- 🔐 **End-to-end encryption** - AES-256-GCM with unique nonces per 16KB chunk
+- 🔐 **End-to-end encryption** - All connections (direct P2P and relay) use QUIC/TLS 1.3; optional AES-256-GCM layer
 - 🌐 **Dual transport modes** - Choose between iroh P2P or Nostr relays
 - 🏠 **Local discovery** - mDNS for same-network transfers (iroh mode)
 - 📡 **Connection info** - Shows if transfer is Direct, Relay, or Mixed (iroh mode)
@@ -204,15 +204,20 @@ wormhole-rs receive-nostr --output /path/to/dir
 
 **Direct connection (same network or hole-punch success):**
 ```
-Sender ◄──── encrypted chunks ────► Receiver
-         (relay not involved)
+Sender ◄──── TLS 1.3 encrypted ────► Receiver
+              (relay not involved)
 ```
 
 **Relay fallback (strict NAT/firewall):**
 ```
-Sender ──► Relay ──► Receiver
-       (encrypted, relay can't read)
+Sender ◄──── TLS 1.3 encrypted ────► Receiver
+                    │
+               iroh Relay
+            (forwards packets,
+             cannot decrypt)
 ```
+
+Both connection types use the same QUIC/TLS 1.3 encryption. The TLS handshake is always performed end-to-end between sender and receiver.
 
 ### Nostr Mode - Transfer Flow
 
@@ -266,8 +271,10 @@ The 32-byte AES-256 encryption key is:
 
 | Layer | Protection |
 |-------|------------|
-| AES-256-GCM | File content encryption (application layer) |
-| iroh QUIC/TLS | Transport encryption (network layer) |
+| AES-256-GCM | File content encryption (application layer, optional with `--extra-encrypt`) |
+| QUIC/TLS 1.3 | Transport encryption (network layer, always enabled for all connection types) |
+
+**Note:** QUIC/TLS 1.3 encryption is applied to **all** connections - both direct P2P and relay-assisted. The TLS handshake happens end-to-end between sender and receiver; relay servers only forward encrypted packets they cannot read.
 
 **Nonce Handling:**
 

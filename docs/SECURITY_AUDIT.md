@@ -111,6 +111,14 @@ Sender                                          Receiver
   | <==== Encrypted QUIC stream data ====>          |
 ```
 
+### Encryption for All Connection Types
+
+**Critical Point**: The three encryption layers apply to **ALL** iroh connections, regardless of whether the connection is:
+- **Direct P2P** (UDP hole-punching, local network via mDNS)
+- **Relay-assisted** (through iroh relay servers)
+
+The TLS 1.3 handshake is always performed end-to-end between sender and receiver. The relay server is merely a packet forwarder and cannot participate in or observe the TLS handshake.
+
 ### HTTPS Analogy
 
 The security model is similar to HTTPS, where TLS provides end-to-end encryption:
@@ -123,12 +131,17 @@ HTTPS:
          |   (cannot decrypt)        |
          +---------------------------+
 
-wormhole-rs:
+wormhole-rs (via relay):
   Sender <--------TLS 1.3--------> Receiver
          ^                           ^
          |     iroh Relay            |
          |   (cannot decrypt)        |
          +---------------------------+
+
+wormhole-rs (direct P2P):
+  Sender <--------TLS 1.3--------> Receiver
+              (no relay involved,
+               same encryption)
 ```
 
 | HTTPS | wormhole-rs | Role |
