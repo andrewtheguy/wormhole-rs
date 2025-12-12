@@ -10,6 +10,7 @@ A secure peer-to-peer file transfer tool with two transport modes:
 - 🌐 **Dual transport modes** - Choose between iroh P2P or Nostr relays
 - 🏠 **Local discovery** - mDNS for same-network transfers (iroh mode)
 - 📡 **Connection info** - Shows if transfer is Direct, Relay, or Mixed (iroh mode)
+- 🔧 **Custom relay servers** - Use your own private relay for iroh mode
 - 📊 **Progress display** - Real-time transfer progress for both modes
 - 💻 **Cross-platform** - Single binary with no dependencies, supports macOS, Linux, and Windows
 
@@ -103,6 +104,31 @@ Optionally specify an output directory:
 
 ```bash
 wormhole-rs receive --output /path/to/dir
+```
+
+### Custom Relay Server (iroh mode)
+
+By default, wormhole-rs uses iroh's public relay servers. For production use or private networks, you can run your own relay server and use it with the `--relay-url` option.
+
+**Both sender and receiver must use the same relay URL to connect through your private relay.**
+
+**Send with custom relay:**
+
+```bash
+wormhole-rs send --relay-url https://your-relay.example.com /path/to/file
+```
+
+**Receive with custom relay:**
+
+```bash
+wormhole-rs receive --relay-url https://your-relay.example.com
+```
+
+**Folder transfers also support custom relays:**
+
+```bash
+wormhole-rs send-folder --relay-url https://your-relay.example.com /path/to/folder
+wormhole-rs receive-folder --relay-url https://your-relay.example.com
 ```
 
 ### Nostr Mode (Small Files ≤512KB)
@@ -459,6 +485,7 @@ src/
 ├── crypto.rs            # AES-256-GCM encryption/decryption
 ├── wormhole.rs          # Wormhole code generation/parsing (v2 tokens)
 ├── transfer.rs          # Wire protocol (headers, chunks) for iroh mode
+├── iroh_common.rs       # Common iroh endpoint setup and relay configuration
 ├── sender.rs            # iroh mode file sender
 ├── receiver.rs          # iroh mode file receiver
 ├── folder_sender.rs     # iroh mode folder sender (tar archives)
