@@ -1,0 +1,23 @@
+# Build stage - buildx handles multi-architecture builds automatically
+FROM rust:1.91 AS builder
+
+ARG TARGETPLATFORM
+
+WORKDIR /build
+
+# Copy manifests
+COPY Cargo.toml Cargo.lock ./
+
+# Copy source code
+COPY src ./src
+
+# Build for the target platform with per-platform cargo cache mounts
+RUN --mount=type=cache,target=/usr/local/cargo/registry,id=cargo-registry-${TARGETPLATFORM} \
+    --mount=type=cache,target=/usr/local/cargo/git,id=cargo-git-${TARGETPLATFORM} \
+    --mount=type=cache,target=/build/target,id=cargo-target-${TARGETPLATFORM} \
+    cargo build --release && \
+    cp target/release/wormhole-rs /wormhole-rs
+
+# Export stage - only contains the binary
+FROM scratch AS export
+COPY --from=builder /wormhole-rs /wormhole-rs
