@@ -673,10 +673,10 @@ pub async fn discover_sender_relays(sender_pubkey: &PublicKey) -> Result<Vec<Str
 
     client.disconnect().await;
 
-    // Extract relay URLs from the most recent event
+    // Extract relay URLs from the most recent event (by created_at timestamp)
     let relays = events
         .iter()
-        .next()
+        .max_by_key(|e| e.created_at)
         .map(|e| extract_relays_from_nip65(e))
         .unwrap_or_default();
 
