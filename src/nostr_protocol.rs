@@ -187,12 +187,17 @@ fn extract_relay_from_nip66(event: &Event) -> Option<String> {
 }
 
 /// Extract relay URLs from a NIP-65 relay list event (kind 10002)
-/// Relay URLs are stored in 'r' tags
+/// Relay URLs are stored in 'r' tags (single letter tags per NIP-65)
 fn extract_relays_from_nip65(event: &Event) -> Vec<String> {
     event
         .tags
         .iter()
-        .filter(|t| t.kind() == TagKind::Relay)
+        .filter(|t| {
+            // NIP-65 uses ["r", "<url>", "<marker>"] tags (single letter 'r')
+            t.single_letter_tag()
+                .map(|slt| slt.character == Alphabet::R)
+                .unwrap_or(false)
+        })
         .filter_map(|t| t.content())
         .map(|s| s.to_string())
         .filter(|url| url.starts_with("wss://") || url.starts_with("ws://"))
