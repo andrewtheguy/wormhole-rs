@@ -68,14 +68,24 @@ pub async fn receive_file_nostr(
             .await
             .context("Failed to discover sender's relays via NIP-65")?;
 
+        if relays.is_empty() {
+            anyhow::bail!("No relays found in sender's NIP-65 relay list event");
+        }
+
         println!("✅ Discovered {} relays from sender's NIP-65 event", relays.len());
         relays
     } else {
         // Legacy mode: use relays from wormhole code directly
         println!("📡 Using relays from wormhole code (same as sender)");
-        token
+        let relays = token
             .nostr_relays
-            .context("Missing relay list in wormhole code")?
+            .context("Missing relay list in wormhole code")?;
+
+        if relays.is_empty() {
+            anyhow::bail!("Wormhole code contains empty relay list");
+        }
+
+        relays
     };
 
     println!("📡 Connecting to {} Nostr relays...", relay_urls.len());
