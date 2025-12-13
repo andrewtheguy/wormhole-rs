@@ -535,17 +535,43 @@ const NIP65_DISCOVERY_TIMEOUT_SECS: u64 = 15;
 /// # Arguments
 /// * `keys` - Keys for signing the event
 /// * `relays` - List of relay URLs to include in the relay list
+///
+/// # Errors
+/// Returns an error if any relay URL fails to parse, or if no valid relays are provided.
 pub fn create_relay_list_event(keys: &Keys, relays: &[String]) -> Result<Event> {
-    let tags: Vec<Tag> = relays
-        .iter()
-        .filter_map(|url| {
-            // Create relay tag with "write" marker
-            url.parse::<RelayUrl>().ok().map(|relay_url| Tag::relay(relay_url))
-        })
-        .collect();
+    if relays.is_empty() {
+        anyhow::bail!("No relay URLs provided for NIP-65 relay list event");
+    }
+
+    let mut valid_tags: Vec<Tag> = Vec::with_capacity(relays.len());
+    let mut malformed_urls: Vec<String> = Vec::new();
+
+    for url in relays {
+        match url.parse::<RelayUrl>() {
+            Ok(relay_url) => {
+                // Create relay tag with "write" marker per NIP-65
+                valid_tags.push(Tag::relay_metadata(relay_url, Some(RelayMetadata::Write)));
+            }
+            Err(_) => {
+                malformed_urls.push(url.clone());
+            }
+        }
+    }
+
+    if !malformed_urls.is_empty() {
+        anyhow::bail!(
+            "Failed to parse {} relay URL(s): {}",
+            malformed_urls.len(),
+            malformed_urls.join(", ")
+        );
+    }
+
+    if valid_tags.is_empty() {
+        anyhow::bail!("No valid relay URLs after parsing");
+    }
 
     EventBuilder::new(relay_list_kind(), "")
-        .tags(tags)
+        .tags(valid_tags)
         .sign_with_keys(keys)
         .context("Failed to sign NIP-65 relay list event")
 }
