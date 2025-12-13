@@ -522,3 +522,167 @@ pub fn is_ack_event(event: &Event) -> bool {
         .map(|s| s == EVENT_TYPE_ACK)
         .unwrap_or(false)
 }
+
+// ============================================================================
+// NIP-65 Outbox Model Support
+// ============================================================================
+
+/// Timeout for NIP-65 discovery queries (seconds)
+const NIP65_DISCOVERY_TIMEOUT_SECS: u64 = 15;
+
+/// Create a NIP-65 relay list event (kind 10002)
+///
+/// # Arguments
+/// * `keys` - Keys for signing the event
+/// * `relays` - List of relay URLs to include in the relay list
+///
+/// # Errors
+/// Returns an error if any relay URL fails to parse, or if no valid relays are provided.
+pub fn create_relay_list_event(keys: &Keys, relays: &[String]) -> Result<Event> {
+    if relays.is_empty() {
+        anyhow::bail!("No relay URLs provided for NIP-65 relay list event");
+    }
+
+    let mut valid_tags: Vec<Tag> = Vec::with_capacity(relays.len());
+    let mut malformed_urls: Vec<String> = Vec::new();
+
+    for url in relays {
+        match url.parse::<RelayUrl>() {
+            Ok(relay_url) => {
+                // Create relay tag with "write" marker per NIP-65
+                valid_tags.push(Tag::relay_metadata(relay_url, Some(RelayMetadata::Write)));
+            }
+            Err(_) => {
+                malformed_urls.push(url.clone());
+            }
+        }
+    }
+
+    if !malformed_urls.is_empty() {
+        anyhow::bail!(
+            "Failed to parse {} relay URL(s): {}",
+            malformed_urls.len(),
+            malformed_urls.join(", ")
+        );
+    }
+
+    if valid_tags.is_empty() {
+        anyhow::bail!("No valid relay URLs after parsing");
+    }
+
+    EventBuilder::new(relay_list_kind(), "")
+        .tags(valid_tags)
+        .sign_with_keys(keys)
+        .context("Failed to sign NIP-65 relay list event")
+}
+
+/// Publish sender's relay list as NIP-65 event to bridge relays
+///
+/// This allows receivers to discover which relays the sender uses for file transfer,
+/// enabling sender and receiver to use different relays.
+///
+/// # Arguments
+/// * `keys` - Sender's keys for signing
+/// * `write_relays` - Relays where sender will publish file chunks
+/// * `bridge_relays` - Well-known relays to publish NIP-65 event to
+pub async fn publish_relay_list_event(
+    keys: &Keys,
+    write_relays: &[String],
+    bridge_relays: &[String],
+) -> Result<()> {
+    let event = create_relay_list_event(keys, write_relays)?;
+
+    let client = Client::default();
+    let mut added_count = 0;
+    for relay in bridge_relays {
+        if client.add_relay(relay.clone()).await.is_ok() {
+            added_count += 1;
+        }
+    }
+
+    if added_count == 0 {
+        anyhow::bail!("Failed to add any bridge relays for NIP-65 publishing");
+    }
+
+    client.connect().await;
+
+    // Wait for relay connections to establish.
+    // Note: wait_for_connection returns when at least one relay connects or timeout is reached,
+    // so the event may only be published to a subset of bridge relays. This is acceptable for
+    // NIP-65 since receivers only need to find the event from any one bridge relay, and the
+    // event will propagate across relays over time.
+    client
+        .wait_for_connection(Duration::from_secs(5))
+        .await;
+
+    // Publish NIP-65 event to all connected bridge relays
+    client
+        .send_event(&event)
+        .await
+        .context("Failed to publish NIP-65 relay list event")?;
+
+    client.disconnect().await;
+    Ok(())
+}
+
+/// Discover sender's relay list by querying their NIP-65 event from well-known bridge relays
+///
+/// Uses DEFAULT_NOSTR_RELAYS as bridge relays for discovery.
+///
+/// # Arguments
+/// * `sender_pubkey` - Sender's public key (from wormhole code)
+///
+/// # Returns
+/// * `Ok(Vec<String>)` - List of relay URLs the sender uses
+/// * `Err` - If NIP-65 event not found or discovery fails
+pub async fn discover_sender_relays(sender_pubkey: &PublicKey) -> Result<Vec<String>> {
+    let bridges: Vec<String> = DEFAULT_NOSTR_RELAYS.iter().map(|s| s.to_string()).collect();
+
+    let client = Client::default();
+    let mut added_count = 0;
+    for relay in &bridges {
+        if client.add_relay(relay.clone()).await.is_ok() {
+            added_count += 1;
+        }
+    }
+
+    if added_count == 0 {
+        anyhow::bail!("Failed to add any bridge relays for NIP-65 discovery");
+    }
+
+    client.connect().await;
+
+    // Wait for relay connections to establish.
+    // Note: wait_for_connection returns when at least one relay connects or timeout is reached,
+    // so we may only query a subset of bridge relays. This is acceptable since we only need to
+    // find the sender's NIP-65 event from any one relay.
+    client
+        .wait_for_connection(Duration::from_secs(5))
+        .await;
+
+    // Query for sender's NIP-65 event (kind 10002)
+    let filter = Filter::new()
+        .kind(relay_list_kind())
+        .author(*sender_pubkey)
+        .limit(1);
+
+    let events = client
+        .fetch_events(filter, Duration::from_secs(NIP65_DISCOVERY_TIMEOUT_SECS))
+        .await
+        .context("Failed to fetch NIP-65 events from bridge relays")?;
+
+    client.disconnect().await;
+
+    // Extract relay URLs from the most recent event (by created_at timestamp)
+    let relays = events
+        .iter()
+        .max_by_key(|e| e.created_at)
+        .map(|e| extract_relays_from_nip65(e))
+        .unwrap_or_default();
+
+    if relays.is_empty() {
+        anyhow::bail!("No NIP-65 relay list event found for sender");
+    }
+
+    Ok(relays)
+}

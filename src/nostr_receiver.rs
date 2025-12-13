@@ -8,7 +8,7 @@ use tokio::time::{timeout, Duration};
 
 use crate::crypto::decrypt_chunk;
 use crate::nostr_protocol::{
-    create_ack_event, get_transfer_id, is_chunk_event, parse_chunk_event,
+    create_ack_event, discover_sender_relays, get_transfer_id, is_chunk_event, parse_chunk_event,
 };
 use crate::transfer::format_bytes;
 use crate::wormhole::{parse_code, PROTOCOL_NOSTR};
@@ -60,13 +60,33 @@ pub async fn receive_file_nostr(
     println!("🆔 Transfer ID: {}", transfer_id);
 
     // Determine which relays to use
-    // IMPORTANT: Receiver must use the same relays as sender to connect
-    // Wormhole code always contains the relay list - no overrides allowed
-    let relay_urls = token
-        .nostr_relays
-        .context("Missing relay list in wormhole code")?;
+    let relay_urls = if token.nostr_use_outbox.unwrap_or(false) {
+        // NIP-65 Outbox model: discover sender's relays from well-known bridge relays
+        println!("📡 Discovering sender's relay list via NIP-65 Outbox model...");
 
-    println!("📡 Using relays from wormhole code (same as sender)");
+        let relays = discover_sender_relays(&sender_pubkey)
+            .await
+            .context("Failed to discover sender's relays via NIP-65")?;
+
+        if relays.is_empty() {
+            anyhow::bail!("No relays found in sender's NIP-65 relay list event");
+        }
+
+        println!("✅ Discovered {} relays from sender's NIP-65 event", relays.len());
+        relays
+    } else {
+        // Legacy mode: use relays from wormhole code directly
+        println!("📡 Using relays from wormhole code (same as sender)");
+        let relays = token
+            .nostr_relays
+            .context("Missing relay list in wormhole code")?;
+
+        if relays.is_empty() {
+            anyhow::bail!("Wormhole code contains empty relay list");
+        }
+
+        relays
+    };
 
     println!("📡 Connecting to {} Nostr relays...", relay_urls.len());
     for url in &relay_urls {

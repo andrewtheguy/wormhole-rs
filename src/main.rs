@@ -85,6 +85,11 @@ enum Commands {
         /// Use default hardcoded relays instead of fetching from nostr.watch
         #[arg(long)]
         use_default_relays: bool,
+
+        /// Disable NIP-65 Outbox model (for compatibility with old receivers)
+        /// By default, Outbox model is enabled for better relay flexibility
+        #[arg(long)]
+        no_outbox: bool,
     },
     /// Receive a file via Nostr relays
     ReceiveNostr {
@@ -163,7 +168,7 @@ async fn main() -> Result<()> {
             wormhole::validate_code_format(&code)?;
             folder_receiver::receive_folder(&code, output, relay_url).await?;
         }
-        Commands::SendNostr { file, relays, use_default_relays } => {
+        Commands::SendNostr { file, relays, use_default_relays, no_outbox } => {
             if !file.exists() {
                 anyhow::bail!("File not found: {}", file.display());
             }
@@ -185,7 +190,8 @@ async fn main() -> Result<()> {
             } else {
                 Some(relays)
             };
-            nostr_sender::send_file_nostr(&file, custom_relays, use_default_relays).await?;
+            let use_outbox = !no_outbox;
+            nostr_sender::send_file_nostr(&file, custom_relays, use_default_relays, use_outbox).await?;
         }
         Commands::ReceiveNostr {
             code,
