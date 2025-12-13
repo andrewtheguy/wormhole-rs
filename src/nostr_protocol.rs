@@ -593,13 +593,23 @@ pub async fn publish_relay_list_event(
     let event = create_relay_list_event(keys, write_relays)?;
 
     let client = Client::default();
+    let mut added_count = 0;
     for relay in bridge_relays {
-        let _ = client.add_relay(relay.clone()).await;
+        if client.add_relay(relay.clone()).await.is_ok() {
+            added_count += 1;
+        }
     }
+
+    if added_count == 0 {
+        anyhow::bail!("Failed to add any bridge relays for NIP-65 publishing");
+    }
+
     client.connect().await;
 
-    // Wait for connections to establish
-    tokio::time::sleep(Duration::from_secs(2)).await;
+    // Wait for relay connections to establish
+    client
+        .wait_for_connection(Duration::from_secs(5))
+        .await;
 
     // Publish NIP-65 event to bridge relays
     client
@@ -625,13 +635,23 @@ pub async fn discover_sender_relays(sender_pubkey: &PublicKey) -> Result<Vec<Str
     let bridges: Vec<String> = DEFAULT_NOSTR_RELAYS.iter().map(|s| s.to_string()).collect();
 
     let client = Client::default();
+    let mut added_count = 0;
     for relay in &bridges {
-        let _ = client.add_relay(relay.clone()).await;
+        if client.add_relay(relay.clone()).await.is_ok() {
+            added_count += 1;
+        }
     }
+
+    if added_count == 0 {
+        anyhow::bail!("Failed to add any bridge relays for NIP-65 discovery");
+    }
+
     client.connect().await;
 
-    // Wait for connections
-    tokio::time::sleep(Duration::from_secs(1)).await;
+    // Wait for relay connections to establish
+    client
+        .wait_for_connection(Duration::from_secs(5))
+        .await;
 
     // Query for sender's NIP-65 event (kind 10002)
     let filter = Filter::new()
