@@ -606,12 +606,16 @@ pub async fn publish_relay_list_event(
 
     client.connect().await;
 
-    // Wait for relay connections to establish
+    // Wait for relay connections to establish.
+    // Note: wait_for_connection returns when at least one relay connects or timeout is reached,
+    // so the event may only be published to a subset of bridge relays. This is acceptable for
+    // NIP-65 since receivers only need to find the event from any one bridge relay, and the
+    // event will propagate across relays over time.
     client
         .wait_for_connection(Duration::from_secs(5))
         .await;
 
-    // Publish NIP-65 event to bridge relays
+    // Publish NIP-65 event to all connected bridge relays
     client
         .send_event(&event)
         .await
@@ -648,7 +652,10 @@ pub async fn discover_sender_relays(sender_pubkey: &PublicKey) -> Result<Vec<Str
 
     client.connect().await;
 
-    // Wait for relay connections to establish
+    // Wait for relay connections to establish.
+    // Note: wait_for_connection returns when at least one relay connects or timeout is reached,
+    // so we may only query a subset of bridge relays. This is acceptable since we only need to
+    // find the sender's NIP-65 event from any one relay.
     client
         .wait_for_connection(Duration::from_secs(5))
         .await;
