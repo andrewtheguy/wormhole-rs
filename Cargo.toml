@@ -11,14 +11,14 @@ path = "src/lib.rs"
 name = "wormhole-rs"
 path = "src/main.rs"
 
-[[bin]]
+[[example]]
 name = "onion_sender"
-path = "src/bin/onion_sender.rs"
+path = "examples/onion_sender.rs"
 required-features = ["onion"]
 
-[[bin]]
+[[example]]
 name = "onion_receiver"
-path = "src/bin/onion_receiver.rs"
+path = "examples/onion_receiver.rs"
 required-features = ["onion"]
 
 [features]
