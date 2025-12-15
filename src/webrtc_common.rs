@@ -259,16 +259,28 @@ impl ClientMessage {
 // PeerJS Client
 // ============================================================================
 
+/// Type alias for WebSocket write sink
+type WsSink = futures::stream::SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>;
+
 /// WebSocket client for PeerJS signaling server
 pub struct PeerJsClient {
     peer_id: String,
-    /// WebSocket write half, wrapped in Mutex for concurrent access
-    ws_write: Mutex<
-        futures::stream::SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>,
-    >,
+    /// WebSocket write half, wrapped in Arc<Mutex> for sharing with heartbeat task
+    ws_write: Arc<Mutex<WsSink>>,
     /// Message receiver, wrapped in Mutex so it can be taken for dedicated receiver task
     message_rx: Mutex<Option<mpsc::Receiver<ServerMessage>>>,
-    _heartbeat_handle: tokio::task::JoinHandle<()>,
+    /// Reader task handle - aborted on drop
+    reader_handle: tokio::task::JoinHandle<()>,
+    /// Heartbeat task handle - aborted on drop
+    heartbeat_handle: tokio::task::JoinHandle<()>,
+}
+
+impl Drop for PeerJsClient {
+    fn drop(&mut self) {
+        // Abort both background tasks to prevent leaking
+        self.reader_handle.abort();
+        self.heartbeat_handle.abort();
+    }
 }
 
 impl PeerJsClient {
@@ -289,12 +301,18 @@ impl PeerJsClient {
             .context("Failed to connect to PeerJS server")?;
         let (ws_write, mut ws_read) = ws_stream.split();
 
+        // Wrap ws_write in Arc<Mutex> for sharing between tasks
+        let ws_write = Arc::new(Mutex::new(ws_write));
+
         let (message_tx, message_rx) = mpsc::channel(100);
-        let (heartbeat_tx, mut heartbeat_rx) = mpsc::channel::<Message>(10);
+        // Channel for Ping->Pong forwarding from reader to heartbeat task
+        let (pong_tx, mut pong_rx) = mpsc::channel::<Vec<u8>>(10);
+        // Shutdown signal from reader to heartbeat task
+        let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel::<()>();
 
         // Spawn message reader task
         let message_tx_clone = message_tx.clone();
-        tokio::spawn(async move {
+        let reader_handle = tokio::spawn(async move {
             while let Some(msg_result) = ws_read.next().await {
                 match msg_result {
                     Ok(Message::Text(text)) => {
@@ -310,7 +328,8 @@ impl PeerJsClient {
                         }
                     }
                     Ok(Message::Ping(data)) => {
-                        let _ = heartbeat_tx.send(Message::Pong(data)).await;
+                        // Forward ping data to heartbeat task for Pong response
+                        let _ = pong_tx.send(data).await;
                     }
                     Ok(Message::Close(_)) => {
                         break;
@@ -322,18 +341,39 @@ impl PeerJsClient {
                     _ => {}
                 }
             }
+            // Signal heartbeat task to shut down when reader exits
+            let _ = shutdown_tx.send(());
         });
 
-        // Create heartbeat sender task
+        // Create heartbeat sender task with access to ws_write
+        let ws_write_clone = ws_write.clone();
         let heartbeat_handle = tokio::spawn(async move {
             let mut heartbeat_interval = interval(HEARTBEAT_INTERVAL);
+            // Skip the first immediate tick
+            heartbeat_interval.tick().await;
+
             loop {
                 tokio::select! {
-                    _ = heartbeat_interval.tick() => {
-                        // Heartbeat tick - handled in main write loop
+                    // Check for shutdown signal
+                    _ = &mut shutdown_rx => {
+                        break;
                     }
-                    Some(_msg) = heartbeat_rx.recv() => {
-                        // Pong response - would need ws_write access
+                    // Send periodic heartbeat to keep connection alive
+                    _ = heartbeat_interval.tick() => {
+                        let heartbeat = ClientMessage::heartbeat();
+                        if let Ok(json) = serde_json::to_string(&heartbeat) {
+                            let mut ws = ws_write_clone.lock().await;
+                            if ws.send(Message::Text(json)).await.is_err() {
+                                break;
+                            }
+                        }
+                    }
+                    // Send Pong response when we receive Ping
+                    Some(ping_data) = pong_rx.recv() => {
+                        let mut ws = ws_write_clone.lock().await;
+                        if ws.send(Message::Pong(ping_data)).await.is_err() {
+                            break;
+                        }
                     }
                 }
             }
@@ -341,9 +381,10 @@ impl PeerJsClient {
 
         Ok(Self {
             peer_id: peer_id.to_string(),
-            ws_write: Mutex::new(ws_write),
+            ws_write,
             message_rx: Mutex::new(Some(message_rx)),
-            _heartbeat_handle: heartbeat_handle,
+            reader_handle,
+            heartbeat_handle,
         })
     }
 
