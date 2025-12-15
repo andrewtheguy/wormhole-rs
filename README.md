@@ -1,17 +1,20 @@
 # wormhole-rs
 
-A secure peer-to-peer file transfer tool with two transport modes:
-- **iroh mode** - Direct P2P transfers using [iroh](https://github.com/n0-computer/iroh) with QUIC/TLS
-- **Nostr mode** - Small file transfers (≤512KB) via [Nostr relays](https://nostr.com) with mandatory AES-256-GCM encryption
+A secure peer-to-peer file transfer tool with three transport modes:
+- **iroh mode** - Direct P2P transfers using [iroh](https://github.com/n0-computer/iroh) with QUIC/TLS (default)
+- **Nostr mode** - Small file/folder transfers (≤512KB) via [Nostr relays](https://nostr.com) with mandatory AES-256-GCM encryption
+- **Tor mode** - Anonymous transfers via Tor hidden services (.onion addresses) - requires `onion` feature
 
 ## Features
 
-- 🔐 **End-to-end encryption** - All connections (direct P2P and relay) use QUIC/TLS 1.3; optional AES-256-GCM layer
-- 🌐 **Dual transport modes** - Choose between iroh P2P or Nostr relays
+- 🔐 **End-to-end encryption** - All connections use strong encryption; optional AES-256-GCM layer
+- 🌐 **Three transport modes** - Choose between iroh P2P, Nostr relays, or Tor hidden services
+- 📁 **File and folder transfers** - Send individual files or entire directories (as tar archives)
 - 🏠 **Local discovery** - mDNS for same-network transfers (iroh mode)
 - 📡 **Connection info** - Shows if transfer is Direct, Relay, or Mixed (iroh mode)
-- 🔧 **Custom relay servers** - Use your own private relays with automatic failover (iroh mode)
-- 📊 **Progress display** - Real-time transfer progress for both modes
+- 🧅 **Tor anonymity** - Optional anonymous transfers via .onion addresses (Tor mode)
+- 🔧 **Custom relay servers** - Use your own private relays with automatic failover
+- 📊 **Progress display** - Real-time transfer progress for all modes
 - 💻 **Cross-platform** - Single binary with no dependencies, supports macOS, Linux, and Windows
 
 ## Installation
@@ -78,7 +81,7 @@ cargo build --release
 
 ## Usage
 
-### iroh Mode (Default, Large Files)
+### Basic Usage
 
 **Send a file:**
 
@@ -88,109 +91,121 @@ wormhole-rs send /path/to/file
 
 This will display a wormhole code to share with the receiver.
 
-**Receive a file:**
+**Send a folder:**
+
+```bash
+wormhole-rs send /path/to/folder --folder
+```
+
+Folders are transferred as tar archives. The receiver automatically extracts them.
+
+**Receive (auto-detects transport and type):**
 
 ```bash
 wormhole-rs receive
 ```
 
-You will be prompted to enter the wormhole code. Alternatively, provide it directly:
+You will be prompted to enter the wormhole code. The receiver automatically detects the transport protocol (iroh, Nostr, or Tor) and transfer type (file or folder) from the wormhole code.
 
 ```bash
+# Provide code directly
 wormhole-rs receive --code <WORMHOLE_CODE>
-```
 
-Optionally specify an output directory:
-
-```bash
+# Specify output directory
 wormhole-rs receive --output /path/to/dir
 ```
 
-### Custom Relay Server (iroh mode)
+### iroh Mode (Default)
 
-By default, wormhole-rs uses iroh's public relay servers. For production use or private networks, you can run your own relay server and use it with the `--relay-url` option.
-
-**Both sender and receiver must use the same relay URL(s) to connect through your private relay.**
-
-**Send with custom relay:**
+iroh mode uses direct P2P connections with QUIC/TLS encryption. Best for large files.
 
 ```bash
+# Send file (iroh is default)
+wormhole-rs send /path/to/file
+
+# Send folder
+wormhole-rs send /path/to/folder --folder
+
+# With extra AES-256-GCM encryption layer
+wormhole-rs send /path/to/file --extra-encrypt
+```
+
+**Custom Relay Server:**
+
+By default, wormhole-rs uses iroh's public relay servers. For production use or private networks, you can run your own relay server.
+
+```bash
+# Send with custom relay
 wormhole-rs send --relay-url https://your-relay.example.com /path/to/file
-```
 
-**Receive with custom relay:**
-
-```bash
+# Receive with custom relay
 wormhole-rs receive --relay-url https://your-relay.example.com
-```
 
-**Multiple relays for failover:**
-
-You can specify multiple relay URLs for automatic failover. iroh will select the best relay based on latency:
-
-```bash
+# Multiple relays for failover
 wormhole-rs send --relay-url https://relay1.example.com --relay-url https://relay2.example.com /path/to/file
-wormhole-rs receive --relay-url https://relay1.example.com --relay-url https://relay2.example.com
 ```
 
-**Folder transfers also support custom relays:**
-
-```bash
-wormhole-rs send-folder --relay-url https://your-relay.example.com /path/to/folder
-wormhole-rs receive-folder --relay-url https://your-relay.example.com
-```
-
-### Nostr Mode (Small Files ≤512KB)
+### Nostr Mode (Small Files/Folders ≤512KB)
 
 Use Nostr mode when iroh is unavailable or blocked. Nostr transfers are always encrypted with AES-256-GCM.
 
-**Send a file:**
-
 ```bash
-wormhole-rs send-nostr /path/to/file
+# Send file via Nostr
+wormhole-rs send /path/to/file --transport nostr
+
+# Send folder via Nostr (tar archive must be ≤512KB)
+wormhole-rs send /path/to/folder --folder --transport nostr
 ```
 
-By default, wormhole-rs uses the **NIP-65 Outbox model** which allows sender and receiver to use different relays. The sender publishes their relay list to well-known bridge relays, and the receiver discovers the sender's relays automatically.
+By default, wormhole-rs uses the **NIP-65 Outbox model** which allows sender and receiver to use different relays.
 
-**Use custom relays:**
+**Custom relays:**
 
 ```bash
-wormhole-rs send-nostr /path/to/file --nostr-relay wss://relay.damus.io --nostr-relay wss://nos.lol
+wormhole-rs send /path/to/file --transport nostr --nostr-relay wss://relay.damus.io --nostr-relay wss://nos.lol
 ```
 
 **Use default hardcoded relays:**
 
 ```bash
-wormhole-rs send-nostr /path/to/file --use-default-relays
+wormhole-rs send /path/to/file --transport nostr --use-default-relays
 ```
 
 **Legacy mode (disable NIP-65 Outbox):**
 
-For compatibility with older receivers, you can disable the outbox model. In legacy mode, the relay list is embedded in the wormhole code and both parties must use the same relays:
-
 ```bash
-wormhole-rs send-nostr /path/to/file --no-outbox
+wormhole-rs send /path/to/file --transport nostr --no-outbox
 ```
 
-**Receive a file:**
+### Tor Mode (Anonymous Transfers)
+
+> **Note:** Requires building with `--features onion`. Tor mode uses Arti (Tor's Rust implementation).
+
+Tor mode provides anonymous transfers via .onion hidden services. Both sender and receiver are hidden behind Tor.
 
 ```bash
-wormhole-rs receive-nostr
+# Build with Tor support
+cargo build --release --features onion
+
+# Send file via Tor
+wormhole-rs send /path/to/file --transport tor
+
+# Send folder via Tor
+wormhole-rs send /path/to/folder --folder --transport tor
+
+# With extra AES-256-GCM encryption (on top of Tor's encryption)
+wormhole-rs send /path/to/file --transport tor --extra-encrypt
 ```
 
-You will be prompted to enter the wormhole code. In outbox mode, the receiver automatically discovers the sender's relays via NIP-65. In legacy mode, the relay list is embedded in the code.
+The sender bootstraps an ephemeral Tor client and creates a temporary .onion service. The wormhole code contains the .onion address for the receiver to connect.
 
-**With code:**
+**Receive via Tor:**
 
 ```bash
-wormhole-rs receive-nostr --code <WORMHOLE_CODE>
+wormhole-rs receive --code <WORMHOLE_CODE>
 ```
 
-**With output directory:**
-
-```bash
-wormhole-rs receive-nostr --output /path/to/dir
-```
+The receiver automatically detects Tor protocol from the wormhole code and connects via Tor.
 
 ## How It Works
 
@@ -410,7 +425,7 @@ Base64url-encoded JSON token.
 
 ### Nostr Mode
 
-**Wormhole Code - Outbox Mode (Default):**
+**Wormhole Code - File Transfer (Outbox Mode):**
 ```json
 {
   "version": 2,
@@ -420,10 +435,26 @@ Base64url-encoded JSON token.
   "nostr_sender_pubkey": "<hex_pubkey>",
   "nostr_transfer_id": "<hex_transfer_id>",
   "nostr_filename": "example.txt",
+  "nostr_transfer_type": "file",
   "nostr_use_outbox": true
 }
 ```
-In outbox mode, the relay list is omitted - receiver discovers relays via NIP-65.
+
+**Wormhole Code - Folder Transfer:**
+```json
+{
+  "version": 2,
+  "protocol": "nostr",
+  "extra_encrypt": true,
+  "key": "<base64-encoded-32-bytes>",
+  "nostr_sender_pubkey": "<hex_pubkey>",
+  "nostr_transfer_id": "<hex_transfer_id>",
+  "nostr_filename": "myfolder.tar",
+  "nostr_transfer_type": "folder",
+  "nostr_use_outbox": true
+}
+```
+For folder transfers, `nostr_transfer_type` is `"folder"` and the data is a tar archive. Receiver extracts automatically.
 
 **Wormhole Code - Legacy Mode (`--no-outbox`):**
 ```json
@@ -435,10 +466,11 @@ In outbox mode, the relay list is omitted - receiver discovers relays via NIP-65
   "nostr_sender_pubkey": "<hex_pubkey>",
   "nostr_relays": ["wss://relay1.com", "wss://relay2.com"],
   "nostr_transfer_id": "<hex_transfer_id>",
-  "nostr_filename": "example.txt"
+  "nostr_filename": "example.txt",
+  "nostr_transfer_type": "file"
 }
 ```
-In legacy mode, the relay list is embedded and both parties must use the same relays.
+In legacy mode, the relay list is embedded and both parties must use the same relays. In outbox mode, the relay list is omitted - receiver discovers relays via NIP-65.
 
 Base64url-encoded JSON token.
 
@@ -499,54 +531,78 @@ Published to well-known bridge relays (damus.io, nos.lol, nostr.wine) for receiv
 └──────────┴─────────────────┴─────────────┘
 ```
 
-## Experimental: Onion Mode (Tor Hidden Services)
+## Tor Mode Details
 
-> **Warning:** This feature is experimental and uses Arti (Tor's Rust implementation), which is not yet as secure as C-Tor. Do not use for security-sensitive purposes.
+> **Warning:** Tor mode uses Arti (Tor's Rust implementation), which is not yet as secure as C-Tor. Do not use for highly security-sensitive purposes.
 
-An optional `onion` feature enables peer-to-peer transfers through Tor hidden services (.onion addresses). This provides:
+### How Tor Mode Works
 
+```
+    ┌────────┐                                      ┌──────────┐
+    │ Sender │                                      │ Receiver │
+    └────┬───┘                                      └────┬─────┘
+         │                                               │
+         │  1. Bootstrap Tor client                      │
+         │  2. Create ephemeral .onion service           │
+         │  3. Generate wormhole code with               │
+         │     .onion address                            │
+         │                                               │
+         │  ─────── Share wormhole code ───────────►     │
+         │                                               │
+         │                                               │  4. Bootstrap Tor client
+         │                                               │  5. Connect to .onion
+         │                                               │
+         │  ◄──────── Tor Circuit ────────────────►     │
+         │            (end-to-end encrypted)             │
+         │                                               │
+         │  6. Send file/folder chunks                   │
+         │  ◄──────────────────────────────────────►     │
+         │  7. Receive ACK                               │
+```
+
+**Key properties:**
 - **Anonymity** - Both sender and receiver are hidden behind Tor
 - **NAT traversal** - Works through any firewall without port forwarding
 - **Ephemeral services** - New .onion address generated for each transfer
+- **End-to-end encryption** - Tor provides built-in encryption; optional AES-256-GCM layer available
 
-### Building with Onion Support
+### Building with Tor Support
 
 ```bash
 cargo build --release --features onion
 ```
 
-### Usage
+### Tor Wire Protocol
 
-**Sender (hosts the onion service):**
-
-```bash
-cargo run --bin onion_sender --features onion
+**Wormhole Code:**
+```json
+{
+  "version": 2,
+  "protocol": "tor",
+  "extra_encrypt": false,
+  "onion_address": "abc123...xyz.onion"
+}
 ```
 
-The sender will:
-1. Bootstrap a Tor client (ephemeral, no persistent state)
-2. Launch a temporary onion service
-3. Print the .onion address
-4. Wait for the receiver to connect
-5. Send the test message
+If `extra_encrypt` is true, an AES-256-GCM key is also included for an additional encryption layer on top of Tor's encryption.
 
-**Receiver (connects to the onion service):**
+### Example Binaries
+
+The `examples/` directory contains standalone Tor sender/receiver examples:
 
 ```bash
-cargo run --bin onion_receiver --features onion -- <address.onion>
-```
+# Run example sender
+cargo run --example onion_sender --features onion
 
-The receiver will:
-1. Bootstrap a Tor client
-2. Connect to the .onion address (retries up to 5 times on timeout)
-3. Receive and display the message
+# Run example receiver
+cargo run --example onion_receiver --features onion -- <address.onion>
+```
 
 ### Limitations
 
-- **Early stage** - This is a proof-of-concept for testing Arti's onion service capabilities
-- **Test binaries only** - Currently only sends a hardcoded test message
-- **Slow startup** - Tor bootstrapping and onion service publication takes time
-- **Not production ready** - Arti's onion services are still experimental
+- **Slow startup** - Tor bootstrapping and onion service publication takes 30-60 seconds
+- **Connection timeouts** - Tor circuits can be slow; receiver retries up to 5 times
+- **Experimental** - Arti's onion services are still maturing
 
 ### Dependencies (onion feature)
 
@@ -559,18 +615,24 @@ The receiver will:
 
 ```
 src/
-├── main.rs              # CLI entry point
+├── main.rs              # CLI entry point (unified send/receive commands)
+├── lib.rs               # Library exports
 ├── crypto.rs            # AES-256-GCM encryption/decryption
 ├── wormhole.rs          # Wormhole code generation/parsing (v2 tokens)
-├── transfer.rs          # Wire protocol (headers, chunks) for iroh mode
+├── transfer.rs          # Wire protocol (headers, chunks)
+├── folder.rs            # Shared folder logic (tar creation/extraction)
 ├── iroh_common.rs       # Common iroh endpoint setup and relay configuration
-├── sender.rs            # iroh mode file sender
-├── receiver.rs          # iroh mode file receiver
-├── folder_sender.rs     # iroh mode folder sender (tar archives)
-├── folder_receiver.rs   # iroh mode folder receiver (tar extraction)
-├── nostr_sender.rs      # Nostr mode file sender
-├── nostr_receiver.rs    # Nostr mode file receiver
-└── nostr_protocol.rs    # Nostr event structures and protocol logic
+├── sender_iroh.rs       # iroh mode file/folder sender
+├── receiver_iroh.rs     # iroh mode file/folder receiver
+├── nostr_protocol.rs    # Nostr event structures and protocol logic
+├── nostr_sender.rs      # Nostr mode file/folder sender
+├── nostr_receiver.rs    # Nostr mode file/folder receiver
+├── onion_sender.rs      # Tor mode file/folder sender (requires onion feature)
+└── onion_receiver.rs    # Tor mode file/folder receiver (requires onion feature)
+
+examples/
+├── onion_sender.rs      # Standalone Tor sender example
+└── onion_receiver.rs    # Standalone Tor receiver example
 ```
 
 ## Dependencies
