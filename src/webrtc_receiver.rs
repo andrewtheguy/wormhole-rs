@@ -37,6 +37,22 @@ type TempFileCleanup = Arc<Mutex<Option<PathBuf>>>;
 /// Shared state for extraction directory cleanup on interrupt
 type ExtractDirCleanup = Arc<Mutex<Option<PathBuf>>>;
 
+/// Print transfer progress, handling zero-byte files safely
+fn print_progress(bytes_received: u64, total_size: u64) {
+    let percent = if total_size == 0 {
+        100
+    } else {
+        (bytes_received as f64 / total_size as f64 * 100.0) as u32
+    };
+    print!(
+        "\r   Progress: {}% ({}/{})",
+        percent,
+        format_bytes(bytes_received),
+        format_bytes(total_size)
+    );
+    let _ = std::io::stdout().flush();
+}
+
 /// Set up Ctrl+C handler to clean up temp file.
 fn setup_file_cleanup_handler(cleanup_path: TempFileCleanup) {
     tokio::spawn(async move {
@@ -230,9 +246,20 @@ pub async fn receive_webrtc(code: &str, output_dir: Option<PathBuf>) -> Result<(
     let (open_tx, open_rx) = tokio::sync::oneshot::channel();
     setup_data_channel_handlers(&data_channel, message_tx, Some(open_tx));
 
-    // Wait for channel to be ready
-    let _ = timeout(Duration::from_secs(5), open_rx).await;
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    // Wait for data channel to be confirmed open
+    match timeout(Duration::from_secs(10), open_rx).await {
+        Ok(Ok(())) => {
+            println!("Data channel opened successfully");
+        }
+        Ok(Err(_)) => {
+            // oneshot sender was dropped without sending - channel setup failed
+            anyhow::bail!("Data channel failed to open: sender dropped");
+        }
+        Err(_) => {
+            // Timeout elapsed
+            anyhow::bail!("Timeout waiting for data channel to open");
+        }
+    }
 
     println!("Connected to sender!");
 
@@ -378,14 +405,7 @@ async fn receive_file_impl(
 
                 // Progress update
                 if chunk_num % 10 == 0 || bytes_received == header.file_size {
-                    let percent = (bytes_received as f64 / header.file_size as f64 * 100.0) as u32;
-                    print!(
-                        "\r   Progress: {}% ({}/{})",
-                        percent,
-                        format_bytes(bytes_received),
-                        format_bytes(header.file_size)
-                    );
-                    let _ = std::io::stdout().flush();
+                    print_progress(bytes_received, header.file_size);
                 }
             }
             2 => {
@@ -488,14 +508,7 @@ async fn receive_folder_impl(
 
                 // Progress update
                 if chunk_num % 10 == 0 || bytes_received == header.file_size {
-                    let percent = (bytes_received as f64 / header.file_size as f64 * 100.0) as u32;
-                    print!(
-                        "\r   Progress: {}% ({}/{})",
-                        percent,
-                        format_bytes(bytes_received),
-                        format_bytes(header.file_size)
-                    );
-                    let _ = std::io::stdout().flush();
+                    print_progress(bytes_received, header.file_size);
                 }
             }
             2 => {
