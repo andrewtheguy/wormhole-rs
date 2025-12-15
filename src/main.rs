@@ -120,26 +120,28 @@ async fn main() -> Result<()> {
                     }
                 }
                 Transport::Nostr => {
-                    if folder {
-                        anyhow::bail!("Nostr transport does not support folder transfers.\nUse --transport iroh or --transport tor for folders.");
-                    }
-                    // Enforce file size limit for Nostr transfers
-                    let metadata = std::fs::metadata(&path)?;
-                    let file_size = metadata.len();
-                    if file_size > nostr_protocol::MAX_NOSTR_FILE_SIZE {
-                        anyhow::bail!(
-                            "File too large for Nostr transfer (max 512KB): {} bytes\n\
-                             Use --transport iroh for larger files.",
-                            file_size
-                        );
-                    }
                     let custom_relays = if nostr_relay.is_empty() {
                         None
                     } else {
                         Some(nostr_relay)
                     };
                     let use_outbox = !no_outbox;
-                    nostr_sender::send_file_nostr(&path, custom_relays, use_default_relays, use_outbox).await?;
+                    if folder {
+                        // Folder size is validated inside send_folder_nostr
+                        nostr_sender::send_folder_nostr(&path, custom_relays, use_default_relays, use_outbox).await?;
+                    } else {
+                        // Enforce file size limit for Nostr transfers
+                        let metadata = std::fs::metadata(&path)?;
+                        let file_size = metadata.len();
+                        if file_size > nostr_protocol::MAX_NOSTR_FILE_SIZE {
+                            anyhow::bail!(
+                                "File too large for Nostr transfer (max 512KB): {} bytes\n\
+                                 Use --transport iroh for larger files.",
+                                file_size
+                            );
+                        }
+                        nostr_sender::send_file_nostr(&path, custom_relays, use_default_relays, use_outbox).await?;
+                    }
                 }
                 #[cfg(feature = "onion")]
                 Transport::Tor => {
@@ -184,7 +186,7 @@ async fn main() -> Result<()> {
                     receiver_iroh::receive(&code, output, relay_url).await?;
                 }
                 wormhole::PROTOCOL_NOSTR => {
-                    // Nostr transport: file only
+                    // Nostr transport: auto-detects file vs folder from wormhole code
                     nostr_receiver::receive_file_nostr(&code, output).await?;
                 }
                 #[cfg(feature = "onion")]

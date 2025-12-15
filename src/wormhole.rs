@@ -83,6 +83,9 @@ pub struct WormholeToken {
     /// Original filename (for Nostr transfers)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub nostr_filename: Option<String>,
+    /// Transfer type: "file" (default) or "folder" (tar archive)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub nostr_transfer_type: Option<String>,
     /// Whether to use NIP-65 Outbox model for relay discovery
     /// When true, receiver discovers relays via NIP-65 from well-known bridge relays
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -123,6 +126,7 @@ pub fn generate_code(
         nostr_relays: None,
         nostr_transfer_id: None,
         nostr_filename: None,
+        nostr_transfer_type: None,
         nostr_use_outbox: None,
         onion_address: None,
     };
@@ -143,6 +147,7 @@ pub fn generate_code(
 /// * `relays` - List of Nostr relay URLs (required for legacy mode, None for outbox mode)
 /// * `filename` - Original filename
 /// * `use_outbox` - Whether to use NIP-65 Outbox model for relay discovery
+/// * `transfer_type` - "file" or "folder"
 pub fn generate_nostr_code(
     key: &[u8; 32],
     sender_pubkey: String,
@@ -150,6 +155,7 @@ pub fn generate_nostr_code(
     relays: Option<Vec<String>>,
     filename: String,
     use_outbox: bool,
+    transfer_type: &str,
 ) -> Result<String> {
     let token = WormholeToken {
         version: CURRENT_VERSION,
@@ -161,6 +167,7 @@ pub fn generate_nostr_code(
         nostr_relays: relays,
         nostr_transfer_id: Some(transfer_id),
         nostr_filename: Some(filename),
+        nostr_transfer_type: Some(transfer_type.to_string()),
         nostr_use_outbox: if use_outbox { Some(true) } else { None },
         onion_address: None,
     };
@@ -197,6 +204,7 @@ pub fn generate_tor_code(
         nostr_relays: None,
         nostr_transfer_id: None,
         nostr_filename: None,
+        nostr_transfer_type: None,
         nostr_use_outbox: None,
         onion_address: Some(onion_address),
     };

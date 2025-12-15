@@ -9,6 +9,7 @@ use tokio::sync::Mutex;
 use tokio::time::{timeout, Duration};
 
 use crate::crypto::decrypt_chunk;
+use crate::folder::{extract_tar_archive, print_skipped_entries, print_tar_extraction_info};
 use crate::nostr_protocol::{
     create_ack_event, discover_sender_relays, get_transfer_id, is_chunk_event, parse_chunk_event,
 };
@@ -314,71 +315,105 @@ pub async fn receive_file_nostr(
         decrypted_data.extend_from_slice(&decrypted_chunk);
     }
 
-    let file_size = decrypted_data.len() as u64;
-    println!("📁 File size: {}", format_bytes(file_size));
+    let data_size = decrypted_data.len() as u64;
+    println!("Data size: {}", format_bytes(data_size));
 
-    // Extract filename from wormhole code, or use default if missing
-    let filename = token.nostr_filename.unwrap_or_else(|| {
-        // Safely truncate transfer_id to 8 characters
-        let truncated_id = transfer_id
-            .chars()
-            .take(8)
-            .collect::<String>();
-        format!("received_file_{}.bin", truncated_id)
-    });
+    // Check transfer type
+    let transfer_type = token.nostr_transfer_type.as_deref().unwrap_or("file");
 
-    println!("📄 Filename: {}", filename);
-
-    // Determine output directory and final path
+    // Determine output directory
     let output_dir = output_dir.unwrap_or_else(|| PathBuf::from("."));
-    let output_path = output_dir.join(&filename);
 
-    // Check if file already exists
-    if output_path.exists() {
-        print!(
-            "⚠️  File already exists: {}. Overwrite? [y/N] ",
-            output_path.display()
-        );
-        std::io::Write::flush(&mut std::io::stdout())?;
+    if transfer_type == "folder" {
+        // Extract tar archive from memory
+        println!("Extracting folder archive...");
+        print_tar_extraction_info();
 
-        let mut input = String::new();
-        std::io::stdin().read_line(&mut input)?;
+        // Create extraction directory
+        let extract_dir = if let Some(ref folder_name) = token.nostr_filename {
+            // Strip .tar extension if present
+            let name = folder_name.strip_suffix(".tar").unwrap_or(folder_name);
+            output_dir.join(name)
+        } else {
+            // Generate unique directory name
+            let timestamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs();
+            let random_id: u32 = rand::random();
+            output_dir.join(format!("wormhole_{}_{:08x}", timestamp, random_id))
+        };
 
-        if !input.trim().eq_ignore_ascii_case("y") {
-            anyhow::bail!("Transfer cancelled - file exists");
+        std::fs::create_dir_all(&extract_dir).context("Failed to create extraction directory")?;
+        println!("Extracting to: {}", extract_dir.display());
+
+        // Extract tar from in-memory data
+        let cursor = std::io::Cursor::new(decrypted_data);
+        let skipped_entries = extract_tar_archive(cursor, &extract_dir)?;
+        print_skipped_entries(&skipped_entries);
+
+        println!("\nFolder received successfully!");
+        println!("Extracted to: {}", extract_dir.display());
+    } else {
+        // File transfer (existing logic)
+        // Extract filename from wormhole code, or use default if missing
+        let filename = token.nostr_filename.unwrap_or_else(|| {
+            // Safely truncate transfer_id to 8 characters
+            let truncated_id = transfer_id.chars().take(8).collect::<String>();
+            format!("received_file_{}.bin", truncated_id)
+        });
+
+        println!("Filename: {}", filename);
+
+        let output_path = output_dir.join(&filename);
+
+        // Check if file already exists
+        if output_path.exists() {
+            print!(
+                "File already exists: {}. Overwrite? [y/N] ",
+                output_path.display()
+            );
+            std::io::Write::flush(&mut std::io::stdout())?;
+
+            let mut input = String::new();
+            std::io::stdin().read_line(&mut input)?;
+
+            if !input.trim().eq_ignore_ascii_case("y") {
+                anyhow::bail!("Transfer cancelled - file exists");
+            }
+
+            // Remove existing file
+            std::fs::remove_file(&output_path).context("Failed to remove existing file")?;
         }
 
-        // Remove existing file
-        std::fs::remove_file(&output_path).context("Failed to remove existing file")?;
+        // Create temp file in same directory (ensures rename works, auto-deletes on drop)
+        let temp_file =
+            NamedTempFile::new_in(&output_dir).context("Failed to create temporary file")?;
+        let temp_path = temp_file.path().to_path_buf();
+
+        // Set up cleanup handler for Ctrl+C
+        let cleanup_path: TempFileCleanup = Arc::new(Mutex::new(Some(temp_path)));
+        setup_cleanup_handler(cleanup_path.clone());
+
+        let mut temp_file = temp_file;
+
+        // Write decrypted data to temp file
+        temp_file
+            .write_all(&decrypted_data)
+            .context("Failed to write to file")?;
+
+        // Clear cleanup path before persist (transfer succeeded)
+        cleanup_path.lock().await.take();
+
+        // Flush and persist temp file to final path (atomic move)
+        temp_file.flush().context("Failed to flush file")?;
+        temp_file
+            .persist(&output_path)
+            .map_err(|e| anyhow::anyhow!("Failed to persist temp file: {}", e))?;
+
+        println!("\nFile received successfully!");
+        println!("Saved to: {}", output_path.display());
     }
-
-    // Create temp file in same directory (ensures rename works, auto-deletes on drop)
-    let temp_file =
-        NamedTempFile::new_in(&output_dir).context("Failed to create temporary file")?;
-    let temp_path = temp_file.path().to_path_buf();
-
-    // Set up cleanup handler for Ctrl+C
-    let cleanup_path: TempFileCleanup = Arc::new(Mutex::new(Some(temp_path)));
-    setup_cleanup_handler(cleanup_path.clone());
-
-    let mut temp_file = temp_file;
-
-    // Write decrypted data to temp file
-    temp_file
-        .write_all(&decrypted_data)
-        .context("Failed to write to file")?;
-
-    // Clear cleanup path before persist (transfer succeeded)
-    cleanup_path.lock().await.take();
-
-    // Flush and persist temp file to final path (atomic move)
-    temp_file.flush().context("Failed to flush file")?;
-    temp_file
-        .persist(&output_path)
-        .map_err(|e| anyhow::anyhow!("Failed to persist temp file: {}", e))?;
-
-    println!("✅ File received successfully!");
-    println!("📁 Saved to: {}", output_path.display());
 
     // Send final completion ACK (seq = -1)
     let final_ack = create_ack_event(&receiver_keys, &sender_pubkey, &transfer_id, -1)?;
