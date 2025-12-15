@@ -139,7 +139,11 @@ pub async fn send_file_tor(file_path: &Path, extra_encrypt: bool) -> Result<()> 
 
             // Progress update every 10 chunks or on last chunk
             if chunk_num % 10 == 0 || bytes_sent == file_size {
-                let percent = (bytes_sent as f64 / file_size as f64 * 100.0) as u32;
+                let percent = if file_size == 0 {
+                    100 // Empty file is 100% complete
+                } else {
+                    (bytes_sent as f64 / file_size as f64 * 100.0) as u32
+                };
                 print!(
                     "\r   Progress: {}% ({}/{})",
                     percent,
@@ -317,7 +321,11 @@ pub async fn send_folder_tor(folder_path: &Path, extra_encrypt: bool) -> Result<
 
             // Progress update every 10 chunks or on last chunk
             if chunk_num % 10 == 0 || bytes_sent == file_size {
-                let percent = (bytes_sent as f64 / file_size as f64 * 100.0) as u32;
+                let percent = if file_size == 0 {
+                    100 // Empty file is 100% complete
+                } else {
+                    (bytes_sent as f64 / file_size as f64 * 100.0) as u32
+                };
                 print!(
                     "\r   Progress: {}% ({}/{})",
                     percent,

@@ -173,16 +173,20 @@ where
 
     // Check if file already exists
     if output_path.exists() {
-        print!(
-            "⚠️  File already exists: {}. Overwrite? [y/N] ",
-            output_path.display()
-        );
-        std::io::Write::flush(&mut std::io::stdout())?;
+        let prompt_path = output_path.display().to_string();
+        let should_overwrite = tokio::task::spawn_blocking(move || {
+            print!("⚠️  File already exists: {}. Overwrite? [y/N] ", prompt_path);
+            std::io::Write::flush(&mut std::io::stdout())?;
 
-        let mut input = String::new();
-        std::io::stdin().read_line(&mut input)?;
+            let mut input = String::new();
+            std::io::stdin().read_line(&mut input)?;
 
-        if !input.trim().eq_ignore_ascii_case("y") {
+            Ok::<bool, std::io::Error>(input.trim().eq_ignore_ascii_case("y"))
+        })
+        .await
+        .context("Prompt task panicked")??;
+
+        if !should_overwrite {
             anyhow::bail!("Transfer cancelled - file exists");
         }
 
