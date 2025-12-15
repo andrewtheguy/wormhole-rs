@@ -12,13 +12,13 @@ name = "wormhole-rs"
 path = "src/main.rs"
 
 [[example]]
-name = "onion_sender"
-path = "examples/onion_sender.rs"
+name = "onion_sender_test"
+path = "examples/onion_sender_test.rs"
 required-features = ["onion"]
 
 [[example]]
-name = "onion_receiver"
-path = "examples/onion_receiver.rs"
+name = "onion_receiver_test"
+path = "examples/onion_receiver_test.rs"
 required-features = ["onion"]
 
 [features]

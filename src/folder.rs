@@ -5,7 +5,7 @@
 use anyhow::{Context, Result};
 use std::cmp;
 use std::io::Read;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use tar::{Archive, Builder};
 use tempfile::NamedTempFile;
 use walkdir::WalkDir;
@@ -270,6 +270,30 @@ pub fn print_tar_extraction_info() {
         println!("   Symlinks require admin privileges and may be skipped.");
     }
     println!("   Special files (devices, FIFOs) will be skipped if present.");
+}
+
+/// Determine the extraction directory for a folder transfer.
+///
+/// If `output_dir` is provided, uses it directly.
+/// Otherwise, generates a unique directory name with timestamp and random suffix.
+///
+/// # Arguments
+/// * `output_dir` - Optional user-specified output directory
+///
+/// # Returns
+/// * The directory path to extract files into
+pub fn get_extraction_dir(output_dir: Option<PathBuf>) -> PathBuf {
+    match output_dir {
+        Some(dir) => dir,
+        None => {
+            let timestamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            let random_id: u32 = rand::random();
+            PathBuf::from(format!("wormhole_{}_{:08x}", timestamp, random_id))
+        }
+    }
 }
 
 /// Print skipped entries warning if any were skipped during extraction.

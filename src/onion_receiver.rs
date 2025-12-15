@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use arti_client::{ErrorKind, HasKind, TorClient, TorClientConfig};
+use arti_client::{config::TorClientConfigBuilder, ErrorKind, HasKind, TorClient};
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex as StdMutex};
@@ -8,8 +8,8 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::Mutex;
 
 use crate::folder::{
-    extract_tar_archive_returning_reader, print_skipped_entries, print_tar_extraction_info,
-    StreamingReader,
+    extract_tar_archive_returning_reader, get_extraction_dir, print_skipped_entries,
+    print_tar_extraction_info, StreamingReader,
 };
 use crate::transfer::{
     format_bytes, num_chunks, recv_chunk, recv_encrypted_chunk, recv_encrypted_header, recv_header,
@@ -86,9 +86,14 @@ pub async fn receive_file_tor(code: &str, output_dir: Option<PathBuf>) -> Result
 
     println!("Code valid. Connecting to sender via Tor...");
 
-    // Bootstrap Tor client
-    println!("Bootstrapping Tor client...");
-    let config = TorClientConfig::default();
+    // Bootstrap Tor client (ephemeral mode - allows multiple concurrent receivers)
+    let temp_dir = tempfile::tempdir()?;
+    let state_dir = temp_dir.path().join("state");
+    let cache_dir = temp_dir.path().join("cache");
+
+    println!("Bootstrapping Tor client (ephemeral mode)...");
+
+    let config = TorClientConfigBuilder::from_directories(state_dir, cache_dir).build()?;
     let tor_client = TorClient::create_bootstrapped(config).await?;
     println!("Tor client bootstrapped!");
 
@@ -297,19 +302,8 @@ async fn receive_folder_stream<S: AsyncReadExt + AsyncWriteExt + Unpin + Send + 
         format_bytes(header.file_size)
     );
 
-    // Determine output directory
-    let extract_dir = match output_dir {
-        Some(dir) => dir,
-        None => {
-            let timestamp = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .context("System clock is before Unix epoch")?
-                .as_secs();
-            let random_id: u32 = rand::random();
-            PathBuf::from(format!("wormhole_{}_{:08x}", timestamp, random_id))
-        }
-    };
-
+    // Determine output directory using shared logic
+    let extract_dir = get_extraction_dir(output_dir);
     std::fs::create_dir_all(&extract_dir).context("Failed to create extraction directory")?;
 
     println!("Extracting to: {}", extract_dir.display());

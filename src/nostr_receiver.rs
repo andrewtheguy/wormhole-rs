@@ -9,7 +9,9 @@ use tokio::sync::Mutex;
 use tokio::time::{timeout, Duration};
 
 use crate::crypto::decrypt_chunk;
-use crate::folder::{extract_tar_archive, print_skipped_entries, print_tar_extraction_info};
+use crate::folder::{
+    extract_tar_archive, get_extraction_dir, print_skipped_entries, print_tar_extraction_info,
+};
 use crate::nostr_protocol::{
     create_ack_event, discover_sender_relays, get_transfer_id, is_chunk_event, parse_chunk_event,
 };
@@ -332,29 +334,13 @@ pub async fn receive_file_nostr(
     // Check transfer type
     let transfer_type = token.nostr_transfer_type.as_deref().unwrap_or("file");
 
-    // Determine output directory
-    let output_dir = output_dir.unwrap_or_else(|| PathBuf::from("."));
-
     if transfer_type == "folder" {
         // Extract tar archive from memory
         println!("Extracting folder archive...");
         print_tar_extraction_info();
 
-        // Create extraction directory
-        let extract_dir = if let Some(ref folder_name) = token.nostr_filename {
-            // Strip .tar extension if present
-            let name = folder_name.strip_suffix(".tar").unwrap_or(folder_name);
-            output_dir.join(name)
-        } else {
-            // Generate unique directory name
-            let timestamp = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs();
-            let random_id: u32 = rand::random();
-            output_dir.join(format!("wormhole_{}_{:08x}", timestamp, random_id))
-        };
-
+        // Determine output directory using shared logic (same as iroh/tor)
+        let extract_dir = get_extraction_dir(output_dir);
         std::fs::create_dir_all(&extract_dir).context("Failed to create extraction directory")?;
         println!("Extracting to: {}", extract_dir.display());
 
@@ -376,6 +362,7 @@ pub async fn receive_file_nostr(
 
         println!("Filename: {}", filename);
 
+        let output_dir = output_dir.unwrap_or_else(|| PathBuf::from("."));
         let output_path = output_dir.join(&filename);
 
         // Check if file already exists

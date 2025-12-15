@@ -7,7 +7,8 @@ use tempfile::NamedTempFile;
 use tokio::sync::Mutex;
 
 use crate::folder::{
-    extract_tar_archive, print_skipped_entries, print_tar_extraction_info, StreamingReader,
+    extract_tar_archive, get_extraction_dir, print_skipped_entries, print_tar_extraction_info,
+    StreamingReader,
 };
 use crate::iroh_common::{create_receiver_endpoint, ALPN};
 use crate::transfer::{
@@ -284,20 +285,8 @@ where
         format_bytes(header.file_size)
     );
 
-    // Determine output directory
-    let extract_dir = match output_dir {
-        Some(dir) => dir, // Use provided directory directly
-        None => {
-            // Generate random folder in current directory with timestamp for sorting
-            let timestamp = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs();
-            let random_id: u32 = rand::random();
-            PathBuf::from(format!("wormhole_{}_{:08x}", timestamp, random_id))
-        }
-    };
-
+    // Determine output directory using shared logic
+    let extract_dir = get_extraction_dir(output_dir);
     std::fs::create_dir_all(&extract_dir).context("Failed to create extraction directory")?;
 
     // Set up cleanup handler for Ctrl+C
