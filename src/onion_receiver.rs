@@ -1,0 +1,401 @@
+use anyhow::{Context, Result};
+use arti_client::{ErrorKind, HasKind, TorClient, TorClientConfig};
+use std::cmp;
+use std::io::{Read, Write};
+use std::path::PathBuf;
+use tar::Archive;
+use tempfile::NamedTempFile;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+use crate::transfer::{
+    format_bytes, num_chunks, recv_chunk, recv_encrypted_chunk, recv_encrypted_header, recv_header,
+    TransferType,
+};
+use crate::wormhole::{decode_key, parse_code, PROTOCOL_TOR};
+
+const MAX_RETRIES: u32 = 5;
+const RETRY_DELAY_SECS: u64 = 5;
+
+/// Check if error is retryable (timeout, temporary network issues)
+fn is_retryable(e: &arti_client::Error) -> bool {
+    matches!(
+        e.kind(),
+        ErrorKind::TorNetworkTimeout
+            | ErrorKind::RemoteNetworkTimeout
+            | ErrorKind::TransientFailure
+            | ErrorKind::LocalNetworkError
+    )
+}
+
+/// Wrapper to bridge async chunk receiving with sync tar reading.
+/// Implements std::io::Read by fetching chunks on demand.
+struct StreamingReader<R> {
+    recv_stream: R,
+    key: Option<[u8; 32]>,
+    chunk_num: u64,
+    buffer: Vec<u8>,
+    buffer_pos: usize,
+    bytes_remaining: u64,
+    runtime_handle: tokio::runtime::Handle,
+}
+
+impl<R> StreamingReader<R> {
+    fn new(
+        recv_stream: R,
+        key: Option<[u8; 32]>,
+        file_size: u64,
+        runtime_handle: tokio::runtime::Handle,
+    ) -> Self {
+        Self {
+            recv_stream,
+            key,
+            chunk_num: 1, // Chunks start at 1, header was 0
+            buffer: Vec::new(),
+            buffer_pos: 0,
+            bytes_remaining: file_size,
+            runtime_handle,
+        }
+    }
+}
+
+impl<R: AsyncReadExt + Unpin + Send> Read for StreamingReader<R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        // If buffer is exhausted and there's more data, fetch next chunk
+        if self.buffer_pos >= self.buffer.len() && self.bytes_remaining > 0 {
+            // Block on async chunk receive
+            let chunk_result = self.runtime_handle.block_on(async {
+                if let Some(ref key) = self.key {
+                    recv_encrypted_chunk(&mut self.recv_stream, key, self.chunk_num).await
+                } else {
+                    recv_chunk(&mut self.recv_stream).await
+                }
+            });
+
+            match chunk_result {
+                Ok(chunk) => {
+                    self.bytes_remaining -= chunk.len() as u64;
+                    self.chunk_num += 1;
+                    self.buffer = chunk;
+                    self.buffer_pos = 0;
+                }
+                Err(e) => {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        format!("Failed to receive chunk: {}", e),
+                    ));
+                }
+            }
+        }
+
+        // Return data from buffer
+        if self.buffer_pos >= self.buffer.len() {
+            return Ok(0); // EOF
+        }
+
+        let available = self.buffer.len() - self.buffer_pos;
+        let to_copy = cmp::min(available, buf.len());
+        buf[..to_copy].copy_from_slice(&self.buffer[self.buffer_pos..self.buffer_pos + to_copy]);
+        self.buffer_pos += to_copy;
+
+        Ok(to_copy)
+    }
+}
+
+/// Receive a file via Tor hidden service
+pub async fn receive_file_tor(code: &str, output_dir: Option<PathBuf>) -> Result<()> {
+    println!("Parsing wormhole code...");
+
+    // Parse the wormhole code
+    let token = parse_code(code).context("Failed to parse wormhole code")?;
+
+    // Validate protocol
+    if token.protocol != PROTOCOL_TOR {
+        anyhow::bail!(
+            "Expected Tor protocol, got '{}'. Use the appropriate receive command.",
+            token.protocol
+        );
+    }
+
+    if token.extra_encrypt {
+        println!("Extra AES-256-GCM encryption detected");
+    } else {
+        println!("Using Tor's built-in end-to-end encryption");
+    }
+
+    let key = token
+        .key
+        .as_ref()
+        .map(|k| decode_key(k))
+        .transpose()
+        .context("Failed to decode encryption key")?;
+
+    let onion_addr = token
+        .onion_address
+        .context("No onion address in wormhole code")?;
+
+    println!("Code valid. Connecting to sender via Tor...");
+
+    // Bootstrap Tor client
+    println!("Bootstrapping Tor client...");
+    let config = TorClientConfig::default();
+    let tor_client = TorClient::create_bootstrapped(config).await?;
+    println!("Tor client bootstrapped!");
+
+    // Retry connection for temporary errors
+    let mut stream = None;
+    let mut last_error = None;
+
+    for attempt in 1..=MAX_RETRIES {
+        println!(
+            "Connecting to {} (attempt {}/{})...",
+            onion_addr, attempt, MAX_RETRIES
+        );
+
+        match tor_client.connect((onion_addr.as_str(), 80)).await {
+            Ok(s) => {
+                stream = Some(s);
+                break;
+            }
+            Err(e) => {
+                eprintln!("Connection failed: {}", e);
+
+                if !is_retryable(&e) {
+                    return Err(e.into());
+                }
+
+                last_error = Some(e);
+                if attempt < MAX_RETRIES {
+                    println!("Retrying in {} seconds...", RETRY_DELAY_SECS);
+                    tokio::time::sleep(tokio::time::Duration::from_secs(RETRY_DELAY_SECS)).await;
+                }
+            }
+        }
+    }
+
+    let mut stream = stream.ok_or_else(|| {
+        anyhow::anyhow!(
+            "Failed to connect after {} attempts: {}",
+            MAX_RETRIES,
+            last_error.map(|e| e.to_string()).unwrap_or_default()
+        )
+    })?;
+
+    println!("Connected!");
+
+    // Read file header
+    let header = if let Some(ref k) = key {
+        recv_encrypted_header(&mut stream, k)
+            .await
+            .context("Failed to read file header")?
+    } else {
+        recv_header(&mut stream)
+            .await
+            .context("Failed to read file header")?
+    };
+
+    // Check transfer type
+    if header.transfer_type == TransferType::Folder {
+        // Handle as folder transfer
+        return receive_folder_stream(stream, header, key, output_dir).await;
+    }
+
+    println!(
+        "Receiving: {} ({})",
+        header.filename,
+        format_bytes(header.file_size)
+    );
+
+    // Determine output directory and final path
+    let output_dir = output_dir.unwrap_or_else(|| PathBuf::from("."));
+    let output_path = output_dir.join(&header.filename);
+
+    // Check if file already exists
+    if output_path.exists() {
+        print!(
+            "File already exists: {}. Overwrite? [y/N] ",
+            output_path.display()
+        );
+        std::io::Write::flush(&mut std::io::stdout())?;
+
+        let mut input = String::new();
+        std::io::stdin().read_line(&mut input)?;
+
+        if !input.trim().eq_ignore_ascii_case("y") {
+            anyhow::bail!("Transfer cancelled - file exists");
+        }
+
+        std::fs::remove_file(&output_path).context("Failed to remove existing file")?;
+    }
+
+    // Create temp file in same directory
+    let mut temp_file =
+        NamedTempFile::new_in(&output_dir).context("Failed to create temporary file")?;
+
+    // Receive chunks
+    let total_chunks = num_chunks(header.file_size);
+    let mut chunk_num = 1u64;
+    let mut bytes_received = 0u64;
+
+    println!("Receiving {} chunks...", total_chunks);
+
+    while bytes_received < header.file_size {
+        let chunk = if let Some(ref k) = key {
+            recv_encrypted_chunk(&mut stream, k, chunk_num)
+                .await
+                .context("Failed to receive chunk")?
+        } else {
+            recv_chunk(&mut stream)
+                .await
+                .context("Failed to receive chunk")?
+        };
+
+        temp_file
+            .write_all(&chunk)
+            .context("Failed to write to file")?;
+
+        chunk_num += 1;
+        bytes_received += chunk.len() as u64;
+
+        // Progress update
+        if chunk_num % 10 == 0 || bytes_received == header.file_size {
+            let percent = (bytes_received as f64 / header.file_size as f64 * 100.0) as u32;
+            print!(
+                "\r   Progress: {}% ({}/{})",
+                percent,
+                format_bytes(bytes_received),
+                format_bytes(header.file_size)
+            );
+        }
+    }
+
+    // Persist temp file
+    temp_file.flush().context("Failed to flush file")?;
+    temp_file
+        .persist(&output_path)
+        .map_err(|e| anyhow::anyhow!("Failed to persist temp file: {}", e))?;
+
+    println!("\nFile received successfully!");
+    println!("Saved to: {}", output_path.display());
+
+    // Send ACK
+    stream
+        .write_all(b"ACK")
+        .await
+        .context("Failed to send acknowledgment")?;
+    stream.flush().await.context("Failed to flush stream")?;
+
+    println!("Connection closed.");
+
+    Ok(())
+}
+
+/// Handle folder transfer after header is received
+async fn receive_folder_stream<S: AsyncReadExt + Unpin + Send + 'static>(
+    stream: S,
+    header: crate::transfer::FileHeader,
+    key: Option<[u8; 32]>,
+    output_dir: Option<PathBuf>,
+) -> Result<()> {
+    println!(
+        "Receiving folder archive: {} ({})",
+        header.filename,
+        format_bytes(header.file_size)
+    );
+
+    // Determine output directory
+    let extract_dir = match output_dir {
+        Some(dir) => dir,
+        None => {
+            let timestamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs();
+            let random_id: u32 = rand::random();
+            PathBuf::from(format!("wormhole_{}_{:08x}", timestamp, random_id))
+        }
+    };
+
+    std::fs::create_dir_all(&extract_dir).context("Failed to create extraction directory")?;
+
+    println!("Extracting to: {}", extract_dir.display());
+    #[cfg(unix)]
+    println!("   File modes (e.g., 0755) will be preserved; owner/group will not.");
+    #[cfg(windows)]
+    {
+        println!("   Note: Unix file modes are not supported on Windows.");
+        println!("   Symlinks require admin privileges and may be skipped.");
+    }
+    println!("   Special files (devices, FIFOs) will be skipped if present.");
+
+    // Get runtime handle for blocking in Read impl
+    let runtime_handle = tokio::runtime::Handle::current();
+
+    // Create streaming reader
+    let reader = StreamingReader::new(stream, key, header.file_size, runtime_handle);
+
+    // Extract tar archive
+    let mut archive = Archive::new(reader);
+    archive.set_preserve_permissions(true);
+    archive.set_preserve_ownerships(false);
+
+    let extract_dir_clone = extract_dir.clone();
+    let skipped_entries = tokio::task::spawn_blocking(move || -> Result<Vec<String>> {
+        let mut skipped = Vec::new();
+
+        for entry in archive.entries().context("Failed to read tar entries")? {
+            let mut entry = entry.context("Failed to read tar entry")?;
+            let path = entry.path().context("Failed to get entry path")?.into_owned();
+
+            let entry_type = entry.header().entry_type();
+
+            #[cfg(windows)]
+            if entry_type.is_symlink() || entry_type.is_hard_link() {
+                skipped.push(format!("{} (symlink/hardlink)", path.display()));
+                continue;
+            }
+
+            if entry_type.is_block_special()
+                || entry_type.is_character_special()
+                || entry_type.is_fifo()
+            {
+                skipped.push(format!("{} (special file)", path.display()));
+                continue;
+            }
+
+            entry
+                .unpack_in(&extract_dir_clone)
+                .with_context(|| format!("Failed to extract: {}", path.display()))?;
+        }
+
+        Ok(skipped)
+    })
+    .await
+    .context("Extraction task panicked")??;
+
+    if !skipped_entries.is_empty() {
+        println!(
+            "\nSkipped {} entries (not supported on this platform):",
+            skipped_entries.len()
+        );
+        for entry in &skipped_entries {
+            println!("   - {}", entry);
+        }
+    }
+
+    println!("\nFolder received successfully!");
+    println!("Extracted to: {}", extract_dir.display());
+
+    // Note: ACK is sent in the streaming reader's last chunk handling
+    // For folder transfers, we need to send ACK after extraction
+    // But the stream is consumed by the reader, so we handle this differently
+    // The sender will detect connection close as implicit ACK for Tor transfers
+
+    println!("Connection closed.");
+
+    Ok(())
+}
+
+/// Receive a file or folder via Tor (auto-detects type)
+pub async fn receive_tor(code: &str, output_dir: Option<PathBuf>) -> Result<()> {
+    receive_file_tor(code, output_dir).await
+}

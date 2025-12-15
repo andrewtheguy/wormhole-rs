@@ -4,6 +4,9 @@ use std::io::{self, Write};
 use std::path::PathBuf;
 use wormhole_rs::{folder_receiver, folder_sender, nostr_protocol, nostr_receiver, nostr_sender, receiver, sender, wormhole};
 
+#[cfg(feature = "onion")]
+use wormhole_rs::{onion_receiver, onion_sender};
+
 #[derive(Parser)]
 #[command(name = "wormhole-rs")]
 #[command(about = "Secure peer-to-peer file transfer using iroh")]
@@ -93,6 +96,27 @@ enum Commands {
     },
     /// Receive a file via Nostr relays
     ReceiveNostr {
+        /// Wormhole code from sender (will prompt if not provided)
+        #[arg(short, long)]
+        code: Option<String>,
+
+        /// Output directory (default: current directory)
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
+    /// Send a file or folder via Tor hidden service
+    #[cfg(feature = "onion")]
+    SendTor {
+        /// Path to the file or folder to send
+        path: PathBuf,
+
+        /// Add extra AES-256-GCM encryption layer (Tor already provides E2E encryption)
+        #[arg(long)]
+        extra_encrypt: bool,
+    },
+    /// Receive a file or folder via Tor hidden service
+    #[cfg(feature = "onion")]
+    ReceiveTor {
         /// Wormhole code from sender (will prompt if not provided)
         #[arg(short, long)]
         code: Option<String>,
@@ -214,6 +238,39 @@ async fn main() -> Result<()> {
             };
             wormhole::validate_code_format(&code)?;
             nostr_receiver::receive_file_nostr(&code, output).await?;
+        }
+        #[cfg(feature = "onion")]
+        Commands::SendTor { path, extra_encrypt } => {
+            if !path.exists() {
+                anyhow::bail!("Path not found: {}", path.display());
+            }
+            if path.is_file() {
+                onion_sender::send_file_tor(&path, extra_encrypt).await?;
+            } else if path.is_dir() {
+                onion_sender::send_folder_tor(&path, extra_encrypt).await?;
+            } else {
+                anyhow::bail!("Not a file or directory: {}", path.display());
+            }
+        }
+        #[cfg(feature = "onion")]
+        Commands::ReceiveTor { code, output } => {
+            if let Some(ref dir) = output {
+                if !dir.is_dir() {
+                    anyhow::bail!("Output directory does not exist: {}", dir.display());
+                }
+            }
+            let code = match code {
+                Some(c) => c,
+                None => {
+                    print!("Enter wormhole code: ");
+                    io::stdout().flush()?;
+                    let mut input = String::new();
+                    io::stdin().read_line(&mut input)?;
+                    input.trim().to_string()
+                }
+            };
+            wormhole::validate_code_format(&code)?;
+            onion_receiver::receive_tor(&code, output).await?;
         }
     }
 

@@ -10,6 +10,11 @@ pub mod sender;
 pub mod transfer;
 pub mod wormhole;
 
+#[cfg(feature = "onion")]
+pub mod onion_receiver;
+#[cfg(feature = "onion")]
+pub mod onion_sender;
+
 #[cfg(test)]
 mod crypto_tests;
 #[cfg(test)]
