@@ -23,7 +23,7 @@ required-features = ["onion"]
 
 [features]
 default = []
-onion = ["dep:arti-client", "dep:tor-hsservice", "dep:tor-cell", "dep:safelog"]
+onion = ["dep:arti-client", "dep:tor-hsservice", "dep:tor-cell", "dep:safelog", "dep:rusqlite"]
 
 [dependencies]
 iroh = { version = "0.95.1", features = ["discovery-local-network"] }
@@ -48,4 +48,6 @@ arti-client = { version = "0.37", features = ["onion-service-service", "onion-se
 tor-hsservice = { version = "0.37", optional = true }
 tor-cell = { version = "0.37", optional = true }
 safelog = { version = "0.7.1", optional = true }
+# SQLite bundled for Windows builds (arti depends on rusqlite)
+rusqlite = { version = "0.37", features = ["bundled"], optional = true }
 
