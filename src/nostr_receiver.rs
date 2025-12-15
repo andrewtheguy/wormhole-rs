@@ -346,7 +346,7 @@ pub async fn receive_file_nostr(
             // Generate unique directory name
             let timestamp = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .unwrap_or_default()
                 .as_secs();
             let random_id: u32 = rand::random();
             output_dir.join(format!("wormhole_{}_{:08x}", timestamp, random_id))

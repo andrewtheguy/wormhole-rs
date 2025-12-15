@@ -194,8 +194,16 @@ async fn main() -> Result<()> {
                     // Tor transport: auto-detects file vs folder from header
                     onion_receiver::receive_tor(&code, output).await?;
                 }
-                _ => {
-                    anyhow::bail!("Unknown protocol in wormhole code: {}", token.protocol);
+                proto => {
+                    #[cfg(not(feature = "onion"))]
+                    if proto == wormhole::PROTOCOL_TOR {
+                        anyhow::bail!(
+                            "This wormhole code uses Tor transport, but Tor support is disabled.\n\
+                             To enable Tor support, rebuild with: cargo build --features onion\n\
+                             Or run with: cargo run --features onion -- receive"
+                        );
+                    }
+                    anyhow::bail!("Unknown protocol in wormhole code: {}", proto);
                 }
             }
         }

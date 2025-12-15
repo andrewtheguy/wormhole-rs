@@ -281,7 +281,7 @@ where
             // Generate random folder in current directory with timestamp for sorting
             let timestamp = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .unwrap_or_default()
                 .as_secs();
             let random_id: u32 = rand::random();
             PathBuf::from(format!("wormhole_{}_{:08x}", timestamp, random_id))
