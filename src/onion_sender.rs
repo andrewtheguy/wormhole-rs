@@ -83,7 +83,7 @@ pub async fn send_file_tor(file_path: &Path, extra_encrypt: bool) -> Result<()> 
 
     println!("\nWormhole code:\n{}\n", code);
     println!("On the receiving end, run:");
-    println!("  wormhole-rs receive-tor\n");
+    println!("  wormhole-rs receive\n");
     println!("Then enter the code above when prompted.\n");
     println!("Waiting for receiver to connect via Tor...");
 
@@ -256,7 +256,7 @@ pub async fn send_folder_tor(folder_path: &Path, extra_encrypt: bool) -> Result<
 
     println!("\nWormhole code:\n{}\n", code);
     println!("On the receiving end, run:");
-    println!("  wormhole-rs receive-tor\n");
+    println!("  wormhole-rs receive\n");
     println!("Then enter the code above when prompted.\n");
     println!("Waiting for receiver to connect via Tor...");
 

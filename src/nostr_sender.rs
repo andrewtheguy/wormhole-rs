@@ -176,7 +176,7 @@ pub async fn send_file_nostr(
 
     println!("\n🔮 Wormhole code:\n{}\n", code);
     println!("On the receiving end, run:");
-    println!("  wormhole-rs receive-nostr\n");
+    println!("  wormhole-rs receive\n");
     println!("Then enter the code above when prompted.\n");
 
     // Calculate total chunks
