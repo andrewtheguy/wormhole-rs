@@ -132,6 +132,12 @@ impl<R> StreamingReader<R> {
             runtime_handle,
         }
     }
+
+    /// Consume the StreamingReader and return the underlying stream.
+    /// Use this to send ACK after extraction is complete.
+    pub fn into_inner(self) -> R {
+        self.recv_stream
+    }
 }
 
 impl<R: tokio::io::AsyncReadExt + Unpin + Send> Read for StreamingReader<R> {
@@ -186,6 +192,25 @@ impl<R: tokio::io::AsyncReadExt + Unpin + Send> Read for StreamingReader<R> {
 /// # Returns
 /// * Vector of skipped entry descriptions (for logging)
 pub fn extract_tar_archive<R: Read>(reader: R, extract_dir: &Path) -> Result<Vec<String>> {
+    let (skipped, _reader) = extract_tar_archive_returning_reader(reader, extract_dir)?;
+    Ok(skipped)
+}
+
+/// Extract a tar archive from a reader to a directory, returning the reader for further use.
+///
+/// This variant returns the underlying reader after extraction, allowing callers to
+/// send ACK messages or perform other operations on the stream.
+///
+/// # Arguments
+/// * `reader` - Any type implementing std::io::Read (can be StreamingReader or std::fs::File)
+/// * `extract_dir` - Directory to extract files to
+///
+/// # Returns
+/// * Tuple of (skipped entry descriptions, reader)
+pub fn extract_tar_archive_returning_reader<R: Read>(
+    reader: R,
+    extract_dir: &Path,
+) -> Result<(Vec<String>, R)> {
     let mut archive = Archive::new(reader);
     // Preserve file mode (0755, etc.) but not owner/group (UID/GID mismatch across machines)
     archive.set_preserve_permissions(true);
@@ -222,7 +247,9 @@ pub fn extract_tar_archive<R: Read>(reader: R, extract_dir: &Path) -> Result<Vec
             .with_context(|| format!("Failed to extract: {}", path.display()))?;
     }
 
-    Ok(skipped)
+    // Return reader for ACK sending
+    let reader = archive.into_inner();
+    Ok((skipped, reader))
 }
 
 /// Print folder creation info messages.

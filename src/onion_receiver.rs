@@ -8,7 +8,8 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::Mutex;
 
 use crate::folder::{
-    extract_tar_archive, print_skipped_entries, print_tar_extraction_info, StreamingReader,
+    extract_tar_archive_returning_reader, print_skipped_entries, print_tar_extraction_info,
+    StreamingReader,
 };
 use crate::transfer::{
     format_bytes, num_chunks, recv_chunk, recv_encrypted_chunk, recv_encrypted_header, recv_header,
@@ -35,7 +36,10 @@ fn is_retryable(e: &arti_client::Error) -> bool {
 /// Shared state for temp file cleanup on interrupt
 type TempFileCleanup = Arc<Mutex<Option<PathBuf>>>;
 
-/// Set up Ctrl+C handler to clean up temp file
+/// Set up Ctrl+C handler to clean up temp file.
+///
+/// Note: Spawns a task that lives until Ctrl+C or program exit. This is appropriate
+/// for CLI tools but would accumulate tasks if called repeatedly in a long-running process.
 fn setup_cleanup_handler(cleanup_path: TempFileCleanup) {
     tokio::spawn(async move {
         if tokio::signal::ctrl_c().await.is_ok() {
@@ -281,7 +285,7 @@ pub async fn receive_file_tor(code: &str, output_dir: Option<PathBuf>) -> Result
 }
 
 /// Handle folder transfer after header is received
-async fn receive_folder_stream<S: AsyncReadExt + Unpin + Send + 'static>(
+async fn receive_folder_stream<S: AsyncReadExt + AsyncWriteExt + Unpin + Send + 'static>(
     stream: S,
     header: crate::transfer::FileHeader,
     key: Option<[u8; 32]>,
@@ -318,9 +322,10 @@ async fn receive_folder_stream<S: AsyncReadExt + Unpin + Send + 'static>(
     let reader = StreamingReader::new(stream, key, header.file_size, runtime_handle);
 
     // Use spawn_blocking to run tar extraction in a blocking context
+    // Returns both skipped entries and the StreamingReader for ACK sending
     let extract_dir_clone = extract_dir.clone();
-    let skipped_entries = tokio::task::spawn_blocking(move || {
-        extract_tar_archive(reader, &extract_dir_clone)
+    let (skipped_entries, streaming_reader) = tokio::task::spawn_blocking(move || {
+        extract_tar_archive_returning_reader(reader, &extract_dir_clone)
     })
     .await
     .context("Extraction task panicked")??;
@@ -331,12 +336,14 @@ async fn receive_folder_stream<S: AsyncReadExt + Unpin + Send + 'static>(
     println!("\nFolder received successfully!");
     println!("Extracted to: {}", extract_dir.display());
 
-    // Note: ACK is sent in the streaming reader's last chunk handling
-    // For folder transfers, we need to send ACK after extraction
-    // But the stream is consumed by the reader, so we handle this differently
-    // The sender will detect connection close as implicit ACK for Tor transfers
+    // Get the underlying stream back and send explicit ACK (consistent with file transfers)
+    let mut stream = streaming_reader.into_inner();
+    stream
+        .write_all(b"ACK")
+        .await
+        .context("Failed to send ACK")?;
 
-    println!("Connection closed.");
+    println!("Sent ACK to sender.");
 
     Ok(())
 }

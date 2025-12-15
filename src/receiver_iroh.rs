@@ -22,7 +22,15 @@ type TempFileCleanup = Arc<Mutex<Option<PathBuf>>>;
 /// Shared state for extraction directory cleanup on interrupt
 type ExtractDirCleanup = Arc<Mutex<Option<PathBuf>>>;
 
-/// Set up Ctrl+C handler to clean up temp file
+/// Set up Ctrl+C handler to clean up temp file.
+///
+/// # Task Lifecycle
+/// This spawns a task that waits for Ctrl+C and lives until the signal is received
+/// or the program exits. This design is appropriate for CLI tools where `receive()`
+/// is called once per process. If `receive()` were called multiple times in a
+/// long-running process, these tasks would accumulate (though they're lightweight).
+/// For such use cases, consider using `tokio::select!` or a global signal handler
+/// with registration/unregistration.
 fn setup_file_cleanup_handler(cleanup_path: TempFileCleanup) {
     tokio::spawn(async move {
         if tokio::signal::ctrl_c().await.is_ok() {
@@ -35,7 +43,8 @@ fn setup_file_cleanup_handler(cleanup_path: TempFileCleanup) {
     });
 }
 
-/// Set up Ctrl+C handler to clean up extraction directory
+/// Set up Ctrl+C handler to clean up extraction directory.
+/// See [`setup_file_cleanup_handler`] for task lifecycle notes.
 fn setup_dir_cleanup_handler(cleanup_path: ExtractDirCleanup) {
     tokio::spawn(async move {
         if tokio::signal::ctrl_c().await.is_ok() {

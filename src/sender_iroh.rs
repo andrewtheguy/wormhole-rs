@@ -18,7 +18,10 @@ use crate::wormhole::generate_code;
 /// Shared state for temp file cleanup on interrupt
 type TempFileCleanup = Arc<Mutex<Option<PathBuf>>>;
 
-/// Set up Ctrl+C handler to clean up temp file
+/// Set up Ctrl+C handler to clean up temp file.
+///
+/// Note: Spawns a task that lives until Ctrl+C or program exit. This is appropriate
+/// for CLI tools but would accumulate tasks if called repeatedly in a long-running process.
 fn setup_cleanup_handler(cleanup_path: TempFileCleanup) {
     tokio::spawn(async move {
         if tokio::signal::ctrl_c().await.is_ok() {
