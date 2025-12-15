@@ -2,7 +2,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand, ValueEnum};
 use std::io::{self, Write};
 use std::path::PathBuf;
-use wormhole_rs::{nostr_protocol, nostr_receiver, nostr_sender, receiver_iroh, sender_iroh, wormhole};
+use wormhole_rs::{nostr_receiver, nostr_sender, receiver_iroh, sender_iroh, wormhole};
 
 #[cfg(feature = "onion")]
 use wormhole_rs::{onion_receiver, onion_sender};
@@ -126,20 +126,10 @@ async fn main() -> Result<()> {
                         Some(nostr_relay)
                     };
                     let use_outbox = !no_outbox;
+                    // Size validation is handled inside the send functions with better error messages
                     if folder {
-                        // Folder size is validated inside send_folder_nostr
                         nostr_sender::send_folder_nostr(&path, custom_relays, use_default_relays, use_outbox).await?;
                     } else {
-                        // Enforce file size limit for Nostr transfers
-                        let metadata = std::fs::metadata(&path)?;
-                        let file_size = metadata.len();
-                        if file_size > nostr_protocol::MAX_NOSTR_FILE_SIZE {
-                            anyhow::bail!(
-                                "File too large for Nostr transfer (max 512KB): {} bytes\n\
-                                 Use --transport iroh for larger files.",
-                                file_size
-                            );
-                        }
                         nostr_sender::send_file_nostr(&path, custom_relays, use_default_relays, use_outbox).await?;
                     }
                 }
