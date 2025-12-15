@@ -1,4 +1,4 @@
-use arti_client::{ErrorKind, HasKind, TorClient, TorClientConfig};
+use arti_client::{config::TorClientConfigBuilder, ErrorKind, HasKind, TorClient};
 use tokio::io::AsyncReadExt;
 
 const MAX_RETRIES: u32 = 5;
@@ -27,9 +27,14 @@ async fn main() -> anyhow::Result<()> {
 
     let onion_addr = &args[1];
 
-    println!("Bootstrapping Tor client...");
+    // Create a temporary directory for ephemeral state (avoids conflicts with concurrent instances)
+    let temp_dir = tempfile::tempdir()?;
+    let state_dir = temp_dir.path().join("state");
+    let cache_dir = temp_dir.path().join("cache");
 
-    let config = TorClientConfig::default();
+    println!("Bootstrapping Tor client (ephemeral mode)...");
+
+    let config = TorClientConfigBuilder::from_directories(state_dir, cache_dir).build()?;
     let tor_client = TorClient::create_bootstrapped(config).await?;
 
     println!("Tor client bootstrapped!");
