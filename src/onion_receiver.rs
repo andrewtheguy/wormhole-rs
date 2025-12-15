@@ -241,6 +241,7 @@ pub async fn receive_file_tor(code: &str, output_dir: Option<PathBuf>) -> Result
                 format_bytes(bytes_received),
                 format_bytes(header.file_size)
             );
+            let _ = std::io::stdout().flush();
         }
     }
 

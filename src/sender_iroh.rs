@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::fs::File;
@@ -128,6 +129,7 @@ async fn transfer_data_internal(
                 format_bytes(bytes_sent),
                 format_bytes(file_size)
             );
+            let _ = std::io::stdout().flush();
         }
     }
 

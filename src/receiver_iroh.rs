@@ -240,6 +240,7 @@ where
                 format_bytes(bytes_received),
                 format_bytes(header.file_size)
             );
+            let _ = std::io::stdout().flush();
         }
     }
 

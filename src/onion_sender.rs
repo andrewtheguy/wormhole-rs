@@ -3,6 +3,7 @@ use arti_client::{config::TorClientConfigBuilder, TorClient};
 use futures::StreamExt;
 use rand::Rng;
 use safelog::DisplayRedacted;
+use std::io::Write;
 use std::path::Path;
 use tokio::fs::File;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -139,6 +140,7 @@ async fn transfer_data_tor_internal(
                     format_bytes(bytes_sent),
                     format_bytes(file_size)
                 );
+                let _ = std::io::stdout().flush();
             }
         }
 
