@@ -62,7 +62,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Build Release
-        run: cargo build --release --features onion --target ${{ matrix.target }}
+        run: cargo build --release --features webrtc --features onion --target ${{ matrix.target }}
 
       - name: Rename Binary (Unix)
         if: runner.os != 'Windows'
