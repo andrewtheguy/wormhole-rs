@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use arti_client::{ErrorKind, HasKind, TorClient, TorClientConfig};
 use std::io::Write;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex as StdMutex};
 use tempfile::NamedTempFile;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::Mutex;
@@ -18,6 +18,8 @@ use crate::wormhole::{decode_key, parse_code, PROTOCOL_TOR};
 
 const MAX_RETRIES: u32 = 5;
 const RETRY_DELAY_SECS: u64 = 5;
+/// Number of chunks to buffer before flushing to disk via spawn_blocking
+const WRITE_BATCH_SIZE: usize = 10;
 
 /// Check if error is retryable (timeout, temporary network issues)
 fn is_retryable(e: &arti_client::Error) -> bool {
@@ -181,13 +183,16 @@ pub async fn receive_file_tor(code: &str, output_dir: Option<PathBuf>) -> Result
     let cleanup_path: TempFileCleanup = Arc::new(Mutex::new(Some(temp_path.clone())));
     setup_cleanup_handler(cleanup_path.clone());
 
-    // Keep temp_file handle for writing
-    let mut temp_file = temp_file;
+    // Wrap temp_file in Arc<StdMutex> for spawn_blocking access
+    let temp_file = Arc::new(StdMutex::new(temp_file));
 
     // Receive chunks
     let total_chunks = num_chunks(header.file_size);
     let mut chunk_num = 1u64;
     let mut bytes_received = 0u64;
+
+    // Buffer for batching writes to avoid blocking async runtime
+    let mut chunk_buffer: Vec<Vec<u8>> = Vec::with_capacity(WRITE_BATCH_SIZE);
 
     println!("Receiving {} chunks...", total_chunks);
 
@@ -202,12 +207,26 @@ pub async fn receive_file_tor(code: &str, output_dir: Option<PathBuf>) -> Result
                 .context("Failed to receive chunk")?
         };
 
-        temp_file
-            .write_all(&chunk)
-            .context("Failed to write to file")?;
-
-        chunk_num += 1;
         bytes_received += chunk.len() as u64;
+        chunk_num += 1;
+        chunk_buffer.push(chunk);
+
+        // Write batch to file using spawn_blocking when buffer is full or transfer complete
+        if chunk_buffer.len() >= WRITE_BATCH_SIZE || bytes_received == header.file_size {
+            let buffer = std::mem::take(&mut chunk_buffer);
+            let file = Arc::clone(&temp_file);
+            tokio::task::spawn_blocking(move || {
+                let mut guard = file
+                    .lock()
+                    .map_err(|e| anyhow::anyhow!("Lock poisoned: {}", e))?;
+                for chunk in buffer {
+                    guard.write_all(&chunk)?;
+                }
+                Ok::<(), anyhow::Error>(())
+            })
+            .await
+            .context("Write task panicked")??;
+        }
 
         // Progress update
         if chunk_num % 10 == 0 || bytes_received == header.file_size {
@@ -224,11 +243,22 @@ pub async fn receive_file_tor(code: &str, output_dir: Option<PathBuf>) -> Result
     // Clear cleanup path before persist (transfer succeeded)
     cleanup_path.lock().await.take();
 
-    // Persist temp file
-    temp_file.flush().context("Failed to flush file")?;
-    temp_file
-        .persist(&output_path)
-        .map_err(|e| anyhow::anyhow!("Failed to persist temp file: {}", e))?;
+    // Extract file from Arc<StdMutex> for persist
+    let temp_file = Arc::try_unwrap(temp_file)
+        .map_err(|_| anyhow::anyhow!("Failed to unwrap Arc - file still in use"))?
+        .into_inner()
+        .map_err(|e| anyhow::anyhow!("Mutex poisoned: {}", e))?;
+
+    // Persist temp file using spawn_blocking to avoid blocking async runtime
+    let output_path_for_persist = output_path.clone();
+    tokio::task::spawn_blocking(move || {
+        let mut file = temp_file;
+        file.flush().context("Failed to flush file")?;
+        file.persist(&output_path_for_persist)
+            .map_err(|e| anyhow::anyhow!("Failed to persist temp file: {}", e))
+    })
+    .await
+    .context("Persist task panicked")??;
 
     println!("\nFile received successfully!");
     println!("Saved to: {}", output_path.display());
@@ -264,7 +294,7 @@ async fn receive_folder_stream<S: AsyncReadExt + Unpin + Send + 'static>(
         None => {
             let timestamp = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .context("System clock is before Unix epoch")?
                 .as_secs();
             let random_id: u32 = rand::random();
             PathBuf::from(format!("wormhole_{}_{:08x}", timestamp, random_id))
