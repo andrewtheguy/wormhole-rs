@@ -151,11 +151,15 @@ Tor mode uses .onion hidden services. All traffic is routed through the Tor netw
 ## Module Descriptions
 
 ### `crypto.rs`
-AES-256-GCM encryption/decryption used by all modes:
-- `generate_key()` - Creates 256-bit random key
-- `encrypt_chunk(key, chunk_num, data)` - Encrypts with unique nonce
-- `decrypt_chunk(key, chunk_num, data)` - Decrypts and verifies
-- Optional for iroh/Tor modes (`--extra-encrypt`), mandatory for Nostr mode
+AES-256-GCM encryption/decryption — usage varies by mode:
+- `generate_key()` - Creates 256-bit random key (iroh/Tor: only with `--extra-encrypt`; Nostr: always)
+- `encrypt_chunk(key, chunk_num, data)` - Encrypts with unique nonce (iroh/Tor: optional; Nostr: mandatory)
+- `decrypt_chunk(key, chunk_num, data)` - Decrypts and verifies (iroh/Tor: optional; Nostr: mandatory)
+
+**Mode-specific usage:**
+- **iroh mode**: Optional (`--extra-encrypt` flag) — iroh's QUIC/TLS provides baseline encryption
+- **Tor mode**: Optional (`--extra-encrypt` flag) — Tor circuits provide baseline encryption
+- **Nostr mode**: Mandatory — all chunks are AES-encrypted before publishing to relays
 
 ### `wormhole.rs`
 Wormhole code generation and parsing (version 2 tokens):

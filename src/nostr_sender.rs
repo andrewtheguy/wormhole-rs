@@ -1,6 +1,5 @@
 use anyhow::{Context, Result};
 use nostr_sdk::prelude::*;
-use std::collections::HashMap;
 use std::path::Path;
 use tokio::fs::File;
 use tokio::io::AsyncReadExt;
@@ -165,7 +164,15 @@ async fn transfer_data_nostr_internal(
             sender_pubkey.to_hex(),
         );
 
-    let _ = client.subscribe(filter, None).await;
+    if let Err(e) = client.subscribe(filter, None).await {
+        anyhow::bail!(
+            "Failed to subscribe to ACK events (transfer_id: {}, sender: {}): {}\n\
+             Without subscription, receiver ACKs cannot be received.",
+            transfer_id,
+            sender_pubkey.to_hex(),
+            e
+        );
+    }
 
     // Wait for subscription to propagate
     tokio::time::sleep(Duration::from_secs(SUBSCRIPTION_SETUP_DELAY_SECS)).await;
@@ -198,7 +205,6 @@ async fn transfer_data_nostr_internal(
     // Send chunks
     let mut buffer = vec![0u8; NOSTR_CHUNK_SIZE];
     let mut bytes_sent = 0u64;
-    let mut ack_tracker: HashMap<u32, bool> = HashMap::new();
 
     println!("📤 Sending {} chunks...", total_chunks);
 
@@ -247,7 +253,6 @@ async fn transfer_data_nostr_internal(
                             if let Ok(ack_seq) = parse_ack_event(&event) {
                                 if ack_seq == seq as i32 {
                                     ack_received = true;
-                                    ack_tracker.insert(seq, true);
                                     break;
                                 }
                             }

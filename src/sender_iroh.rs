@@ -22,7 +22,7 @@ fn setup_cleanup_handler(cleanup_path: TempFileCleanup) {
     tokio::spawn(async move {
         if tokio::signal::ctrl_c().await.is_ok() {
             if let Some(path) = cleanup_path.lock().await.take() {
-                let _ = std::fs::remove_file(&path);
+                let _ = tokio::fs::remove_file(&path).await;
                 eprintln!("\nInterrupted. Cleaned up temp file.");
             }
             std::process::exit(130);

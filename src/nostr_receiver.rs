@@ -28,7 +28,7 @@ fn setup_cleanup_handler(cleanup_path: TempFileCleanup) {
     tokio::spawn(async move {
         if tokio::signal::ctrl_c().await.is_ok() {
             if let Some(path) = cleanup_path.lock().await.take() {
-                let _ = std::fs::remove_file(&path);
+                let _ = tokio::fs::remove_file(&path).await;
                 eprintln!("\nInterrupted. Cleaned up temp file.");
             }
             std::process::exit(130);
@@ -190,7 +190,15 @@ pub async fn receive_file_nostr(
         )
         .author(sender_pubkey);
 
-    let _ = client.subscribe(filter, None).await;
+    if let Err(e) = client.subscribe(filter, None).await {
+        anyhow::bail!(
+            "Failed to subscribe to chunk events (transfer_id: {}, sender: {}): {}\n\
+             Without subscription, file chunks cannot be received.",
+            transfer_id,
+            sender_pubkey.to_hex(),
+            e
+        );
+    }
     println!("📥 Subscribed to transfer events");
 
     // Wait for subscription to propagate to relays before signaling ready
@@ -369,21 +377,25 @@ pub async fn receive_file_nostr(
 
         // Check if file already exists
         if output_path.exists() {
-            print!(
-                "File already exists: {}. Overwrite? [y/N] ",
-                output_path.display()
-            );
-            std::io::Write::flush(&mut std::io::stdout())?;
+            let prompt_path = output_path.display().to_string();
+            let should_overwrite = tokio::task::spawn_blocking(move || {
+                print!("File already exists: {}. Overwrite? [y/N] ", prompt_path);
+                std::io::Write::flush(&mut std::io::stdout())?;
 
-            let mut input = String::new();
-            std::io::stdin().read_line(&mut input)?;
+                let mut input = String::new();
+                std::io::stdin().read_line(&mut input)?;
 
-            if !input.trim().eq_ignore_ascii_case("y") {
+                Ok::<bool, std::io::Error>(input.trim().eq_ignore_ascii_case("y"))
+            })
+            .await
+            .context("Prompt task panicked")??;
+
+            if !should_overwrite {
                 anyhow::bail!("Transfer cancelled - file exists");
             }
 
             // Remove existing file
-            std::fs::remove_file(&output_path).context("Failed to remove existing file")?;
+            tokio::fs::remove_file(&output_path).await.context("Failed to remove existing file")?;
         }
 
         // Create temp file in same directory (ensures rename works, auto-deletes on drop)

@@ -246,6 +246,11 @@ Both connection types use the same QUIC/TLS 1.3 encryption. The TLS handshake is
 
 **NIP-65 Outbox Model (Default):**
 
+*Relay terminology:*
+- **Bridge Relays** - Well-known public discovery relays (e.g., damus.io, nos.lol) where the sender publishes their NIP-65 relay list so receivers can discover which relays to connect to.
+- **Sender's Relays** - The relays the sender actually publishes encrypted file chunks to; discovered by the receiver via the NIP-65 relay list on bridge relays.
+- **Nostr Relays** - General term for any relay participating in the transfer, forwarding chunk events from sender and ACK events from receiver.
+
 ```
     ┌────────┐         ┌───────────────┐         ┌──────────┐
     │ Sender │────────►│ Bridge Relays │◄────────│ Receiver │

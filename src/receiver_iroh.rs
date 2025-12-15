@@ -27,7 +27,7 @@ fn setup_file_cleanup_handler(cleanup_path: TempFileCleanup) {
     tokio::spawn(async move {
         if tokio::signal::ctrl_c().await.is_ok() {
             if let Some(path) = cleanup_path.lock().await.take() {
-                let _ = std::fs::remove_file(&path);
+                let _ = tokio::fs::remove_file(&path).await;
                 eprintln!("\nInterrupted. Cleaned up temp file.");
             }
             std::process::exit(130);
@@ -40,7 +40,7 @@ fn setup_dir_cleanup_handler(cleanup_path: ExtractDirCleanup) {
     tokio::spawn(async move {
         if tokio::signal::ctrl_c().await.is_ok() {
             if let Some(path) = cleanup_path.lock().await.take() {
-                let _ = std::fs::remove_dir_all(&path);
+                let _ = tokio::fs::remove_dir_all(&path).await;
                 eprintln!("\nInterrupted. Cleaned up extraction directory.");
             }
             std::process::exit(130);
@@ -191,7 +191,7 @@ where
         }
 
         // Remove existing file
-        std::fs::remove_file(&output_path).context("Failed to remove existing file")?;
+        tokio::fs::remove_file(&output_path).await.context("Failed to remove existing file")?;
     }
 
     // Create temp file in same directory (ensures rename works, auto-deletes on drop)
