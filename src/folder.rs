@@ -43,8 +43,7 @@ pub fn create_tar_archive(folder_path: &Path) -> Result<TarArchive> {
 
     // Build tar archive
     {
-        let tar_file =
-            std::fs::File::create(temp_tar.path()).context("Failed to create tar file")?;
+        let tar_file = temp_tar.reopen().context("Failed to open tar file")?;
         let mut builder = Builder::new(tar_file);
 
         // Walk the directory and add all entries
