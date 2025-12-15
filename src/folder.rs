@@ -149,7 +149,7 @@ impl<R: tokio::io::AsyncReadExt + Unpin + Send> Read for StreamingReader<R> {
 
             match chunk_result {
                 Ok(chunk) => {
-                    self.bytes_remaining -= chunk.len() as u64;
+                    self.bytes_remaining = self.bytes_remaining.saturating_sub(chunk.len() as u64);
                     self.chunk_num += 1;
                     self.buffer = chunk;
                     self.buffer_pos = 0;

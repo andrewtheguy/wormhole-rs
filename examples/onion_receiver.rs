@@ -3,6 +3,8 @@ use tokio::io::AsyncReadExt;
 
 const MAX_RETRIES: u32 = 5;
 const RETRY_DELAY_SECS: u64 = 5;
+/// Maximum allowed message length (4 MB) to prevent malicious allocation attacks
+const MAX_MSG_LEN: usize = 4 * 1024 * 1024;
 
 /// Check if error is retryable (timeout, temporary network issues)
 fn is_retryable(e: &arti_client::Error) -> bool {
@@ -75,6 +77,18 @@ async fn main() -> anyhow::Result<()> {
     let mut len_buf = [0u8; 4];
     stream.read_exact(&mut len_buf).await?;
     let len = u32::from_be_bytes(len_buf) as usize;
+
+    // Validate message length to prevent malicious allocation attacks
+    if len == 0 {
+        anyhow::bail!("Invalid message: length is zero");
+    }
+    if len > MAX_MSG_LEN {
+        anyhow::bail!(
+            "Message too large: {} bytes exceeds maximum of {} bytes",
+            len,
+            MAX_MSG_LEN
+        );
+    }
 
     // Read exact message bytes
     let mut buffer = vec![0u8; len];
