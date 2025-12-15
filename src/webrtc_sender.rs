@@ -220,10 +220,12 @@ async fn transfer_data_webrtc_internal(
         .context("Timeout waiting for data channel to open")?
         .context("Data channel failed to open")?;
 
-    println!("Receiver connected!");
+    // Display connection info
+    let conn_info = rtc_peer_arc.get_connection_info().await;
+    conn_info.print(&remote_peer);
 
     // Small delay to ensure connection is stable
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
 
     // Send file header as first message
     let header = FileHeader::new(transfer_type, filename.clone(), file_size);

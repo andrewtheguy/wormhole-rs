@@ -261,7 +261,9 @@ pub async fn receive_webrtc(code: &str, output_dir: Option<PathBuf>) -> Result<(
         }
     }
 
-    println!("Connected to sender!");
+    // Display connection info
+    let conn_info = rtc_peer_arc.get_connection_info().await;
+    conn_info.print(&sender_peer_id);
 
     // Receive header message
     println!("Receiving file information...");

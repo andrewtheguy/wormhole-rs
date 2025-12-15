@@ -23,12 +23,14 @@ use webrtc::api::APIBuilder;
 use webrtc::data_channel::data_channel_message::DataChannelMessage;
 use webrtc::data_channel::RTCDataChannel;
 use webrtc::ice_transport::ice_candidate::{RTCIceCandidate, RTCIceCandidateInit};
+use webrtc::ice_transport::ice_connection_state::RTCIceConnectionState;
 use webrtc::ice_transport::ice_server::RTCIceServer;
 use webrtc::interceptor::registry::Registry;
 use webrtc::peer_connection::configuration::RTCConfiguration;
 use webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 use webrtc::peer_connection::RTCPeerConnection;
+use webrtc::stats::StatsReportType;
 
 // ============================================================================
 // Constants
@@ -692,12 +694,111 @@ impl WebRtcPeer {
         self.peer_connection.connection_state()
     }
 
+    /// Get the ICE connection state
+    pub fn ice_connection_state(&self) -> RTCIceConnectionState {
+        self.peer_connection.ice_connection_state()
+    }
+
+    /// Get connection info (candidate type, addresses, etc.)
+    pub async fn get_connection_info(&self) -> WebRtcConnectionInfo {
+        let stats = self.peer_connection.get_stats().await;
+
+        let mut local_candidate_type = None;
+        let mut remote_candidate_type = None;
+        let mut local_address = None;
+        let mut remote_address = None;
+        let mut nominated_pair_local_id = None;
+        let mut nominated_pair_remote_id = None;
+
+        // First pass: find the nominated candidate pair
+        for (_id, report) in &stats.reports {
+            if let StatsReportType::CandidatePair(pair) = report {
+                if pair.nominated {
+                    nominated_pair_local_id = Some(pair.local_candidate_id.clone());
+                    nominated_pair_remote_id = Some(pair.remote_candidate_id.clone());
+                    break;
+                }
+            }
+        }
+
+        // Second pass: get candidate details
+        for (id, report) in &stats.reports {
+            match report {
+                StatsReportType::LocalCandidate(candidate) => {
+                    if nominated_pair_local_id.as_ref() == Some(id) {
+                        local_candidate_type = Some(format!("{:?}", candidate.candidate_type));
+                        local_address = Some(format!("{}:{}", candidate.ip, candidate.port));
+                    }
+                }
+                StatsReportType::RemoteCandidate(candidate) => {
+                    if nominated_pair_remote_id.as_ref() == Some(id) {
+                        remote_candidate_type = Some(format!("{:?}", candidate.candidate_type));
+                        remote_address = Some(format!("{}:{}", candidate.ip, candidate.port));
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        // Determine connection type based on candidate types
+        let connection_type = match (&local_candidate_type, &remote_candidate_type) {
+            (Some(local), Some(remote)) => {
+                let local_lower = local.to_lowercase();
+                let remote_lower = remote.to_lowercase();
+                if local_lower.contains("relay") || remote_lower.contains("relay") {
+                    "Relay (TURN)".to_string()
+                } else if local_lower.contains("host") && remote_lower.contains("host") {
+                    "Direct (Host)".to_string()
+                } else if local_lower.contains("srflx") || remote_lower.contains("srflx") {
+                    "Direct (STUN)".to_string()
+                } else if local_lower.contains("prflx") || remote_lower.contains("prflx") {
+                    "Direct (Peer Reflexive)".to_string()
+                } else {
+                    format!("Unknown ({}/{})", local, remote)
+                }
+            }
+            _ => "Unknown".to_string(),
+        };
+
+        WebRtcConnectionInfo {
+            ice_state: self.peer_connection.ice_connection_state(),
+            connection_type,
+            local_candidate_type,
+            remote_candidate_type,
+            local_address,
+            remote_address,
+        }
+    }
+
     /// Close the peer connection
     pub async fn close(&self) -> Result<()> {
         self.peer_connection
             .close()
             .await
             .context("Failed to close peer connection")
+    }
+}
+
+/// WebRTC connection information
+#[derive(Debug, Clone)]
+pub struct WebRtcConnectionInfo {
+    pub ice_state: RTCIceConnectionState,
+    pub connection_type: String,
+    pub local_candidate_type: Option<String>,
+    pub remote_candidate_type: Option<String>,
+    pub local_address: Option<String>,
+    pub remote_address: Option<String>,
+}
+
+impl WebRtcConnectionInfo {
+    /// Print connection info in a format similar to iroh
+    pub fn print(&self, remote_peer_id: &str) {
+        println!("✅ Connected!");
+        println!("   📡 Remote Peer: {}", remote_peer_id);
+        println!("   🔗 Connection: {}", self.connection_type);
+        if let (Some(local), Some(remote)) = (&self.local_address, &self.remote_address) {
+            println!("   📍 Local: {} → Remote: {}", local, remote);
+        }
     }
 }
 
