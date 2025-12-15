@@ -7,6 +7,9 @@ use wormhole_rs::{nostr_receiver, nostr_sender, receiver_iroh, sender_iroh, worm
 #[cfg(feature = "onion")]
 use wormhole_rs::{onion_receiver, onion_sender};
 
+#[cfg(feature = "webrtc")]
+use wormhole_rs::{webrtc_receiver, webrtc_sender};
+
 /// Transport protocol for file transfer
 #[derive(Clone, Debug, ValueEnum)]
 enum Transport {
@@ -17,6 +20,9 @@ enum Transport {
     /// Tor hidden service transfer
     #[cfg(feature = "onion")]
     Tor,
+    /// WebRTC peer-to-peer transfer via PeerJS
+    #[cfg(feature = "webrtc")]
+    Webrtc,
 }
 
 #[derive(Parser)]
@@ -62,6 +68,10 @@ enum Commands {
         /// Disable NIP-65 Outbox model for Nostr (for compatibility with old receivers)
         #[arg(long)]
         no_outbox: bool,
+
+        /// Custom PeerJS server URL (for webrtc transport)
+        #[arg(long = "peerjs-server")]
+        peerjs_server: Option<String>,
     },
 
     /// Receive a file or folder (auto-detects transport and type from wormhole code)
@@ -94,6 +104,7 @@ async fn main() -> Result<()> {
             nostr_relay,
             use_default_relays,
             no_outbox,
+            peerjs_server,
         } => {
             // Validate path exists
             if !path.exists() {
@@ -110,6 +121,10 @@ async fn main() -> Result<()> {
                     anyhow::bail!("Path is not a file: {}. Use --folder for directories.", path.display());
                 }
             }
+
+            // Suppress unused variable warning when webrtc feature is disabled
+            #[cfg(not(feature = "webrtc"))]
+            let _ = &peerjs_server;
 
             match transport {
                 Transport::Iroh => {
@@ -139,6 +154,14 @@ async fn main() -> Result<()> {
                         onion_sender::send_folder_tor(&path, extra_encrypt).await?;
                     } else {
                         onion_sender::send_file_tor(&path, extra_encrypt).await?;
+                    }
+                }
+                #[cfg(feature = "webrtc")]
+                Transport::Webrtc => {
+                    if folder {
+                        webrtc_sender::send_folder_webrtc(&path, peerjs_server.as_deref()).await?;
+                    } else {
+                        webrtc_sender::send_file_webrtc(&path, peerjs_server.as_deref()).await?;
                     }
                 }
             }
@@ -184,6 +207,11 @@ async fn main() -> Result<()> {
                     // Tor transport: auto-detects file vs folder from header
                     onion_receiver::receive_tor(&code, output).await?;
                 }
+                #[cfg(feature = "webrtc")]
+                wormhole::PROTOCOL_WEBRTC => {
+                    // WebRTC transport: auto-detects file vs folder from header
+                    webrtc_receiver::receive_webrtc(&code, output).await?;
+                }
                 proto => {
                     #[cfg(not(feature = "onion"))]
                     if proto == wormhole::PROTOCOL_TOR {
@@ -191,6 +219,14 @@ async fn main() -> Result<()> {
                             "This wormhole code uses Tor transport, but Tor support is disabled.\n\
                              To enable Tor support, rebuild with: cargo build --features onion\n\
                              Or run with: cargo run --features onion -- receive"
+                        );
+                    }
+                    #[cfg(not(feature = "webrtc"))]
+                    if proto == wormhole::PROTOCOL_WEBRTC {
+                        anyhow::bail!(
+                            "This wormhole code uses WebRTC transport, but WebRTC support is disabled.\n\
+                             To enable WebRTC support, rebuild with: cargo build --features webrtc\n\
+                             Or run with: cargo run --features webrtc -- receive"
                         );
                     }
                     anyhow::bail!("Unknown protocol in wormhole code: {}", proto);
