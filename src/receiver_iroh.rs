@@ -1,18 +1,51 @@
 use anyhow::{Context, Result};
 use iroh::Watcher;
 use std::cmp;
-use std::io::Read;
+use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tar::Archive;
+use tempfile::NamedTempFile;
 use tokio::sync::Mutex;
 
 use crate::iroh_common::{create_receiver_endpoint, ALPN};
 use crate::transfer::{
-    format_bytes, recv_chunk, recv_encrypted_chunk, recv_encrypted_header, recv_header,
+    format_bytes, num_chunks, recv_chunk, recv_encrypted_chunk, recv_encrypted_header, recv_header,
     TransferType,
 };
 use crate::wormhole::parse_code;
+
+/// Shared state for temp file cleanup on interrupt
+type TempFileCleanup = Arc<Mutex<Option<PathBuf>>>;
+
+/// Shared state for extraction directory cleanup on interrupt
+type ExtractDirCleanup = Arc<Mutex<Option<PathBuf>>>;
+
+/// Set up Ctrl+C handler to clean up temp file
+fn setup_file_cleanup_handler(cleanup_path: TempFileCleanup) {
+    tokio::spawn(async move {
+        if tokio::signal::ctrl_c().await.is_ok() {
+            if let Some(path) = cleanup_path.lock().await.take() {
+                let _ = std::fs::remove_file(&path);
+                eprintln!("\nInterrupted. Cleaned up temp file.");
+            }
+            std::process::exit(130);
+        }
+    });
+}
+
+/// Set up Ctrl+C handler to clean up extraction directory
+fn setup_dir_cleanup_handler(cleanup_path: ExtractDirCleanup) {
+    tokio::spawn(async move {
+        if tokio::signal::ctrl_c().await.is_ok() {
+            if let Some(path) = cleanup_path.lock().await.take() {
+                let _ = std::fs::remove_dir_all(&path);
+                eprintln!("\nInterrupted. Cleaned up extraction directory.");
+            }
+            std::process::exit(130);
+        }
+    });
+}
 
 /// Wrapper to bridge async chunk receiving with sync tar reading.
 /// Implements std::io::Read by fetching chunks on demand.
@@ -89,29 +122,9 @@ impl<R: tokio::io::AsyncReadExt + Unpin + Send> Read for StreamingReader<R> {
     }
 }
 
-/// Shared state for extraction directory cleanup on interrupt
-type ExtractDirCleanup = Arc<Mutex<Option<PathBuf>>>;
-
-/// Set up Ctrl+C handler to clean up extraction directory
-fn setup_cleanup_handler(cleanup_path: ExtractDirCleanup) {
-    tokio::spawn(async move {
-        if tokio::signal::ctrl_c().await.is_ok() {
-            if let Some(path) = cleanup_path.lock().await.take() {
-                let _ = std::fs::remove_dir_all(&path);
-                eprintln!("\nInterrupted. Cleaned up extraction directory.");
-            }
-            std::process::exit(130);
-        }
-    });
-}
-
-/// Receive a folder (tar archive) using a wormhole code.
-///
-/// Note: File permissions may not be fully preserved in cross-platform transfers,
-/// especially when receiving from Unix on Windows or vice versa. Windows does not
-/// support Unix permission modes (rwx), so files may have different permissions
-/// after extraction.
-pub async fn receive_folder(code: &str, output_dir: Option<PathBuf>, relay_urls: Vec<String>) -> Result<()> {
+/// Receive a file or folder using a wormhole code.
+/// Auto-detects whether it's a file or folder transfer based on the header.
+pub async fn receive(code: &str, output_dir: Option<PathBuf>, relay_urls: Vec<String>) -> Result<()> {
     println!("🔮 Parsing wormhole code...");
 
     // Parse the wormhole code (auto-detects encryption mode)
@@ -161,7 +174,7 @@ pub async fn receive_folder(code: &str, output_dir: Option<PathBuf>, relay_urls:
         .await
         .context("Failed to accept stream")?;
 
-    // Read header
+    // Read header (determines file vs folder)
     let header = if let Some(ref k) = key {
         recv_encrypted_header(&mut recv_stream, k)
             .await
@@ -172,13 +185,159 @@ pub async fn receive_folder(code: &str, output_dir: Option<PathBuf>, relay_urls:
             .context("Failed to read header")?
     };
 
-    // Validate transfer type
-    if header.transfer_type != TransferType::Folder {
-        anyhow::bail!(
-            "Expected folder transfer, got file transfer. Use 'receive' command instead."
-        );
+    // Dispatch based on transfer type
+    match header.transfer_type {
+        TransferType::File => {
+            receive_file_impl(
+                &mut recv_stream,
+                &header,
+                key,
+                output_dir,
+            )
+            .await?;
+        }
+        TransferType::Folder => {
+            receive_folder_impl(
+                recv_stream,
+                &header,
+                key,
+                output_dir,
+            )
+            .await?;
+        }
     }
 
+    // Send acknowledgment to sender
+    send_stream
+        .write_all(b"ACK")
+        .await
+        .context("Failed to send acknowledgment")?;
+    send_stream
+        .finish()
+        .context("Failed to finish send stream")?;
+
+    // Close connection gracefully
+    conn.closed().await;
+    endpoint.close().await;
+
+    println!("👋 Connection closed.");
+
+    Ok(())
+}
+
+/// Internal implementation for receiving a file
+async fn receive_file_impl<R>(
+    recv_stream: &mut R,
+    header: &crate::transfer::FileHeader,
+    key: Option<[u8; 32]>,
+    output_dir: Option<PathBuf>,
+) -> Result<()>
+where
+    R: tokio::io::AsyncReadExt + Unpin,
+{
+    println!(
+        "📁 Receiving: {} ({})",
+        header.filename,
+        format_bytes(header.file_size)
+    );
+
+    // Determine output directory and final path
+    let output_dir = output_dir.unwrap_or_else(|| PathBuf::from("."));
+    let output_path = output_dir.join(&header.filename);
+
+    // Check if file already exists
+    if output_path.exists() {
+        print!(
+            "⚠️  File already exists: {}. Overwrite? [y/N] ",
+            output_path.display()
+        );
+        std::io::Write::flush(&mut std::io::stdout())?;
+
+        let mut input = String::new();
+        std::io::stdin().read_line(&mut input)?;
+
+        if !input.trim().eq_ignore_ascii_case("y") {
+            anyhow::bail!("Transfer cancelled - file exists");
+        }
+
+        // Remove existing file
+        std::fs::remove_file(&output_path).context("Failed to remove existing file")?;
+    }
+
+    // Create temp file in same directory (ensures rename works, auto-deletes on drop)
+    let temp_file =
+        NamedTempFile::new_in(&output_dir).context("Failed to create temporary file")?;
+    let temp_path = temp_file.path().to_path_buf();
+
+    // Set up cleanup handler for Ctrl+C
+    let cleanup_path: TempFileCleanup = Arc::new(Mutex::new(Some(temp_path.clone())));
+    setup_file_cleanup_handler(cleanup_path.clone());
+
+    let mut temp_file = temp_file;
+
+    // Receive chunks (starting at chunk_num 1)
+    let total_chunks = num_chunks(header.file_size);
+    let mut chunk_num = 1u64; // Start at 1, header used 0
+    let mut bytes_received = 0u64;
+
+    println!("📥 Receiving {} chunks...", total_chunks);
+
+    while bytes_received < header.file_size {
+        let chunk = if let Some(ref k) = key {
+            recv_encrypted_chunk(recv_stream, k, chunk_num)
+                .await
+                .context("Failed to receive chunk")?
+        } else {
+            recv_chunk(recv_stream)
+                .await
+                .context("Failed to receive chunk")?
+        };
+
+        // Write synchronously (tempfile uses std::fs::File)
+        temp_file
+            .write_all(&chunk)
+            .context("Failed to write to file")?;
+
+        chunk_num += 1;
+        bytes_received += chunk.len() as u64;
+
+        // Progress update every 10 chunks or on last chunk
+        if chunk_num % 10 == 0 || bytes_received == header.file_size {
+            let percent = (bytes_received as f64 / header.file_size as f64 * 100.0) as u32;
+            print!(
+                "\r   Progress: {}% ({}/{})",
+                percent,
+                format_bytes(bytes_received),
+                format_bytes(header.file_size)
+            );
+        }
+    }
+
+    // Clear cleanup path before persist (transfer succeeded)
+    cleanup_path.lock().await.take();
+
+    // Flush and persist temp file to final path (atomic move)
+    temp_file.flush().context("Failed to flush file")?;
+    temp_file
+        .persist(&output_path)
+        .map_err(|e| anyhow::anyhow!("Failed to persist temp file: {}", e))?;
+
+    println!("\n✅ File received successfully!");
+    println!("📁 Saved to: {}", output_path.display());
+
+    Ok(())
+}
+
+/// Internal implementation for receiving a folder (tar archive)
+async fn receive_folder_impl<R>(
+    recv_stream: R,
+    header: &crate::transfer::FileHeader,
+    key: Option<[u8; 32]>,
+    output_dir: Option<PathBuf>,
+) -> Result<()>
+where
+    R: tokio::io::AsyncReadExt + Unpin + Send + 'static,
+{
     println!(
         "📁 Receiving folder archive: {} ({})",
         header.filename,
@@ -203,7 +362,7 @@ pub async fn receive_folder(code: &str, output_dir: Option<PathBuf>, relay_urls:
 
     // Set up cleanup handler for Ctrl+C
     let cleanup_path: ExtractDirCleanup = Arc::new(Mutex::new(Some(extract_dir.clone())));
-    setup_cleanup_handler(cleanup_path.clone());
+    setup_dir_cleanup_handler(cleanup_path.clone());
 
     println!("📂 Extracting to: {}", extract_dir.display());
     #[cfg(unix)]
@@ -282,21 +441,6 @@ pub async fn receive_folder(code: &str, output_dir: Option<PathBuf>, relay_urls:
 
     println!("\n✅ Folder received successfully!");
     println!("📂 Extracted to: {}", extract_dir.display());
-
-    // Send acknowledgment to sender
-    send_stream
-        .write_all(b"ACK")
-        .await
-        .context("Failed to send acknowledgment")?;
-    send_stream
-        .finish()
-        .context("Failed to finish send stream")?;
-
-    // Close connection gracefully
-    conn.closed().await;
-    endpoint.close().await;
-
-    println!("👋 Connection closed.");
 
     Ok(())
 }
