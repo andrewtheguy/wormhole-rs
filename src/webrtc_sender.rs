@@ -11,7 +11,6 @@ use tokio::fs::File;
 use tokio::io::AsyncReadExt;
 use tokio::sync::{mpsc, Mutex};
 use tokio::time::{timeout, Duration};
-use uuid::Uuid;
 use webrtc::ice_transport::ice_candidate::RTCIceCandidateInit;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 
@@ -93,8 +92,6 @@ async fn transfer_data_webrtc_internal(
     let (open_tx, open_rx) = tokio::sync::oneshot::channel();
     setup_data_channel_handlers(&data_channel, message_tx, Some(open_tx));
 
-    // Store connection_id for signaling
-    let connection_id = Uuid::new_v4().to_string();
     let mut remote_peer_id: Option<String> = None;
 
     // Wait for OFFER from receiver (with timeout)
@@ -156,7 +153,8 @@ async fn transfer_data_webrtc_internal(
     // Use Arc<PeerJsClient> - no outer Mutex needed since PeerJsClient has interior mutability
     let peerjs_arc: SharedPeerJs = Arc::new(peerjs);
     let remote_peer_clone = remote_peer.clone();
-    let connection_id_clone = connection_id.clone();
+    // Use remote_connection_id from offer (not a locally generated ID) for protocol correctness
+    let remote_connection_id_clone = remote_connection_id.clone();
     let peerjs_clone = peerjs_arc.clone();
 
     // Take ownership of ICE candidate receiver before wrapping rtc_peer in Arc
@@ -175,7 +173,7 @@ async fn transfer_data_webrtc_internal(
                     &candidate_str,
                     sdp_mid.as_deref(),
                     sdp_m_line_index,
-                    &connection_id_clone,
+                    &remote_connection_id_clone,
                 )
                 .await;
         }
