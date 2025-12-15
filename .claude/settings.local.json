@@ -5,7 +5,8 @@
       "Bash(cargo check:*)",
       "Bash(cargo test:*)",
       "Bash(cargo build:*)",
-      "Bash(cargo search:*)"
+      "Bash(cargo search:*)",
+      "Bash(git mv:*)"
     ]
   }
 }

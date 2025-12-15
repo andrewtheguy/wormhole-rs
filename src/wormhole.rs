@@ -11,6 +11,9 @@ pub const PROTOCOL_IROH: &str = "iroh";
 /// Protocol identifier for nostr transport
 pub const PROTOCOL_NOSTR: &str = "nostr";
 
+/// Protocol identifier for tor transport
+pub const PROTOCOL_TOR: &str = "tor";
+
 /// Minimal address for serialization - only contains node ID and relay URL
 /// IP addresses are auto-discovered by iroh, so we don't need them in the wormhole code
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -80,10 +83,18 @@ pub struct WormholeToken {
     /// Original filename (for Nostr transfers)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub nostr_filename: Option<String>,
+    /// Transfer type: "file" (default) or "folder" (tar archive)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub nostr_transfer_type: Option<String>,
     /// Whether to use NIP-65 Outbox model for relay discovery
     /// When true, receiver discovers relays via NIP-65 from well-known bridge relays
     #[serde(skip_serializing_if = "Option::is_none")]
     pub nostr_use_outbox: Option<bool>,
+
+    // Version 2 fields (Tor-specific):
+    /// Onion address for Tor hidden service (e.g., "abc123...xyz.onion")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub onion_address: Option<String>,
 }
 
 /// Generate a wormhole code from endpoint address
@@ -115,7 +126,9 @@ pub fn generate_code(
         nostr_relays: None,
         nostr_transfer_id: None,
         nostr_filename: None,
+        nostr_transfer_type: None,
         nostr_use_outbox: None,
+        onion_address: None,
     };
 
     let serialized =
@@ -134,6 +147,7 @@ pub fn generate_code(
 /// * `relays` - List of Nostr relay URLs (required for legacy mode, None for outbox mode)
 /// * `filename` - Original filename
 /// * `use_outbox` - Whether to use NIP-65 Outbox model for relay discovery
+/// * `transfer_type` - "file" or "folder"
 pub fn generate_nostr_code(
     key: &[u8; 32],
     sender_pubkey: String,
@@ -141,6 +155,7 @@ pub fn generate_nostr_code(
     relays: Option<Vec<String>>,
     filename: String,
     use_outbox: bool,
+    transfer_type: &str,
 ) -> Result<String> {
     let token = WormholeToken {
         version: CURRENT_VERSION,
@@ -152,7 +167,46 @@ pub fn generate_nostr_code(
         nostr_relays: relays,
         nostr_transfer_id: Some(transfer_id),
         nostr_filename: Some(filename),
+        nostr_transfer_type: Some(transfer_type.to_string()),
         nostr_use_outbox: if use_outbox { Some(true) } else { None },
+        onion_address: None,
+    };
+
+    let serialized =
+        serde_json::to_vec(&token).context("Failed to serialize wormhole token")?;
+
+    Ok(URL_SAFE_NO_PAD.encode(&serialized))
+}
+
+/// Generate a wormhole code for Tor transfer
+/// Format: base64url(json(WormholeToken))
+///
+/// # Arguments
+/// * `onion_address` - The .onion address of the hidden service
+/// * `extra_encrypt` - Whether to include an AES-256-GCM encryption key
+/// * `key` - The encryption key (required if extra_encrypt is true)
+pub fn generate_tor_code(
+    onion_address: String,
+    extra_encrypt: bool,
+    key: Option<&[u8; 32]>,
+) -> Result<String> {
+    if extra_encrypt && key.is_none() {
+        anyhow::bail!("Encryption key required when extra_encrypt is true");
+    }
+
+    let token = WormholeToken {
+        version: CURRENT_VERSION,
+        protocol: PROTOCOL_TOR.to_string(),
+        extra_encrypt,
+        key: key.map(|k| URL_SAFE_NO_PAD.encode(k)),
+        addr: None,
+        nostr_sender_pubkey: None,
+        nostr_relays: None,
+        nostr_transfer_id: None,
+        nostr_filename: None,
+        nostr_transfer_type: None,
+        nostr_use_outbox: None,
+        onion_address: Some(onion_address),
     };
 
     let serialized =
@@ -224,12 +278,16 @@ pub fn parse_code(code: &str) -> Result<WormholeToken> {
 
     // Validate protocol for v2 tokens
     if token.version == 2 {
-        if token.protocol != PROTOCOL_IROH && token.protocol != PROTOCOL_NOSTR {
+        if token.protocol != PROTOCOL_IROH
+            && token.protocol != PROTOCOL_NOSTR
+            && token.protocol != PROTOCOL_TOR
+        {
             anyhow::bail!(
-                "Invalid protocol '{}' in v2 token. Supported protocols: '{}', '{}'",
+                "Invalid protocol '{}' in v2 token. Supported protocols: '{}', '{}', '{}'",
                 token.protocol,
                 PROTOCOL_IROH,
-                PROTOCOL_NOSTR
+                PROTOCOL_NOSTR,
+                PROTOCOL_TOR
             );
         }
     }
@@ -276,6 +334,13 @@ pub fn parse_code(code: &str) -> Result<WormholeToken> {
         }
         if token.key.is_none() {
             anyhow::bail!("Invalid v2 nostr token: encryption key required for Nostr transfers");
+        }
+    }
+
+    // For version 2 with tor protocol, ensure onion_address is present
+    if token.version == 2 && token.protocol == PROTOCOL_TOR {
+        if token.onion_address.is_none() {
+            anyhow::bail!("Invalid v2 tor token: missing onion address");
         }
     }
 

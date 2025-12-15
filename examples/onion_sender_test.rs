@@ -47,7 +47,9 @@ async fn main() -> anyhow::Result<()> {
     // Convert RendRequest stream to StreamRequest stream
     let mut stream_requests = handle_rend_requests(rend_requests);
 
-    // Wait for incoming stream request
+    // Single-connection demo: This example accepts one connection and exits.
+    // For a production server, wrap this in `while let Some(...) = stream_requests.next().await`
+    // to handle multiple sequential connections.
     if let Some(stream_req) = stream_requests.next().await {
         println!("Receiver connected! Accepting stream...");
 
@@ -65,9 +67,13 @@ async fn main() -> anyhow::Result<()> {
 
         // Wait for receiver to close their end (read will return 0 bytes when closed)
         let mut buf = [0u8; 1];
-        let _ = stream.read(&mut buf).await;
+        match stream.read(&mut buf).await {
+            Ok(0) => println!("Connection closed normally."),
+            Ok(_) => println!("Received unexpected data before close."),
+            Err(e) => eprintln!("Read error while waiting for close: {}", e),
+        }
 
-        println!("Connection closed. Done!");
+        println!("Done!");
     }
 
     Ok(())

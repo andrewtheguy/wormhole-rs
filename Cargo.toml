@@ -1,6 +1,6 @@
 [package]
 name = "wormhole-rs"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 
 [lib]
@@ -11,14 +11,14 @@ path = "src/lib.rs"
 name = "wormhole-rs"
 path = "src/main.rs"
 
-[[bin]]
-name = "onion_sender"
-path = "src/bin/onion_sender.rs"
+[[example]]
+name = "onion_sender_test"
+path = "examples/onion_sender_test.rs"
 required-features = ["onion"]
 
-[[bin]]
-name = "onion_receiver"
-path = "src/bin/onion_receiver.rs"
+[[example]]
+name = "onion_receiver_test"
+path = "examples/onion_receiver_test.rs"
 required-features = ["onion"]
 
 [features]

@@ -12,10 +12,11 @@ COPY Cargo.toml Cargo.lock ./
 COPY src ./src
 
 # Build for the target platform with per-platform cargo cache mounts
+# Includes --features onion to enable Tor hidden service support
 RUN --mount=type=cache,target=/usr/local/cargo/registry,id=cargo-registry-${TARGETPLATFORM} \
     --mount=type=cache,target=/usr/local/cargo/git,id=cargo-git-${TARGETPLATFORM} \
     --mount=type=cache,target=/build/target,id=cargo-target-${TARGETPLATFORM} \
-    cargo build --release && \
+    cargo build --release --features onion && \
     cp target/release/wormhole-rs /wormhole-rs
 
 # Export stage - only contains the binary

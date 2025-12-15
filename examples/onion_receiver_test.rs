@@ -1,8 +1,10 @@
-use arti_client::{ErrorKind, HasKind, TorClient, TorClientConfig};
+use arti_client::{config::TorClientConfigBuilder, ErrorKind, HasKind, TorClient};
 use tokio::io::AsyncReadExt;
 
 const MAX_RETRIES: u32 = 5;
 const RETRY_DELAY_SECS: u64 = 5;
+/// Maximum allowed message length (4 MB) to prevent malicious allocation attacks
+const MAX_MSG_LEN: usize = 4 * 1024 * 1024;
 
 /// Check if error is retryable (timeout, temporary network issues)
 fn is_retryable(e: &arti_client::Error) -> bool {
@@ -25,9 +27,14 @@ async fn main() -> anyhow::Result<()> {
 
     let onion_addr = &args[1];
 
-    println!("Bootstrapping Tor client...");
+    // Create a temporary directory for ephemeral state (avoids conflicts with concurrent instances)
+    let temp_dir = tempfile::tempdir()?;
+    let state_dir = temp_dir.path().join("state");
+    let cache_dir = temp_dir.path().join("cache");
 
-    let config = TorClientConfig::default();
+    println!("Bootstrapping Tor client (ephemeral mode)...");
+
+    let config = TorClientConfigBuilder::from_directories(state_dir, cache_dir).build()?;
     let tor_client = TorClient::create_bootstrapped(config).await?;
 
     println!("Tor client bootstrapped!");
@@ -75,6 +82,18 @@ async fn main() -> anyhow::Result<()> {
     let mut len_buf = [0u8; 4];
     stream.read_exact(&mut len_buf).await?;
     let len = u32::from_be_bytes(len_buf) as usize;
+
+    // Validate message length to prevent malicious allocation attacks
+    if len == 0 {
+        anyhow::bail!("Invalid message: length is zero");
+    }
+    if len > MAX_MSG_LEN {
+        anyhow::bail!(
+            "Message too large: {} bytes exceeds maximum of {} bytes",
+            len,
+            MAX_MSG_LEN
+        );
+    }
 
     // Read exact message bytes
     let mut buffer = vec![0u8; len];
