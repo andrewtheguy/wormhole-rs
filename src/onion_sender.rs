@@ -3,17 +3,14 @@ use arti_client::{config::TorClientConfigBuilder, TorClient};
 use futures::StreamExt;
 use rand::Rng;
 use safelog::DisplayRedacted;
-use std::fs;
 use std::path::Path;
-use tar::Builder;
-use tempfile::NamedTempFile;
 use tokio::fs::File;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tor_cell::relaycell::msg::Connected;
 use tor_hsservice::{config::OnionServiceConfigBuilder, handle_rend_requests};
-use walkdir::WalkDir;
 
 use crate::crypto::{generate_key, CHUNK_SIZE};
+use crate::folder::{create_tar_archive, print_tar_creation_info};
 use crate::transfer::{
     format_bytes, num_chunks, send_chunk, send_encrypted_chunk, send_encrypted_header,
     send_header, FileHeader, TransferType,
@@ -198,58 +195,13 @@ pub async fn send_folder_tor(folder_path: &Path, extra_encrypt: bool) -> Result<
         .context("Invalid folder name")?;
 
     println!("Creating tar archive of: {}", folder_name);
-    #[cfg(unix)]
-    println!("   File modes (e.g., 0755) will be preserved; owner/group will not.");
-    #[cfg(windows)]
-    println!("   Note: Windows does not support Unix file modes.");
-    println!("   Symlinks are included; special files (devices, FIFOs) are skipped.");
+    print_tar_creation_info();
 
-    // Create tar archive to temp file
-    let temp_tar = NamedTempFile::new().context("Failed to create temporary file")?;
-
-    // Build tar archive
-    {
-        let tar_file = fs::File::create(temp_tar.path()).context("Failed to create tar file")?;
-        let mut builder = Builder::new(tar_file);
-
-        // Walk the directory and add all entries
-        for entry in WalkDir::new(folder_path) {
-            let entry = entry.context("Failed to read directory entry")?;
-            let path = entry.path();
-
-            // Calculate relative path from folder root
-            let rel_path = path
-                .strip_prefix(folder_path)
-                .context("Failed to calculate relative path")?;
-
-            // Skip the root folder itself
-            if rel_path.as_os_str().is_empty() {
-                continue;
-            }
-
-            // Create archive path with folder name as root
-            let archive_path = Path::new(folder_name).join(rel_path);
-
-            if path.is_dir() {
-                builder
-                    .append_dir(&archive_path, path)
-                    .with_context(|| format!("Failed to add directory: {}", path.display()))?;
-            } else if path.is_file() || path.is_symlink() {
-                builder
-                    .append_path_with_name(path, &archive_path)
-                    .with_context(|| format!("Failed to add file: {}", path.display()))?;
-            }
-        }
-
-        builder.finish().context("Failed to finalize tar archive")?;
-    }
-
-    // Get tar file size
-    let file_size = fs::metadata(temp_tar.path())
-        .context("Failed to read tar file metadata")?
-        .len();
-
-    let tar_filename = format!("{}.tar", folder_name);
+    // Create tar archive using shared folder logic
+    let tar_archive = create_tar_archive(folder_path)?;
+    let temp_tar = tar_archive.temp_file;
+    let tar_filename = tar_archive.filename;
+    let file_size = tar_archive.file_size;
 
     println!(
         "Archive created: {} ({})",

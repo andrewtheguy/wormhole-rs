@@ -1,14 +1,15 @@
 use anyhow::{Context, Result};
 use arti_client::{ErrorKind, HasKind, TorClient, TorClientConfig};
-use std::cmp;
-use std::io::{Read, Write};
+use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tar::Archive;
 use tempfile::NamedTempFile;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::Mutex;
 
+use crate::folder::{
+    extract_tar_archive, print_skipped_entries, print_tar_extraction_info, StreamingReader,
+};
 use crate::transfer::{
     format_bytes, num_chunks, recv_chunk, recv_encrypted_chunk, recv_encrypted_header, recv_header,
     TransferType,
@@ -27,80 +28,6 @@ fn is_retryable(e: &arti_client::Error) -> bool {
             | ErrorKind::TransientFailure
             | ErrorKind::LocalNetworkError
     )
-}
-
-/// Wrapper to bridge async chunk receiving with sync tar reading.
-/// Implements std::io::Read by fetching chunks on demand.
-struct StreamingReader<R> {
-    recv_stream: R,
-    key: Option<[u8; 32]>,
-    chunk_num: u64,
-    buffer: Vec<u8>,
-    buffer_pos: usize,
-    bytes_remaining: u64,
-    runtime_handle: tokio::runtime::Handle,
-}
-
-impl<R> StreamingReader<R> {
-    fn new(
-        recv_stream: R,
-        key: Option<[u8; 32]>,
-        file_size: u64,
-        runtime_handle: tokio::runtime::Handle,
-    ) -> Self {
-        Self {
-            recv_stream,
-            key,
-            chunk_num: 1, // Chunks start at 1, header was 0
-            buffer: Vec::new(),
-            buffer_pos: 0,
-            bytes_remaining: file_size,
-            runtime_handle,
-        }
-    }
-}
-
-impl<R: AsyncReadExt + Unpin + Send> Read for StreamingReader<R> {
-    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        // If buffer is exhausted and there's more data, fetch next chunk
-        if self.buffer_pos >= self.buffer.len() && self.bytes_remaining > 0 {
-            // Block on async chunk receive
-            let chunk_result = self.runtime_handle.block_on(async {
-                if let Some(ref key) = self.key {
-                    recv_encrypted_chunk(&mut self.recv_stream, key, self.chunk_num).await
-                } else {
-                    recv_chunk(&mut self.recv_stream).await
-                }
-            });
-
-            match chunk_result {
-                Ok(chunk) => {
-                    self.bytes_remaining -= chunk.len() as u64;
-                    self.chunk_num += 1;
-                    self.buffer = chunk;
-                    self.buffer_pos = 0;
-                }
-                Err(e) => {
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        format!("Failed to receive chunk: {}", e),
-                    ));
-                }
-            }
-        }
-
-        // Return data from buffer
-        if self.buffer_pos >= self.buffer.len() {
-            return Ok(0); // EOF
-        }
-
-        let available = self.buffer.len() - self.buffer_pos;
-        let to_copy = cmp::min(available, buf.len());
-        buf[..to_copy].copy_from_slice(&self.buffer[self.buffer_pos..self.buffer_pos + to_copy]);
-        self.buffer_pos += to_copy;
-
-        Ok(to_copy)
-    }
 }
 
 /// Shared state for temp file cleanup on interrupt
@@ -347,69 +274,24 @@ async fn receive_folder_stream<S: AsyncReadExt + Unpin + Send + 'static>(
     std::fs::create_dir_all(&extract_dir).context("Failed to create extraction directory")?;
 
     println!("Extracting to: {}", extract_dir.display());
-    #[cfg(unix)]
-    println!("   File modes (e.g., 0755) will be preserved; owner/group will not.");
-    #[cfg(windows)]
-    {
-        println!("   Note: Unix file modes are not supported on Windows.");
-        println!("   Symlinks require admin privileges and may be skipped.");
-    }
-    println!("   Special files (devices, FIFOs) will be skipped if present.");
+    print_tar_extraction_info();
 
     // Get runtime handle for blocking in Read impl
     let runtime_handle = tokio::runtime::Handle::current();
 
-    // Create streaming reader
+    // Create streaming reader using shared folder logic
     let reader = StreamingReader::new(stream, key, header.file_size, runtime_handle);
 
-    // Extract tar archive
-    let mut archive = Archive::new(reader);
-    archive.set_preserve_permissions(true);
-    archive.set_preserve_ownerships(false);
-
+    // Use spawn_blocking to run tar extraction in a blocking context
     let extract_dir_clone = extract_dir.clone();
-    let skipped_entries = tokio::task::spawn_blocking(move || -> Result<Vec<String>> {
-        let mut skipped = Vec::new();
-
-        for entry in archive.entries().context("Failed to read tar entries")? {
-            let mut entry = entry.context("Failed to read tar entry")?;
-            let path = entry.path().context("Failed to get entry path")?.into_owned();
-
-            let entry_type = entry.header().entry_type();
-
-            #[cfg(windows)]
-            if entry_type.is_symlink() || entry_type.is_hard_link() {
-                skipped.push(format!("{} (symlink/hardlink)", path.display()));
-                continue;
-            }
-
-            if entry_type.is_block_special()
-                || entry_type.is_character_special()
-                || entry_type.is_fifo()
-            {
-                skipped.push(format!("{} (special file)", path.display()));
-                continue;
-            }
-
-            entry
-                .unpack_in(&extract_dir_clone)
-                .with_context(|| format!("Failed to extract: {}", path.display()))?;
-        }
-
-        Ok(skipped)
+    let skipped_entries = tokio::task::spawn_blocking(move || {
+        extract_tar_archive(reader, &extract_dir_clone)
     })
     .await
     .context("Extraction task panicked")??;
 
-    if !skipped_entries.is_empty() {
-        println!(
-            "\nSkipped {} entries (not supported on this platform):",
-            skipped_entries.len()
-        );
-        for entry in &skipped_entries {
-            println!("   - {}", entry);
-        }
-    }
+    // Report skipped entries
+    print_skipped_entries(&skipped_entries);
 
     println!("\nFolder received successfully!");
     println!("Extracted to: {}", extract_dir.display());
