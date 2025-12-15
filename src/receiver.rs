@@ -2,7 +2,9 @@ use anyhow::{Context, Result};
 use iroh::Watcher;
 use std::io::Write;
 use std::path::PathBuf;
+use std::sync::Arc;
 use tempfile::NamedTempFile;
+use tokio::sync::Mutex;
 
 use crate::iroh_common::{create_receiver_endpoint, ALPN};
 use crate::transfer::{
@@ -10,6 +12,22 @@ use crate::transfer::{
     TransferType,
 };
 use crate::wormhole::parse_code;
+
+/// Shared state for temp file cleanup on interrupt
+type TempFileCleanup = Arc<Mutex<Option<PathBuf>>>;
+
+/// Set up Ctrl+C handler to clean up temp file
+fn setup_cleanup_handler(cleanup_path: TempFileCleanup) {
+    tokio::spawn(async move {
+        if tokio::signal::ctrl_c().await.is_ok() {
+            if let Some(path) = cleanup_path.lock().await.take() {
+                let _ = std::fs::remove_file(&path);
+                eprintln!("\nInterrupted. Cleaned up temp file.");
+            }
+            std::process::exit(130);
+        }
+    });
+}
 
 /// Receive a file using a wormhole code
 pub async fn receive_file(code: &str, output_dir: Option<PathBuf>, relay_urls: Vec<String>) -> Result<()> {
@@ -110,8 +128,15 @@ pub async fn receive_file(code: &str, output_dir: Option<PathBuf>, relay_urls: V
     }
 
     // Create temp file in same directory (ensures rename works, auto-deletes on drop)
-    let mut temp_file =
+    let temp_file =
         NamedTempFile::new_in(&output_dir).context("Failed to create temporary file")?;
+    let temp_path = temp_file.path().to_path_buf();
+
+    // Set up cleanup handler for Ctrl+C
+    let cleanup_path: TempFileCleanup = Arc::new(Mutex::new(Some(temp_path.clone())));
+    setup_cleanup_handler(cleanup_path.clone());
+
+    let mut temp_file = temp_file;
 
     // Receive chunks (starting at chunk_num 1)
     let total_chunks = num_chunks(header.file_size);
@@ -150,6 +175,9 @@ pub async fn receive_file(code: &str, output_dir: Option<PathBuf>, relay_urls: V
             );
         }
     }
+
+    // Clear cleanup path before persist (transfer succeeded)
+    cleanup_path.lock().await.take();
 
     // Flush and persist temp file to final path (atomic move)
     temp_file.flush().context("Failed to flush file")?;

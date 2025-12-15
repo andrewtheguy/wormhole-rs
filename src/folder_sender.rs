@@ -1,10 +1,12 @@
 use anyhow::{Context, Result};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use tar::Builder;
 use tempfile::NamedTempFile;
 use tokio::fs::File;
 use tokio::io::AsyncReadExt;
+use tokio::sync::Mutex;
 use walkdir::WalkDir;
 
 use crate::crypto::{generate_key, CHUNK_SIZE};
@@ -14,6 +16,22 @@ use crate::transfer::{
     send_header, FileHeader, TransferType,
 };
 use crate::wormhole::generate_code;
+
+/// Shared state for temp file cleanup on interrupt
+type TempFileCleanup = Arc<Mutex<Option<PathBuf>>>;
+
+/// Set up Ctrl+C handler to clean up temp file
+fn setup_cleanup_handler(cleanup_path: TempFileCleanup) {
+    tokio::spawn(async move {
+        if tokio::signal::ctrl_c().await.is_ok() {
+            if let Some(path) = cleanup_path.lock().await.take() {
+                let _ = std::fs::remove_file(&path);
+                eprintln!("\nInterrupted. Cleaned up temp file.");
+            }
+            std::process::exit(130);
+        }
+    });
+}
 
 /// Send a folder as a tar archive.
 ///
@@ -41,6 +59,11 @@ pub async fn send_folder(folder_path: &Path, extra_encrypt: bool, relay_urls: Ve
 
     // Create tar archive to temp file using Rust tar crate (no system dependency)
     let temp_tar = NamedTempFile::new().context("Failed to create temporary file")?;
+    let temp_path = temp_tar.path().to_path_buf();
+
+    // Set up cleanup handler for Ctrl+C
+    let cleanup_path: TempFileCleanup = Arc::new(Mutex::new(Some(temp_path)));
+    setup_cleanup_handler(cleanup_path.clone());
 
     // Build tar archive
     {
@@ -205,6 +228,9 @@ pub async fn send_folder(folder_path: &Path, extra_encrypt: bool, relay_urls: Ve
     }
 
     println!("✅ Receiver confirmed!");
+
+    // Clear cleanup path (transfer succeeded, temp file no longer needed)
+    cleanup_path.lock().await.take();
 
     // Close connection gracefully
     conn.close(0u32.into(), b"done");

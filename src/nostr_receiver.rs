@@ -3,7 +3,9 @@ use nostr_sdk::prelude::*;
 use std::collections::HashMap;
 use std::io::Write;
 use std::path::PathBuf;
+use std::sync::Arc;
 use tempfile::NamedTempFile;
+use tokio::sync::Mutex;
 use tokio::time::{timeout, Duration};
 
 use crate::crypto::decrypt_chunk;
@@ -16,6 +18,22 @@ use crate::wormhole::{parse_code, PROTOCOL_NOSTR};
 const CHUNK_RECEIVE_TIMEOUT_SECS: u64 = 60;
 const MIN_RELAYS_REQUIRED: usize = 2;
 const SUBSCRIPTION_SETUP_DELAY_SECS: u64 = 3; // Wait for subscription to propagate
+
+/// Shared state for temp file cleanup on interrupt
+type TempFileCleanup = Arc<Mutex<Option<PathBuf>>>;
+
+/// Set up Ctrl+C handler to clean up temp file
+fn setup_cleanup_handler(cleanup_path: TempFileCleanup) {
+    tokio::spawn(async move {
+        if tokio::signal::ctrl_c().await.is_ok() {
+            if let Some(path) = cleanup_path.lock().await.take() {
+                let _ = std::fs::remove_file(&path);
+                eprintln!("\nInterrupted. Cleaned up temp file.");
+            }
+            std::process::exit(130);
+        }
+    });
+}
 
 /// Receive a file via Nostr relays
 pub async fn receive_file_nostr(
@@ -335,13 +353,23 @@ pub async fn receive_file_nostr(
     }
 
     // Create temp file in same directory (ensures rename works, auto-deletes on drop)
-    let mut temp_file =
+    let temp_file =
         NamedTempFile::new_in(&output_dir).context("Failed to create temporary file")?;
+    let temp_path = temp_file.path().to_path_buf();
+
+    // Set up cleanup handler for Ctrl+C
+    let cleanup_path: TempFileCleanup = Arc::new(Mutex::new(Some(temp_path)));
+    setup_cleanup_handler(cleanup_path.clone());
+
+    let mut temp_file = temp_file;
 
     // Write decrypted data to temp file
     temp_file
         .write_all(&decrypted_data)
         .context("Failed to write to file")?;
+
+    // Clear cleanup path before persist (transfer succeeded)
+    cleanup_path.lock().await.take();
 
     // Flush and persist temp file to final path (atomic move)
     temp_file.flush().context("Failed to flush file")?;

@@ -3,9 +3,11 @@ use arti_client::{ErrorKind, HasKind, TorClient, TorClientConfig};
 use std::cmp;
 use std::io::{Read, Write};
 use std::path::PathBuf;
+use std::sync::Arc;
 use tar::Archive;
 use tempfile::NamedTempFile;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::sync::Mutex;
 
 use crate::transfer::{
     format_bytes, num_chunks, recv_chunk, recv_encrypted_chunk, recv_encrypted_header, recv_header,
@@ -99,6 +101,22 @@ impl<R: AsyncReadExt + Unpin + Send> Read for StreamingReader<R> {
 
         Ok(to_copy)
     }
+}
+
+/// Shared state for temp file cleanup on interrupt
+type TempFileCleanup = Arc<Mutex<Option<PathBuf>>>;
+
+/// Set up Ctrl+C handler to clean up temp file
+fn setup_cleanup_handler(cleanup_path: TempFileCleanup) {
+    tokio::spawn(async move {
+        if tokio::signal::ctrl_c().await.is_ok() {
+            if let Some(path) = cleanup_path.lock().await.take() {
+                let _ = std::fs::remove_file(&path);
+                eprintln!("\nInterrupted. Cleaned up temp file.");
+            }
+            std::process::exit(130); // Standard exit code for Ctrl+C
+        }
+    });
 }
 
 /// Receive a file via Tor hidden service
@@ -228,8 +246,16 @@ pub async fn receive_file_tor(code: &str, output_dir: Option<PathBuf>) -> Result
     }
 
     // Create temp file in same directory
-    let mut temp_file =
+    let temp_file =
         NamedTempFile::new_in(&output_dir).context("Failed to create temporary file")?;
+    let temp_path = temp_file.path().to_path_buf();
+
+    // Set up cleanup handler for Ctrl+C
+    let cleanup_path: TempFileCleanup = Arc::new(Mutex::new(Some(temp_path.clone())));
+    setup_cleanup_handler(cleanup_path.clone());
+
+    // Keep temp_file handle for writing
+    let mut temp_file = temp_file;
 
     // Receive chunks
     let total_chunks = num_chunks(header.file_size);
@@ -267,6 +293,9 @@ pub async fn receive_file_tor(code: &str, output_dir: Option<PathBuf>) -> Result
             );
         }
     }
+
+    // Clear cleanup path before persist (transfer succeeded)
+    cleanup_path.lock().await.take();
 
     // Persist temp file
     temp_file.flush().context("Failed to flush file")?;

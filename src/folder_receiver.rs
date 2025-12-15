@@ -3,7 +3,9 @@ use iroh::Watcher;
 use std::cmp;
 use std::io::Read;
 use std::path::PathBuf;
+use std::sync::Arc;
 use tar::Archive;
+use tokio::sync::Mutex;
 
 use crate::iroh_common::{create_receiver_endpoint, ALPN};
 use crate::transfer::{
@@ -85,6 +87,22 @@ impl<R: tokio::io::AsyncReadExt + Unpin + Send> Read for StreamingReader<R> {
 
         Ok(to_copy)
     }
+}
+
+/// Shared state for extraction directory cleanup on interrupt
+type ExtractDirCleanup = Arc<Mutex<Option<PathBuf>>>;
+
+/// Set up Ctrl+C handler to clean up extraction directory
+fn setup_cleanup_handler(cleanup_path: ExtractDirCleanup) {
+    tokio::spawn(async move {
+        if tokio::signal::ctrl_c().await.is_ok() {
+            if let Some(path) = cleanup_path.lock().await.take() {
+                let _ = std::fs::remove_dir_all(&path);
+                eprintln!("\nInterrupted. Cleaned up extraction directory.");
+            }
+            std::process::exit(130);
+        }
+    });
 }
 
 /// Receive a folder (tar archive) using a wormhole code.
@@ -183,6 +201,10 @@ pub async fn receive_folder(code: &str, output_dir: Option<PathBuf>, relay_urls:
 
     std::fs::create_dir_all(&extract_dir).context("Failed to create extraction directory")?;
 
+    // Set up cleanup handler for Ctrl+C
+    let cleanup_path: ExtractDirCleanup = Arc::new(Mutex::new(Some(extract_dir.clone())));
+    setup_cleanup_handler(cleanup_path.clone());
+
     println!("📂 Extracting to: {}", extract_dir.display());
     #[cfg(unix)]
     println!("   File modes (e.g., 0755) will be preserved; owner/group will not.");
@@ -254,6 +276,9 @@ pub async fn receive_folder(code: &str, output_dir: Option<PathBuf>, relay_urls:
             println!("   - {}", entry);
         }
     }
+
+    // Clear cleanup path before success (transfer succeeded)
+    cleanup_path.lock().await.take();
 
     println!("\n✅ Folder received successfully!");
     println!("📂 Extracted to: {}", extract_dir.display());
