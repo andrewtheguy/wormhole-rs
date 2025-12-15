@@ -13,7 +13,7 @@ use rand::thread_rng;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::net::TcpStream;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, Mutex};
 use tokio::time::{interval, Duration};
 use tokio_tungstenite::{connect_async, tungstenite::Message, MaybeTlsStream, WebSocketStream};
 use uuid::Uuid;
@@ -262,11 +262,12 @@ impl ClientMessage {
 /// WebSocket client for PeerJS signaling server
 pub struct PeerJsClient {
     peer_id: String,
-    ws_write: futures::stream::SplitSink<
-        WebSocketStream<MaybeTlsStream<TcpStream>>,
-        Message,
+    /// WebSocket write half, wrapped in Mutex for concurrent access
+    ws_write: Mutex<
+        futures::stream::SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>,
     >,
-    message_rx: mpsc::Receiver<ServerMessage>,
+    /// Message receiver, wrapped in Mutex so it can be taken for dedicated receiver task
+    message_rx: Mutex<Option<mpsc::Receiver<ServerMessage>>>,
     _heartbeat_handle: tokio::task::JoinHandle<()>,
 }
 
@@ -340,10 +341,16 @@ impl PeerJsClient {
 
         Ok(Self {
             peer_id: peer_id.to_string(),
-            ws_write,
-            message_rx,
+            ws_write: Mutex::new(ws_write),
+            message_rx: Mutex::new(Some(message_rx)),
             _heartbeat_handle: heartbeat_handle,
         })
+    }
+
+    /// Take ownership of the message receiver for a dedicated task
+    /// This allows concurrent sending and receiving without mutex contention
+    pub async fn take_message_rx(&self) -> Option<mpsc::Receiver<ServerMessage>> {
+        self.message_rx.lock().await.take()
     }
 
     /// Get the peer ID
@@ -352,8 +359,11 @@ impl PeerJsClient {
     }
 
     /// Wait for the OPEN message from server
-    pub async fn wait_for_open(&mut self) -> Result<()> {
-        while let Some(msg) = self.message_rx.recv().await {
+    pub async fn wait_for_open(&self) -> Result<()> {
+        let mut rx_guard = self.message_rx.lock().await;
+        let rx = rx_guard.as_mut().context("Message receiver already taken")?;
+
+        while let Some(msg) = rx.recv().await {
             match msg {
                 ServerMessage::Open => {
                     println!("Connected to PeerJS server as: {}", self.peer_id);
@@ -379,23 +389,23 @@ impl PeerJsClient {
         anyhow::bail!("Connection closed while waiting for OPEN")
     }
 
-    /// Receive a message from the server
-    pub async fn recv_message(&mut self) -> Result<ServerMessage> {
-        self.message_rx
-            .recv()
-            .await
-            .context("Channel closed")
+    /// Receive a message from the server (uses internal message receiver)
+    /// Note: For concurrent operations, use take_message_rx() to get dedicated receiver
+    pub async fn recv_message(&self) -> Result<ServerMessage> {
+        let mut rx_guard = self.message_rx.lock().await;
+        let rx = rx_guard.as_mut().context("Message receiver already taken")?;
+        rx.recv().await.context("Channel closed")
     }
 
     /// Send a heartbeat message
-    pub async fn send_heartbeat(&mut self) -> Result<()> {
+    pub async fn send_heartbeat(&self) -> Result<()> {
         let msg = ClientMessage::heartbeat();
         self.send_raw(&msg).await
     }
 
     /// Send an SDP offer to a destination peer
     pub async fn send_offer(
-        &mut self,
+        &self,
         dst: &str,
         sdp: &str,
         connection_id: &str,
@@ -419,7 +429,7 @@ impl PeerJsClient {
 
     /// Send an SDP answer to a destination peer
     pub async fn send_answer(
-        &mut self,
+        &self,
         dst: &str,
         sdp: &str,
         connection_id: &str,
@@ -443,7 +453,7 @@ impl PeerJsClient {
 
     /// Send an ICE candidate to a destination peer
     pub async fn send_candidate(
-        &mut self,
+        &self,
         dst: &str,
         candidate: &str,
         sdp_mid: Option<&str>,
@@ -466,10 +476,10 @@ impl PeerJsClient {
     }
 
     /// Send a raw message to the server
-    async fn send_raw(&mut self, msg: &ClientMessage) -> Result<()> {
+    async fn send_raw(&self, msg: &ClientMessage) -> Result<()> {
         let json = serde_json::to_string(msg)?;
-        self.ws_write
-            .send(Message::Text(json))
+        let mut ws = self.ws_write.lock().await;
+        ws.send(Message::Text(json))
             .await
             .context("Failed to send message")?;
         Ok(())

@@ -15,6 +15,10 @@ use uuid::Uuid;
 use webrtc::ice_transport::ice_candidate::RTCIceCandidateInit;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 
+/// Type alias for PeerJS client shared between tasks (now using Arc directly since
+/// PeerJsClient has interior mutability via internal Mutex)
+type SharedPeerJs = Arc<PeerJsClient>;
+
 use crate::crypto::{encrypt_chunk, generate_key, CHUNK_SIZE};
 use crate::folder::{create_tar_archive, print_tar_creation_info};
 use crate::transfer::{format_bytes, num_chunks, FileHeader, TransferType};
@@ -61,7 +65,7 @@ async fn transfer_data_webrtc_internal(
 
     // Connect to PeerJS server
     let server = peerjs_server.unwrap_or(DEFAULT_PEERJS_SERVER);
-    let mut peerjs = PeerJsClient::connect(&peer_id, Some(server)).await?;
+    let peerjs = PeerJsClient::connect(&peer_id, Some(server)).await?;
     peerjs.wait_for_open().await?;
 
     // Generate wormhole code
@@ -149,7 +153,8 @@ async fn transfer_data_webrtc_internal(
     println!("Sent answer to receiver");
 
     // Exchange ICE candidates
-    let peerjs_arc = Arc::new(Mutex::new(peerjs));
+    // Use Arc<PeerJsClient> - no outer Mutex needed since PeerJsClient has interior mutability
+    let peerjs_arc: SharedPeerJs = Arc::new(peerjs);
     let remote_peer_clone = remote_peer.clone();
     let connection_id_clone = connection_id.clone();
     let peerjs_clone = peerjs_arc.clone();
@@ -157,15 +162,14 @@ async fn transfer_data_webrtc_internal(
     // Take ownership of ICE candidate receiver before wrapping rtc_peer in Arc
     let mut ice_rx = rtc_peer.take_ice_candidate_rx().expect("ICE candidate receiver already taken");
 
-    // Spawn task to send our ICE candidates
+    // Spawn task to send our ICE candidates (no mutex lock needed)
     tokio::spawn(async move {
         while let Some(candidate) = ice_rx.recv().await {
             let candidate_str = candidate.to_json().map(|c| c.candidate).unwrap_or_default();
             let sdp_mid = candidate.to_json().ok().and_then(|c| c.sdp_mid);
             let sdp_m_line_index = candidate.to_json().ok().and_then(|c| c.sdp_mline_index);
 
-            let mut peerjs = peerjs_clone.lock().await;
-            let _ = peerjs
+            let _ = peerjs_clone
                 .send_candidate(
                     &remote_peer_clone,
                     &candidate_str,
@@ -177,20 +181,21 @@ async fn transfer_data_webrtc_internal(
         }
     });
 
-    // Process incoming ICE candidates
+    // Take message receiver for dedicated receiving task (allows concurrent send/receive)
+    let mut peerjs_rx = peerjs_arc
+        .take_message_rx()
+        .await
+        .expect("Message receiver already taken");
+
+    // Process incoming ICE candidates in background
     let peerjs_clone2 = peerjs_arc.clone();
     let rtc_peer_arc = Arc::new(rtc_peer);
     let rtc_peer_clone = rtc_peer_arc.clone();
 
     tokio::spawn(async move {
-        loop {
-            let msg = {
-                let mut peerjs = peerjs_clone2.lock().await;
-                peerjs.recv_message().await
-            };
-
+        while let Some(msg) = peerjs_rx.recv().await {
             match msg {
-                Ok(ServerMessage::Candidate { payload, .. }) => {
+                ServerMessage::Candidate { payload, .. } => {
                     let candidate = RTCIceCandidateInit {
                         candidate: payload.candidate.candidate,
                         sdp_mid: payload.candidate.sdp_mid,
@@ -199,14 +204,10 @@ async fn transfer_data_webrtc_internal(
                     };
                     let _ = rtc_peer_clone.add_ice_candidate(candidate).await;
                 }
-                Ok(ServerMessage::Heartbeat) => {
-                    let mut peerjs = peerjs_clone2.lock().await;
-                    let _ = peerjs.send_heartbeat().await;
+                ServerMessage::Heartbeat => {
+                    let _ = peerjs_clone2.send_heartbeat().await;
                 }
-                Ok(ServerMessage::Leave { .. }) => {
-                    break;
-                }
-                Err(_) => {
+                ServerMessage::Leave { .. } => {
                     break;
                 }
                 _ => {}
