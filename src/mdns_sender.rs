@@ -155,11 +155,9 @@ async fn transfer_data_internal(
     let port = listener.local_addr()?.port();
     println!("Listening on TCP port {}", port);
 
-    // Get hostname for mDNS
-    let hostname = hostname::get()
-        .map(|h| h.to_string_lossy().to_string())
-        .unwrap_or_else(|_| "wormhole".to_string());
-    let instance_name = format!("wormhole-{}", &transfer_id[..8]);
+    // Generate random hostname for mDNS (don't expose real hostname)
+    let random_host = format!("wormhole-{}", &transfer_id[..8]);
+    let instance_name = random_host.clone();
 
     // Create mDNS service daemon
     let mdns = ServiceDaemon::new().context("Failed to create mDNS daemon")?;
@@ -178,7 +176,7 @@ async fn transfer_data_internal(
     );
 
     // Register service with auto address discovery
-    let my_hostname = format!("{}.local.", hostname);
+    let my_hostname = format!("{}.local.", random_host);
     let service_info = ServiceInfo::new(
         SERVICE_TYPE,
         &instance_name,
