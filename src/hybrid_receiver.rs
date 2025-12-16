@@ -323,7 +323,7 @@ async fn try_webrtc_receive(
             receive_file_impl(&mut message_rx, &header, key, output_dir, &data_channel).await?;
         }
         TransferType::Folder => {
-            receive_folder_impl(&mut message_rx, &header, key, output_dir, &data_channel).await?;
+            receive_folder_impl(message_rx, &header, key, output_dir, &data_channel).await?;
         }
     }
 
@@ -533,7 +533,7 @@ async fn receive_file_impl(
 
 /// Internal implementation for receiving a folder via WebRTC
 async fn receive_folder_impl(
-    message_rx: &mut mpsc::Receiver<Vec<u8>>,
+    message_rx: mpsc::Receiver<Vec<u8>>,
     header: &FileHeader,
     key: &[u8; 32],
     output_dir: Option<PathBuf>,
@@ -556,64 +556,21 @@ async fn receive_folder_impl(
     println!("Extracting to: {}", extract_dir.display());
     print_tar_extraction_info();
 
-    // Collect all chunks first
-    let mut tar_data = Vec::new();
-    let mut bytes_received = 0u64;
-    let total_chunks = num_chunks(header.file_size);
+    // Create streaming reader
+    let runtime_handle = tokio::runtime::Handle::current();
+    let reader = WebRtcStreamingReader::new(message_rx, *key, header.file_size, runtime_handle);
 
-    println!("Receiving {} chunks...", total_chunks);
-
-    while bytes_received < header.file_size {
-        let msg = timeout(Duration::from_secs(30), message_rx.recv())
-            .await
-            .context("Timeout waiting for chunk")?
-            .context("Channel closed")?;
-
-        if msg.is_empty() {
-            continue;
-        }
-
-        match msg[0] {
-            1 => {
-                // Chunk message
-                if msg.len() < 13 {
-                    anyhow::bail!("Chunk message too short");
-                }
-                let chunk_num = u64::from_be_bytes([
-                    msg[1], msg[2], msg[3], msg[4], msg[5], msg[6], msg[7], msg[8],
-                ]);
-                let encrypted_len =
-                    u32::from_be_bytes([msg[9], msg[10], msg[11], msg[12]]) as usize;
-                if msg.len() < 13 + encrypted_len {
-                    anyhow::bail!("Chunk message truncated");
-                }
-                let encrypted_chunk = &msg[13..13 + encrypted_len];
-
-                // Decrypt chunk
-                let chunk = decrypt_chunk(key, chunk_num, encrypted_chunk)?;
-
-                tar_data.extend_from_slice(&chunk);
-                bytes_received += chunk.len() as u64;
-
-                // Progress update
-                if chunk_num % 10 == 0 || bytes_received == header.file_size {
-                    print_progress(bytes_received, header.file_size);
-                }
-            }
-            2 => {
-                // Done message
-                println!("\nTransfer complete signal received");
-                break;
-            }
-            _ => {}
-        }
-    }
-
-    // Extract tar archive
+    // Extract tar archive in a blocking task
     let extract_dir_clone = extract_dir.clone();
+    
+    // We need to keep the reader alive for ACK sending if we wanted to drain it,
+    // but here we just want to extract. We can't easily return the reader from spawn_blocking
+    // and use it back in async context effectively if it consumed the receiver.
+    // Actually, WebRtcStreamingReader owns the receiver.
+    // If extraction finishes successfully, we assume transfer is done.
+    
     let skipped_entries = tokio::task::spawn_blocking(move || {
-        let cursor = std::io::Cursor::new(tar_data);
-        extract_tar_archive(cursor, &extract_dir_clone)
+        extract_tar_archive(reader, &extract_dir_clone)
     })
     .await
     .context("Extraction task panicked")??;
@@ -637,3 +594,106 @@ async fn receive_folder_impl(
 
     Ok(())
 }
+
+/// Adapter to stream chunks from WebRTC channel to std::io::Read
+pub(crate) struct WebRtcStreamingReader {
+    receiver: mpsc::Receiver<Vec<u8>>,
+    key: [u8; 32],
+    buffer: Vec<u8>,
+    buffer_pos: usize,
+    bytes_remaining: u64,
+    runtime_handle: tokio::runtime::Handle,
+}
+
+impl WebRtcStreamingReader {
+    pub(crate) fn new(
+        receiver: mpsc::Receiver<Vec<u8>>,
+        key: [u8; 32],
+        file_size: u64,
+        runtime_handle: tokio::runtime::Handle,
+    ) -> Self {
+        Self {
+            receiver,
+            key,
+            buffer: Vec::new(),
+            buffer_pos: 0,
+            bytes_remaining: file_size,
+            runtime_handle,
+        }
+    }
+}
+
+impl std::io::Read for WebRtcStreamingReader {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        // If buffer is exhausted and there's more data, fetch next chunk
+        if self.buffer_pos >= self.buffer.len() && self.bytes_remaining > 0 {
+            // Block on async receive
+            let msg_result = self.runtime_handle.block_on(async {
+                timeout(Duration::from_secs(30), self.receiver.recv()).await
+            });
+
+            match msg_result {
+                Ok(Some(msg)) => {
+                    if msg.is_empty() {
+                         return Ok(0);
+                    }
+                    
+                    // Parse message
+                    match msg[0] {
+                         1 => {
+                            // Chunk message
+                             if msg.len() < 13 {
+                                return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "Chunk too short"));
+                            }
+                            let chunk_num = u64::from_be_bytes([
+                                msg[1], msg[2], msg[3], msg[4], msg[5], msg[6], msg[7], msg[8],
+                            ]);
+                            let encrypted_len =
+                                u32::from_be_bytes([msg[9], msg[10], msg[11], msg[12]]) as usize;
+                            if msg.len() < 13 + encrypted_len {
+                                return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "Chunk truncated"));
+                            }
+                            let encrypted_chunk = &msg[13..13 + encrypted_len];
+
+                            // Decrypt
+                            match decrypt_chunk(&self.key, chunk_num, encrypted_chunk) {
+                                Ok(chunk) => {
+                                    self.bytes_remaining = self.bytes_remaining.saturating_sub(chunk.len() as u64);
+                                    self.buffer = chunk;
+                                    self.buffer_pos = 0;
+                                }
+                                Err(e) => {
+                                    return Err(std::io::Error::new(std::io::ErrorKind::Other, format!("Decrypt failed: {}", e)));
+                                }
+                            }
+                         },
+                         2 => return Ok(0), // EOF
+                         _ => {
+                             // Ignore other messages, try next
+                             return self.read(buf);
+                         }
+                    }
+                },
+                Ok(None) => return Ok(0), // Channel closed
+                Err(_) => {
+                    return Err(std::io::Error::new(std::io::ErrorKind::TimedOut, "Timeout waiting for chunk"));
+                }
+            }
+        }
+
+        // Return data from buffer
+        if self.buffer_pos >= self.buffer.len() {
+             return Ok(0); // EOF
+        }
+
+        let available = self.buffer.len() - self.buffer_pos;
+        let to_copy = std::cmp::min(available, buf.len());
+        buf[..to_copy].copy_from_slice(&self.buffer[self.buffer_pos..self.buffer_pos + to_copy]);
+        self.buffer_pos += to_copy;
+
+        Ok(to_copy)
+    }
+}
+
+
+

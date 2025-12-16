@@ -10,7 +10,6 @@ use wormhole_rs::{onion_receiver, onion_sender};
 #[cfg(feature = "webrtc")]
 use wormhole_rs::{hybrid_receiver, hybrid_sender::{self, TransferResult}};
 
-#[cfg(feature = "mdns")]
 use wormhole_rs::{mdns_receiver, mdns_sender};
 
 #[derive(Parser)]
@@ -96,7 +95,6 @@ enum SendTransport {
         force_nostr_relay: bool,
     },
 
-    #[cfg(feature = "mdns")]
     /// Send via local network (mDNS discovery, passphrase encryption)
     Mdns {
         /// Path to file or folder
@@ -111,7 +109,6 @@ enum SendTransport {
 /// Receive transport options (only for transports that don't use wormhole codes)
 #[derive(Subcommand)]
 enum ReceiveTransport {
-    #[cfg(feature = "mdns")]
     /// Receive via local network (mDNS discovery)
     Mdns {
         /// Output directory (default: current directory)
@@ -225,7 +222,6 @@ async fn main() -> Result<()> {
                 }
             }
 
-            #[cfg(feature = "mdns")]
             SendTransport::Mdns { path, folder } => {
                 validate_path(&path, folder)?;
                 if folder {
@@ -238,7 +234,6 @@ async fn main() -> Result<()> {
 
         Commands::Receive { transport } => {
             match transport {
-                #[cfg(feature = "mdns")]
                 Some(ReceiveTransport::Mdns { output }) => {
                     validate_output_dir(&output)?;
                     return mdns_receiver::receive_mdns(output).await;
