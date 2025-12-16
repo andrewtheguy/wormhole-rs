@@ -10,6 +10,9 @@ use wormhole_rs::{onion_receiver, onion_sender};
 #[cfg(feature = "webrtc")]
 use wormhole_rs::{hybrid_receiver, hybrid_sender::{self, TransferResult}};
 
+#[cfg(feature = "mdns")]
+use wormhole_rs::{mdns_receiver, mdns_sender};
+
 /// Transport protocol for file transfer
 #[derive(Clone, Debug, ValueEnum)]
 enum Transport {
@@ -21,6 +24,9 @@ enum Transport {
     /// Hybrid: WebRTC with Nostr signaling + relay fallback
     #[cfg(feature = "webrtc")]
     Hybrid,
+    /// mDNS: Local network discovery with passphrase encryption
+    #[cfg(feature = "mdns")]
+    Mdns,
 }
 
 #[derive(Parser)]
@@ -81,6 +87,10 @@ enum Commands {
         /// Custom relay server URLs (for iroh transport)
         #[arg(long)]
         relay_url: Vec<String>,
+
+        /// Transport protocol (only needed for mDNS, others auto-detect from code)
+        #[arg(long, value_enum)]
+        transport: Option<Transport>,
     },
 }
 
@@ -155,15 +165,36 @@ async fn main() -> Result<()> {
                         eprintln!("Note: Transfer may have succeeded but receiver confirmation was not received.");
                     }
                 }
+                #[cfg(feature = "mdns")]
+                Transport::Mdns => {
+                    // Passphrase is auto-generated and displayed to user
+                    if folder {
+                        mdns_sender::send_folder_mdns(&path).await?;
+                    } else {
+                        mdns_sender::send_file_mdns(&path).await?;
+                    }
+                }
             }
         }
 
-        Commands::Receive { code, output, relay_url } => {
+        Commands::Receive { code, output, relay_url, transport } => {
             // Validate output directory if provided
             if let Some(ref dir) = output {
                 if !dir.is_dir() {
                     anyhow::bail!("Output directory does not exist: {}", dir.display());
                 }
+            }
+
+            // Handle mDNS transport separately (no wormhole code needed)
+            #[cfg(feature = "mdns")]
+            if let Some(Transport::Mdns) = transport {
+                return mdns_receiver::receive_mdns(output).await;
+            }
+
+            // Suppress unused variable warning when mdns feature is disabled
+            #[cfg(not(feature = "mdns"))]
+            {
+                let _ = &transport;
             }
 
             // Get code from argument or prompt

@@ -19,6 +19,13 @@ pub mod onion_receiver;
 #[cfg(feature = "onion")]
 pub mod onion_sender;
 
+#[cfg(feature = "mdns")]
+pub mod mdns_common;
+#[cfg(feature = "mdns")]
+pub mod mdns_receiver;
+#[cfg(feature = "mdns")]
+pub mod mdns_sender;
+
 #[cfg(feature = "webrtc")]
 pub mod hybrid_receiver;
 #[cfg(feature = "webrtc")]
