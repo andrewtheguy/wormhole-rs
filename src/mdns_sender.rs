@@ -177,7 +177,7 @@ async fn transfer_data_internal(
         },
     );
 
-    // Register service
+    // Register service with auto address discovery
     let my_hostname = format!("{}.local.", hostname);
     let service_info = ServiceInfo::new(
         SERVICE_TYPE,
@@ -187,7 +187,8 @@ async fn transfer_data_internal(
         port,
         properties,
     )
-    .context("Failed to create service info")?;
+    .context("Failed to create service info")?
+    .enable_addr_auto();
 
     let fullname = service_info.get_fullname().to_string();
     mdns.register(service_info)
