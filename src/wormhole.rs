@@ -11,9 +11,6 @@ pub const PROTOCOL_IROH: &str = "iroh";
 /// Protocol identifier for tor transport
 pub const PROTOCOL_TOR: &str = "tor";
 
-/// Protocol identifier for webrtc transport (deprecated, use hybrid)
-pub const PROTOCOL_WEBRTC: &str = "webrtc";
-
 /// Protocol identifier for hybrid transport (WebRTC + Nostr signaling + relay fallback)
 pub const PROTOCOL_HYBRID: &str = "hybrid";
 
@@ -78,14 +75,6 @@ pub struct WormholeToken {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub onion_address: Option<String>,
 
-    // Version 2 fields (WebRTC-specific):
-    /// PeerJS peer ID for WebRTC signaling
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub webrtc_peer_id: Option<String>,
-    /// Optional custom PeerJS server URL (default: 0.peerjs.com)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub webrtc_server: Option<String>,
-
     // Version 2 fields (Hybrid-specific):
     /// Sender's ephemeral Nostr public key for signaling (hex)
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -130,8 +119,6 @@ pub fn generate_code(
         key: key.map(|k| URL_SAFE_NO_PAD.encode(k)),
         addr: Some(minimal_addr),
         onion_address: None,
-        webrtc_peer_id: None,
-        webrtc_server: None,
         hybrid_sender_pubkey: None,
         hybrid_transfer_id: None,
         hybrid_relays: None,
@@ -168,42 +155,6 @@ pub fn generate_tor_code(
         key: key.map(|k| URL_SAFE_NO_PAD.encode(k)),
         addr: None,
         onion_address: Some(onion_address),
-        webrtc_peer_id: None,
-        webrtc_server: None,
-        hybrid_sender_pubkey: None,
-        hybrid_transfer_id: None,
-        hybrid_relays: None,
-        hybrid_transfer_type: None,
-        hybrid_filename: None,
-    };
-
-    let serialized =
-        serde_json::to_vec(&token).context("Failed to serialize wormhole token")?;
-
-    Ok(URL_SAFE_NO_PAD.encode(&serialized))
-}
-
-/// Generate a wormhole code for WebRTC transfer
-/// Format: base64url(json(WormholeToken))
-///
-/// # Arguments
-/// * `key` - The AES-256-GCM encryption key (always required for WebRTC)
-/// * `peer_id` - PeerJS peer ID for signaling
-/// * `server` - Optional custom PeerJS server URL (None = use default 0.peerjs.com)
-pub fn generate_webrtc_code(
-    key: &[u8; 32],
-    peer_id: String,
-    server: Option<String>,
-) -> Result<String> {
-    let token = WormholeToken {
-        version: CURRENT_VERSION,
-        protocol: PROTOCOL_WEBRTC.to_string(),
-        extra_encrypt: true, // Always true for WebRTC
-        key: Some(URL_SAFE_NO_PAD.encode(key)),
-        addr: None,
-        onion_address: None,
-        webrtc_peer_id: Some(peer_id),
-        webrtc_server: server,
         hybrid_sender_pubkey: None,
         hybrid_transfer_id: None,
         hybrid_relays: None,
@@ -242,8 +193,6 @@ pub fn generate_hybrid_code(
         key: Some(URL_SAFE_NO_PAD.encode(key)),
         addr: None,
         onion_address: None,
-        webrtc_peer_id: None,
-        webrtc_server: None,
         hybrid_sender_pubkey: Some(sender_pubkey),
         hybrid_transfer_id: Some(transfer_id),
         hybrid_relays: relays,
@@ -322,15 +271,13 @@ pub fn parse_code(code: &str) -> Result<WormholeToken> {
     if token.version == 2 {
         if token.protocol != PROTOCOL_IROH
             && token.protocol != PROTOCOL_TOR
-            && token.protocol != PROTOCOL_WEBRTC
             && token.protocol != PROTOCOL_HYBRID
         {
             anyhow::bail!(
-                "Invalid protocol '{}' in v2 token. Supported protocols: '{}', '{}', '{}', '{}'",
+                "Invalid protocol '{}' in v2 token. Supported protocols: '{}', '{}', '{}'",
                 token.protocol,
                 PROTOCOL_IROH,
                 PROTOCOL_TOR,
-                PROTOCOL_WEBRTC,
                 PROTOCOL_HYBRID
             );
         }
@@ -368,16 +315,6 @@ pub fn parse_code(code: &str) -> Result<WormholeToken> {
     if token.version == 2 && token.protocol == PROTOCOL_TOR {
         if token.onion_address.is_none() {
             anyhow::bail!("Invalid v2 tor token: missing onion address");
-        }
-    }
-
-    // For version 2 with webrtc protocol, ensure webrtc_peer_id and key are present
-    if token.version == 2 && token.protocol == PROTOCOL_WEBRTC {
-        if token.webrtc_peer_id.is_none() {
-            anyhow::bail!("Invalid v2 webrtc token: missing peer ID");
-        }
-        if token.key.is_none() {
-            anyhow::bail!("Invalid v2 webrtc token: encryption key required for WebRTC transfers");
         }
     }
 
