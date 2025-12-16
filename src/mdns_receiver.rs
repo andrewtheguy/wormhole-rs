@@ -134,11 +134,18 @@ pub async fn receive_mdns(output_dir: Option<PathBuf>) -> Result<()> {
                         if is_new {
                             let addrs: Vec<_> = service_info.addresses.iter().map(|a| a.to_string()).collect();
                             let addr_str = if addrs.is_empty() { "discovering...".to_string() } else { addrs.join(", ") };
+                            // For folders, show the original folder name (strip .tar extension)
+                            let display_name = if service_info.transfer_type == "folder" {
+                                service_info.filename.strip_suffix(".tar").unwrap_or(&service_info.filename)
+                            } else {
+                                &service_info.filename
+                            };
                             println!(
-                                "Found sender: {} ({}) - {} ({})",
+                                "Found sender: {} ({}) - {} ({}, {})",
                                 service_info.hostname.trim_end_matches('.'),
                                 addr_str,
-                                service_info.filename,
+                                display_name,
+                                service_info.transfer_type,
                                 format_bytes(service_info.file_size)
                             );
                         }
@@ -172,10 +179,16 @@ pub async fn receive_mdns(output_dir: Option<PathBuf>) -> Result<()> {
     for (i, service) in service_list.iter().enumerate() {
         let addrs: Vec<_> = service.addresses.iter().map(|a| a.to_string()).collect();
         let addr_str = if addrs.is_empty() { "no routable addr".to_string() } else { addrs.join(", ") };
+        // For folders, show the original folder name (strip .tar extension)
+        let display_name = if service.transfer_type == "folder" {
+            service.filename.strip_suffix(".tar").unwrap_or(&service.filename)
+        } else {
+            &service.filename
+        };
         println!(
             "[{}] {} - {} ({}) from {} ({})",
             i + 1,
-            service.filename,
+            display_name,
             format_bytes(service.file_size),
             service.transfer_type,
             service.hostname.trim_end_matches('.'),

@@ -124,9 +124,10 @@ pub async fn send_folder_mdns(folder_path: &Path) -> Result<()> {
     setup_cleanup_handler(cleanup_path.clone());
 
     println!(
-        "Archive created: {} ({})",
+        "Archive created: {} ({}) from {}",
         tar_filename,
-        format_bytes(file_size)
+        format_bytes(file_size),
+        folder_path.display()
     );
 
     // Generate random passphrase
