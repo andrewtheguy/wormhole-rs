@@ -16,7 +16,7 @@ use crate::nostr_protocol::{
 use crate::transfer::format_bytes;
 use crate::wormhole::generate_nostr_code;
 
-const COMPLETION_ACK_TIMEOUT_SECS: u64 = 120; // Longer timeout for completion ACK
+const COMPLETION_ACK_TIMEOUT_SECS: u64 = 60; // Match secure-send-web timeout
 const MIN_RELAYS_REQUIRED: usize = 2;
 const SUBSCRIPTION_SETUP_DELAY_SECS: u64 = 3; // Wait for subscription to propagate
 
