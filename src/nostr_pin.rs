@@ -14,7 +14,7 @@ use anyhow::{Context, Result};
 use argon2::{Argon2, Params, Version};
 use base64::{engine::general_purpose::STANDARD, Engine};
 use nostr_sdk::prelude::*;
-use rand::RngCore;
+use rand::{Rng, RngCore};
 use sha2::{Digest, Sha256};
 
 /// PIN length (8 characters)
@@ -54,7 +54,7 @@ pub fn generate_pin() -> String {
 
     (0..PIN_LENGTH)
         .map(|_| {
-            let idx = (rng.next_u32() as usize) % charset_len;
+            let idx = rng.gen_range(0..charset_len);
             PIN_CHARSET[idx] as char
         })
         .collect()

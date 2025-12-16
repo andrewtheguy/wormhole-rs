@@ -441,11 +441,16 @@ pub async fn receive_file_nostr(
 /// proceeds with the normal file transfer.
 pub async fn receive_with_pin(output_dir: Option<PathBuf>) -> Result<()> {
     // Prompt for PIN input (visible, not masked)
-    print!("Enter PIN: ");
-    std::io::stdout().flush()?;
-    let mut pin = String::new();
-    std::io::stdin().read_line(&mut pin)?;
-    let pin = pin.trim();
+    // Use spawn_blocking to avoid stalling the Tokio worker
+    let pin = tokio::task::spawn_blocking(|| {
+        print!("Enter PIN: ");
+        std::io::stdout().flush()?;
+        let mut input = String::new();
+        std::io::stdin().read_line(&mut input)?;
+        Ok::<String, std::io::Error>(input.trim().to_string())
+    })
+    .await
+    .context("PIN input task panicked")??;
 
     // Validate PIN format
     if pin.len() != PIN_LENGTH {
@@ -459,7 +464,7 @@ pub async fn receive_with_pin(output_dir: Option<PathBuf>) -> Result<()> {
     println!("\n🔢 Using PIN: {}", pin);
 
     // Compute PIN hint for filtering
-    let pin_hint = compute_pin_hint(pin);
+    let pin_hint = compute_pin_hint(&pin);
     println!("🔍 Searching for PIN exchange event...");
 
     // Connect to bridge relays
@@ -501,7 +506,7 @@ pub async fn receive_with_pin(output_dir: Option<PathBuf>) -> Result<()> {
         match parse_pin_exchange_event(event) {
             Ok((encrypted, salt)) => {
                 println!("🔑 Deriving decryption key from PIN (this may take a moment)...");
-                match decrypt_wormhole_code(&encrypted, pin, &salt) {
+                match decrypt_wormhole_code(&encrypted, &pin, &salt) {
                     Ok(code) => {
                         println!("✅ Found and decrypted wormhole code!");
                         wormhole_code = Some(code);
