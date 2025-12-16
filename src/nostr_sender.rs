@@ -148,10 +148,20 @@ async fn transfer_data_nostr_internal(
         println!("\n🔑 Deriving encryption key from PIN (this may take a moment)...");
         let pin_event = create_pin_exchange_event(&sender_keys, &code, &transfer_id, &pin)?;
 
-        client
+        // Publish PIN exchange event to bridge relays (same relays receiver will query)
+        let bridge_client = Client::new(sender_keys.clone());
+        for relay in DEFAULT_NOSTR_RELAYS {
+            let _ = bridge_client.add_relay(relay.to_string()).await;
+        }
+        bridge_client.connect().await;
+        tokio::time::sleep(Duration::from_secs(2)).await;
+
+        bridge_client
             .send_event(&pin_event)
             .await
-            .context("Failed to publish PIN exchange event")?;
+            .context("Failed to publish PIN exchange event to bridge relays")?;
+
+        bridge_client.disconnect().await;
 
         println!("\n🔢 PIN Code: {}\n", pin);
         println!("On the receiving end, run:");
