@@ -6,7 +6,7 @@
 
 use anyhow::{Context, Result};
 use mdns_sd::{ServiceDaemon, ServiceEvent};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::net::IpAddr;
 use std::path::PathBuf;
@@ -28,48 +28,6 @@ use crate::transfer::{format_bytes, num_chunks, recv_encrypted_chunk, recv_encry
 
 /// Timeout for mDNS browsing (seconds)
 const BROWSE_TIMEOUT_SECS: u64 = 30;
-
-/// Check if an IP address is link-local (not routable without scope).
-fn is_link_local(addr: &IpAddr) -> bool {
-    match addr {
-        IpAddr::V4(ip) => ip.is_link_local(), // 169.254.x.x
-        IpAddr::V6(ip) => {
-            // fe80::/10 - link-local
-            let segments = ip.segments();
-            (segments[0] & 0xffc0) == 0xfe80
-        }
-    }
-}
-
-/// Select the best address from a list, preferring:
-/// 1. Non-link-local IPv4
-/// 2. Non-link-local IPv6
-/// 3. Link-local IPv4 (last resort)
-/// 4. Never use link-local IPv6 (requires scope ID)
-fn select_best_address(addresses: &[IpAddr]) -> Option<IpAddr> {
-    let mut non_link_local_v4: Option<IpAddr> = None;
-    let mut non_link_local_v6: Option<IpAddr> = None;
-    let mut link_local_v4: Option<IpAddr> = None;
-
-    for addr in addresses {
-        if is_link_local(addr) {
-            // Only consider link-local IPv4 as fallback
-            if addr.is_ipv4() && link_local_v4.is_none() {
-                link_local_v4 = Some(*addr);
-            }
-            // Skip link-local IPv6 entirely (requires scope ID)
-        } else if addr.is_ipv4() {
-            non_link_local_v4 = Some(*addr);
-        } else {
-            non_link_local_v6 = Some(*addr);
-        }
-    }
-
-    // Priority: non-link-local IPv4 > non-link-local IPv6 > link-local IPv4
-    non_link_local_v4
-        .or(non_link_local_v6)
-        .or(link_local_v4)
-}
 
 /// Shared state for temp file cleanup on interrupt
 type TempFileCleanup = Arc<Mutex<Option<PathBuf>>>;
@@ -153,6 +111,17 @@ pub async fn receive_mdns(output_dir: Option<PathBuf>) -> Result<()> {
                         .map(|v| v.val_str().to_string())
                         .unwrap_or_else(|| "file".to_string());
 
+                    // Filter and deduplicate addresses: prefer IPv4 and non-link-local IPv6
+                    let all_addrs: Vec<IpAddr> = info.get_addresses().iter().map(|s| s.to_ip_addr()).collect();
+                    let filtered: HashSet<IpAddr> = all_addrs
+                        .into_iter()
+                        .filter(|addr| match addr {
+                            IpAddr::V4(_) => true,
+                            IpAddr::V6(v6) => !v6.is_unicast_link_local() && !v6.is_loopback(),
+                        })
+                        .collect();
+                    let addresses: Vec<IpAddr> = filtered.into_iter().collect();
+
                     let service_info = MdnsServiceInfo {
                         instance_name: info.get_fullname().to_string(),
                         hostname: info.get_hostname().to_string(),
@@ -161,21 +130,37 @@ pub async fn receive_mdns(output_dir: Option<PathBuf>) -> Result<()> {
                         filename,
                         file_size,
                         transfer_type,
-                        addresses: info.get_addresses().iter().map(|s| s.to_ip_addr()).collect(),
+                        addresses,
                     };
 
-                    if !transfer_id.is_empty() && !services.contains_key(&transfer_id) {
-                        // Select best address for display
-                        let display_addr = select_best_address(&service_info.addresses)
-                            .map(|a| a.to_string())
-                            .unwrap_or_else(|| "no address".to_string());
-                        println!(
-                            "Found sender: {} ({}) - {} ({})",
-                            service_info.hostname.trim_end_matches('.'),
-                            display_addr,
-                            service_info.filename,
-                            format_bytes(service_info.file_size)
-                        );
+                    if !transfer_id.is_empty() {
+                        let is_new = !services.contains_key(&transfer_id);
+
+                        // Merge addresses with existing if already known
+                        let final_addresses = if let Some(existing) = services.get(&transfer_id) {
+                            let mut merged: HashSet<IpAddr> = existing.addresses.iter().cloned().collect();
+                            merged.extend(service_info.addresses.iter().cloned());
+                            merged.into_iter().collect()
+                        } else {
+                            service_info.addresses.clone()
+                        };
+
+                        let service_info = MdnsServiceInfo {
+                            addresses: final_addresses,
+                            ..service_info
+                        };
+
+                        if is_new {
+                            let addrs: Vec<_> = service_info.addresses.iter().map(|a| a.to_string()).collect();
+                            let addr_str = if addrs.is_empty() { "discovering...".to_string() } else { addrs.join(", ") };
+                            println!(
+                                "Found sender: {} ({}) - {} ({})",
+                                service_info.hostname.trim_end_matches('.'),
+                                addr_str,
+                                service_info.filename,
+                                format_bytes(service_info.file_size)
+                            );
+                        }
                         services.insert(transfer_id, service_info);
                     }
                 }
@@ -207,9 +192,8 @@ pub async fn receive_mdns(output_dir: Option<PathBuf>) -> Result<()> {
     println!("\n--- Available Senders ---");
     let service_list: Vec<_> = services.values().collect();
     for (i, service) in service_list.iter().enumerate() {
-        let display_addr = select_best_address(&service.addresses)
-            .map(|a| a.to_string())
-            .unwrap_or_else(|| "no address".to_string());
+        let addrs: Vec<_> = service.addresses.iter().map(|a| a.to_string()).collect();
+        let addr_str = if addrs.is_empty() { "no routable addr".to_string() } else { addrs.join(", ") };
         println!(
             "[{}] {} - {} ({}) from {} ({})",
             i + 1,
@@ -217,7 +201,7 @@ pub async fn receive_mdns(output_dir: Option<PathBuf>) -> Result<()> {
             format_bytes(service.file_size),
             service.transfer_type,
             service.hostname.trim_end_matches('.'),
-            display_addr,
+            addr_str,
         );
     }
 
@@ -234,10 +218,12 @@ pub async fn receive_mdns(output_dir: Option<PathBuf>) -> Result<()> {
     println!("Deriving encryption key...");
     let key = derive_key_from_passphrase(&passphrase)?;
 
-    // Connect to sender - prefer non-link-local addresses, IPv4 over IPv6
-    let addr = select_best_address(&selected.addresses)
-        .context("No usable addresses found for sender")?;
-    let socket_addr = std::net::SocketAddr::new(addr, selected.port);
+    // Connect to sender
+    let addr = selected
+        .addresses
+        .first()
+        .context("No addresses found for sender")?;
+    let socket_addr = std::net::SocketAddr::new(*addr, selected.port);
 
     println!("Connecting to {}...", socket_addr);
     let stream = TcpStream::connect(socket_addr)
