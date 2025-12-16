@@ -20,6 +20,7 @@ use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 
 use crate::crypto::{encrypt_chunk, generate_key, CHUNK_SIZE};
 use crate::folder::{create_tar_archive, print_tar_creation_info};
+use crate::nostr_protocol::MAX_NOSTR_FILE_SIZE;
 use crate::nostr_sender;
 use crate::nostr_signaling::{create_sender_signaling, NostrSignaling, SignalingMessage};
 use crate::transfer::{format_bytes, num_chunks, FileHeader, TransferType};
@@ -384,6 +385,16 @@ async fn transfer_data_hybrid_internal(
     // If force relay mode, we need to set up signaling just for credentials
     // then immediately use relay mode
     if force_relay {
+        // Check file size limit for relay mode BEFORE generating wormhole code
+        if file_size > MAX_NOSTR_FILE_SIZE {
+            anyhow::bail!(
+                "File size ({}) exceeds Nostr relay limit ({}).\n\
+                 Remove --force-relay to use WebRTC for larger files.",
+                format_bytes(file_size),
+                format_bytes(MAX_NOSTR_FILE_SIZE)
+            );
+        }
+
         println!("Force relay mode enabled, using Nostr relay transport");
 
         // Create signaling to get credentials
