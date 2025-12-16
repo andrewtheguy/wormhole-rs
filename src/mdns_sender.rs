@@ -210,15 +210,48 @@ async fn transfer_data_internal(
     listener.set_nonblocking(true)?;
     let listener = tokio::net::TcpListener::from_std(listener)?;
 
-    let (stream, peer_addr) = listener
-        .accept()
-        .await
-        .context("Failed to accept connection")?;
+    // Loop to handle invalid connections gracefully
+    loop {
+        let (mut stream, peer_addr) = listener
+            .accept()
+            .await
+            .context("Failed to accept connection")?;
 
-    println!("Receiver connected from: {}", peer_addr);
+        println!("Connection from: {}", peer_addr);
 
-    // Send data over TCP
-    send_data_over_tcp(stream, &mut file, filename, file_size, transfer_type, &key).await?;
+        // Wait for receiver handshake: "WORMHOLE:<transfer_id>"
+        let expected_handshake = format!("WORMHOLE:{}", transfer_id);
+        let mut handshake_buf = vec![0u8; expected_handshake.len()];
+
+        use tokio::io::AsyncReadExt;
+        use tokio::time::timeout;
+
+        // Wait up to 10 seconds for handshake
+        let handshake_result = timeout(
+            std::time::Duration::from_secs(10),
+            stream.read_exact(&mut handshake_buf)
+        ).await;
+
+        match handshake_result {
+            Ok(Ok(_)) => {
+                if handshake_buf == expected_handshake.as_bytes() {
+                    println!("Receiver authenticated from: {}", peer_addr);
+                    // Send data over TCP
+                    send_data_over_tcp(stream, &mut file, filename.clone(), file_size, transfer_type, &key).await?;
+                    break;
+                } else {
+                    println!("Invalid handshake from {}, closing connection", peer_addr);
+                    drop(stream);
+                    continue;
+                }
+            }
+            Ok(Err(_)) | Err(_) => {
+                println!("Handshake timeout/error from {}, closing connection", peer_addr);
+                drop(stream);
+                continue;
+            }
+        }
+    }
 
     // Unregister service
     let _ = mdns.unregister(&fullname);

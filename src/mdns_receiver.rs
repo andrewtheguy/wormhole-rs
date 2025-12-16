@@ -204,11 +204,17 @@ pub async fn receive_mdns(output_dir: Option<PathBuf>) -> Result<()> {
     let socket_addr = std::net::SocketAddr::new(*addr, selected.port);
 
     println!("Connecting to {}...", socket_addr);
-    let stream = TcpStream::connect(socket_addr)
+    let mut stream = TcpStream::connect(socket_addr)
         .await
         .context("Failed to connect to sender")?;
 
     println!("Connected!");
+
+    // Send handshake: "WORMHOLE:<transfer_id>"
+    let handshake = format!("WORMHOLE:{}", selected.transfer_id);
+    use tokio::io::AsyncWriteExt;
+    stream.write_all(handshake.as_bytes()).await
+        .context("Failed to send handshake")?;
 
     // Receive file
     receive_data_over_tcp(stream, &key, output_dir).await
