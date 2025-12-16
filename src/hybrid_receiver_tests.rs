@@ -53,7 +53,7 @@ async fn test_webrtc_streaming_reader_multi_chunk() -> Result<()> {
     
     // precise chunk size + 10 bytes
     let size = CHUNK_SIZE + 10;
-    let file_data: Vec<u8> = (0..size).map(|i| (i % 255) as u8).collect();
+    let file_data: Vec<u8> = (0..size).map(|i| (i % 256) as u8).collect();
     let file_size = file_data.len() as u64;
 
     // Spawn sender
