@@ -16,8 +16,7 @@ use crate::nostr_protocol::{
 use crate::transfer::format_bytes;
 use crate::wormhole::generate_nostr_code;
 
-const ACK_TIMEOUT_SECS: u64 = 30; // Increased from 10s to 30s for better reliability
-const MAX_RETRIES: u32 = 3;
+const COMPLETION_ACK_TIMEOUT_SECS: u64 = 120; // Longer timeout for completion ACK
 const MIN_RELAYS_REQUIRED: usize = 2;
 const SUBSCRIPTION_SETUP_DELAY_SECS: u64 = 3; // Wait for subscription to propagate
 
@@ -249,58 +248,19 @@ async fn transfer_data_nostr_internal(
         let encrypted_chunk =
             encrypt_chunk(&encryption_key, seq as u64, chunk_data).context("Failed to encrypt chunk")?;
 
-        // Try sending chunk with retries
-        let mut attempt = 0;
-        let mut ack_received = false;
+        // Create and publish chunk event (fire-and-forget, no per-chunk ACK)
+        let chunk_event = create_chunk_event(
+            &sender_keys,
+            &transfer_id,
+            seq,
+            total_chunks,
+            &encrypted_chunk,
+        )?;
 
-        while attempt < MAX_RETRIES && !ack_received {
-            attempt += 1;
-
-            // Create and publish chunk event
-            let chunk_event = create_chunk_event(
-                &sender_keys,
-                &transfer_id,
-                seq,
-                total_chunks,
-                &encrypted_chunk,
-            )?;
-
-            client
-                .send_event(&chunk_event)
-                .await
-                .context("Failed to send chunk event")?;
-
-            // Wait for ACK
-            let ack_deadline = tokio::time::Instant::now() + Duration::from_secs(ACK_TIMEOUT_SECS);
-
-            while tokio::time::Instant::now() < ack_deadline {
-                match timeout(Duration::from_secs(1), notifications.recv()).await {
-                    Ok(Ok(RelayPoolNotification::Event { event, .. })) => {
-                        if is_ack_event(&event)
-                            && get_transfer_id(&event).as_deref() == Some(&transfer_id)
-                        {
-                            if let Ok(ack_seq) = parse_ack_event(&event) {
-                                if ack_seq == seq as i32 {
-                                    ack_received = true;
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                    Ok(Ok(_)) => continue,
-                    Ok(Err(_)) => break,
-                    Err(_) => continue,
-                }
-            }
-
-            if !ack_received && attempt < MAX_RETRIES {
-                eprintln!("⚠️  Chunk {} ACK timeout, retrying ({}/{})", seq, attempt, MAX_RETRIES);
-            }
-        }
-
-        if !ack_received {
-            anyhow::bail!("❌ Chunk {} failed after {} retries", seq, MAX_RETRIES);
-        }
+        client
+            .send_event(&chunk_event)
+            .await
+            .context("Failed to send chunk event")?;
 
         bytes_sent += bytes_read as u64;
 
@@ -319,7 +279,7 @@ async fn transfer_data_nostr_internal(
             total_chunks
         );
 
-        // Small delay between chunks
+        // Small delay between chunks to avoid overwhelming relays
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
 
@@ -327,7 +287,7 @@ async fn transfer_data_nostr_internal(
 
     // Wait for final completion ACK
     println!("⏳ Waiting for receiver to confirm completion...");
-    let final_ack_timeout = Duration::from_secs(30);
+    let final_ack_timeout = Duration::from_secs(COMPLETION_ACK_TIMEOUT_SECS);
     let final_ack_deadline = tokio::time::Instant::now() + final_ack_timeout;
     let mut final_ack_received = false;
 

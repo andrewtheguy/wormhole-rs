@@ -23,7 +23,7 @@ use crate::nostr_protocol::{
 use crate::transfer::format_bytes;
 use crate::wormhole::{parse_code, PROTOCOL_NOSTR};
 
-const CHUNK_RECEIVE_TIMEOUT_SECS: u64 = 60;
+const CHUNK_RECEIVE_TIMEOUT_SECS: u64 = 300; // 5 minutes to allow for slow/unreliable relays
 const MIN_RELAYS_REQUIRED: usize = 2;
 const SUBSCRIPTION_SETUP_DELAY_SECS: u64 = 3; // Wait for subscription to propagate
 
@@ -272,14 +272,9 @@ pub async fn receive_file_nostr(
                             continue; // Duplicate, ignore
                         }
 
-                        // Store encrypted chunk
+                        // Store encrypted chunk (no per-chunk ACK, fire-and-forget from sender)
                         received_chunks.insert(seq, encrypted_chunk);
                         last_chunk_time = tokio::time::Instant::now();
-
-                        // Send ACK for this chunk
-                        let ack_event =
-                            create_ack_event(&receiver_keys, &sender_pubkey, &transfer_id, seq as i32)?;
-                        client.send_event(&ack_event).await?;
 
                         // Progress update for every chunk
                         let progress = (received_chunks.len() as f64 / total as f64 * 100.0) as u32;
