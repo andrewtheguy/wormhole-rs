@@ -13,10 +13,6 @@ pub(crate) mod nostr_receiver;
 #[cfg(feature = "webrtc")]
 pub(crate) mod nostr_sender;
 
-// nostr_pin is no longer used (was for standalone nostr transport)
-#[cfg(feature = "webrtc")]
-#[allow(dead_code)]
-mod nostr_pin;
 
 #[cfg(feature = "onion")]
 pub mod onion_receiver;
