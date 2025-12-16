@@ -83,17 +83,16 @@ sequenceDiagram
 
     Relays->>Sender: 9. Forward ready ACK
 
-    loop For each 16KB chunk
+    loop For each 16KB chunk (fire-and-forget)
         Sender->>Sender: Encrypt with AES-256-GCM
         Sender->>Relays: Publish chunk event (kind 24242)
         Relays->>Receiver: Forward chunk event
-        Receiver->>Receiver: Decrypt chunk
-        Receiver->>Relays: Send ACK event
-        Relays->>Sender: Forward ACK
-        Note over Sender: Retry if no ACK (up to 3 times)
+        Receiver->>Receiver: Store chunk
+        Note over Sender: 100ms delay between chunks
     end
 
-    Receiver->>Relays: 10. Send completion ACK (seq=-1)
+    Receiver->>Receiver: 10. Decrypt all chunks
+    Receiver->>Relays: 11. Send completion ACK (seq=-1)
     Relays->>Sender: Forward completion ACK
 ```
 
@@ -367,10 +366,9 @@ PIN-based wormhole code exchange for Nostr:
 4. Generates AES-256 key (always required)
 5. Connects to Nostr relays (from API, custom, or defaults)
 6. Generates wormhole code with Nostr metadata (including transfer_type)
-7. Waits for receiver ready signal (ACK seq=0)
-8. Sends encrypted chunks as Nostr events
-9. Waits for ACK after each chunk (30s timeout, 3 retries)
-10. Waits for completion ACK (seq=-1)
+7. Waits for receiver ready signal (ACK seq=0, 5 min timeout)
+8. Sends encrypted chunks as Nostr events (fire-and-forget, 100ms delay)
+9. Waits for completion ACK (seq=-1, 60s timeout)
 
 ### `nostr_receiver.rs` (Nostr mode)
 1. Parses wormhole code for Nostr metadata
@@ -378,13 +376,12 @@ PIN-based wormhole code exchange for Nostr:
 3. Connects to relays (discovers via NIP-65 or uses embedded list)
 4. Subscribes to chunk events (filter by transfer_id and sender pubkey)
 5. Sends ready ACK (seq=0)
-6. Collects chunks into HashMap by sequence number
-7. Sends ACK for each received chunk
-8. Decrypts chunks with AES-256-GCM
-9. Checks `nostr_transfer_type` field
-10. For files: writes to output file atomically
-11. For folders: extracts tar archive using `folder.rs`
-12. Sends completion ACK (seq=-1)
+6. Collects chunks into HashMap by sequence number (5 min timeout)
+7. Decrypts all chunks with AES-256-GCM
+8. Checks `nostr_transfer_type` field
+9. For files: writes to output file atomically
+10. For folders: extracts tar archive using `folder.rs`
+11. Sends completion ACK (seq=-1)
 
 ### `onion_sender.rs` (Tor mode, requires `onion` feature)
 1. For folders: creates tar archive using `folder.rs`
