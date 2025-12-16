@@ -18,7 +18,8 @@ use tokio::net::TcpStream;
 use tokio::sync::Mutex;
 
 use crate::folder::{
-    extract_tar_archive, get_extraction_dir, print_skipped_entries, print_tar_extraction_info,
+    extract_tar_archive_returning_reader, get_extraction_dir, print_skipped_entries,
+    print_tar_extraction_info, StreamingReader,
 };
 use crate::mdns_common::{
     derive_key_from_passphrase, MdnsServiceInfo, SERVICE_TYPE, TXT_FILENAME, TXT_FILE_SIZE,
@@ -257,18 +258,21 @@ async fn receive_data_over_tcp(
     );
 
     // Dispatch based on transfer type
-    match header.transfer_type {
+    let stream = match header.transfer_type {
         TransferType::File => {
             receive_file_impl(&mut stream, &header.filename, header.file_size, key, output_dir)
                 .await?;
+            stream
         }
         TransferType::Folder => {
-            receive_folder_impl(&mut stream, &header.filename, header.file_size, key, output_dir)
-                .await?;
+            // Folder impl takes ownership and returns stream after extraction
+            receive_folder_impl(stream, &header.filename, header.file_size, key, output_dir)
+                .await?
         }
-    }
+    };
 
     // Send ACK
+    let mut stream = stream;
     stream
         .write_all(b"ACK")
         .await
@@ -279,7 +283,7 @@ async fn receive_data_over_tcp(
     Ok(())
 }
 
-/// Receive a file implementation.
+/// Receive a file implementation (streams directly to disk).
 async fn receive_file_impl(
     stream: &mut TcpStream,
     filename: &str,
@@ -300,18 +304,15 @@ async fn receive_file_impl(
     }
 
     // Create temp file
-    let temp_file = NamedTempFile::new_in(&output_dir).context("Failed to create temp file")?;
+    let mut temp_file = NamedTempFile::new_in(&output_dir).context("Failed to create temp file")?;
     let temp_path = temp_file.path().to_path_buf();
     let cleanup_path: TempFileCleanup = Arc::new(Mutex::new(Some(temp_path.clone())));
     setup_file_cleanup_handler(cleanup_path.clone());
 
-    // Receive chunks
+    // Receive chunks and write directly to file (streaming)
     let total_chunks = num_chunks(file_size);
     let mut chunk_num = 1u64;
     let mut bytes_received = 0u64;
-
-    // Collect chunks to a buffer, then write to file
-    let mut all_data = Vec::with_capacity(file_size as usize);
 
     println!("Receiving {} chunks...", total_chunks);
 
@@ -321,7 +322,11 @@ async fn receive_file_impl(
             .await
             .context("Failed to receive chunk - wrong passphrase?")?;
 
-        all_data.extend_from_slice(&chunk);
+        // Write directly to temp file (streaming, not buffering)
+        temp_file
+            .write_all(&chunk)
+            .context("Failed to write to file")?;
+
         chunk_num += 1;
         bytes_received += chunk.len() as u64;
 
@@ -342,19 +347,14 @@ async fn receive_file_impl(
         }
     }
 
-    // Write to temp file
-    let temp_path_clone = temp_path.clone();
-    let output_path_clone = output_path.clone();
-    tokio::task::spawn_blocking(move || -> Result<()> {
-        std::fs::write(&temp_path_clone, &all_data)?;
-        std::fs::rename(&temp_path_clone, &output_path_clone)?;
-        Ok(())
-    })
-    .await
-    .context("Failed to spawn blocking task")??;
-
-    // Clear cleanup
+    // Clear cleanup before persist
     cleanup_path.lock().await.take();
+
+    // Flush and persist temp file to final path
+    temp_file.flush().context("Failed to flush file")?;
+    temp_file
+        .persist(&output_path)
+        .map_err(|e| anyhow::anyhow!("Failed to persist temp file: {}", e))?;
 
     println!("\nFile received successfully!");
     println!("Saved to: {}", output_path.display());
@@ -362,14 +362,15 @@ async fn receive_file_impl(
     Ok(())
 }
 
-/// Receive a folder implementation.
+/// Receive a folder implementation (streams directly to tar extractor).
+/// Takes ownership of stream and returns it after extraction for ACK.
 async fn receive_folder_impl(
-    stream: &mut TcpStream,
+    stream: TcpStream,
     filename: &str,
     file_size: u64,
     key: &[u8; 32],
     output_dir: Option<PathBuf>,
-) -> Result<()> {
+) -> Result<TcpStream> {
     println!(
         "Receiving folder archive: {} ({})",
         filename,
@@ -385,47 +386,25 @@ async fn receive_folder_impl(
     println!("Extracting to: {}", extract_dir.display());
     print_tar_extraction_info();
 
-    // Collect all data
-    let mut tar_data = Vec::with_capacity(file_size as usize);
-    let mut chunk_num = 1u64;
-    let mut bytes_received = 0u64;
     let total_chunks = num_chunks(file_size);
+    println!("Receiving {} chunks (streaming to extractor)...", total_chunks);
 
-    println!("Receiving {} chunks...", total_chunks);
+    // Get runtime handle for blocking in StreamingReader
+    let runtime_handle = tokio::runtime::Handle::current();
 
-    while bytes_received < file_size {
-        let chunk = recv_encrypted_chunk(stream, key, chunk_num)
-            .await
-            .context("Failed to receive chunk")?;
+    // Create streaming reader that feeds tar extractor directly
+    let reader = StreamingReader::new(stream, Some(*key), file_size, runtime_handle);
 
-        tar_data.extend_from_slice(&chunk);
-        chunk_num += 1;
-        bytes_received += chunk.len() as u64;
-
-        if chunk_num % 10 == 0 || bytes_received == file_size {
-            let percent = if file_size == 0 {
-                100
-            } else {
-                (bytes_received as f64 / file_size as f64 * 100.0) as u32
-            };
-            print!(
-                "\r   Progress: {}% ({}/{})",
-                percent,
-                format_bytes(bytes_received),
-                format_bytes(file_size)
-            );
-            let _ = std::io::stdout().flush();
-        }
-    }
-
-    // Extract
+    // Run tar extraction in blocking context, returning reader for ACK
     let extract_dir_clone = extract_dir.clone();
-    let skipped = tokio::task::spawn_blocking(move || {
-        let cursor = std::io::Cursor::new(tar_data);
-        extract_tar_archive(cursor, &extract_dir_clone)
+    let (skipped, reader) = tokio::task::spawn_blocking(move || {
+        extract_tar_archive_returning_reader(reader, &extract_dir_clone)
     })
     .await
-    .context("Failed to spawn blocking task")??;
+    .context("Extraction task panicked")??;
+
+    // Get stream back from reader
+    let stream = reader.into_inner();
 
     print_skipped_entries(&skipped);
     cleanup_path.lock().await.take();
@@ -433,7 +412,7 @@ async fn receive_folder_impl(
     println!("\nFolder received successfully!");
     println!("Extracted to: {}", extract_dir.display());
 
-    Ok(())
+    Ok(stream)
 }
 
 /// Prompt user to select a sender.
