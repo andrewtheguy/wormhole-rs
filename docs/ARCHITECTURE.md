@@ -349,40 +349,19 @@ Nostr protocol implementation:
 - `get_best_relays()` - Fetch from nostr.watch API or use defaults
 - Constants: `NOSTR_CHUNK_SIZE = 16KB`, `DEFAULT_NOSTR_RELAYS`
 
-### `nostr_pin.rs` (Nostr PIN mode)
-PIN-based wormhole code exchange for Nostr:
-- `generate_pin()` - Generate random 8-character PIN from unambiguous charset
-- `compute_pin_hint()` - SHA256 prefix for event filtering
-- `derive_key_from_pin()` - Argon2id key derivation (64 MiB, 3 iterations)
-- `encrypt_wormhole_code()` / `decrypt_wormhole_code()` - AES-256-GCM
-- `create_pin_exchange_event()` - Build kind 24243 event
-- `parse_pin_exchange_event()` - Extract encrypted data and salt
-- Constants: `PIN_LENGTH = 8`, `PIN_EXCHANGE_KIND = 24243`
+### `nostr_sender.rs` (Hybrid fallback, internal)
+Relay-based file transfer when WebRTC direct connection fails:
+- `send_relay_fallback()` - Uses existing credentials from hybrid signaling
+- Validates file size ≤ 512KB for relay mode
+- Sends chunks concurrently (5 in-flight)
+- Waits for receiver ready signal and completion ACK
 
-### `nostr_sender.rs` (Nostr mode)
-1. Validates file/folder size ≤ 512KB (for folders: tar archive size)
-2. For folders: creates tar archive using `folder.rs`
-3. Generates ephemeral Nostr keypair
-4. Generates AES-256 key (always required)
-5. Connects to Nostr relays (from API, custom, or defaults)
-6. Generates wormhole code with Nostr metadata (including transfer_type)
-7. Waits for receiver ready signal (ACK seq=0, 5 min timeout)
-8. Reads all data and encrypts chunks upfront
-9. Sends chunks concurrently (5 in-flight, fire-and-forget)
-10. Waits for completion ACK (seq=-1, 60s timeout)
-
-### `nostr_receiver.rs` (Nostr mode)
-1. Parses wormhole code for Nostr metadata
-2. Generates ephemeral Nostr keypair
-3. Connects to relays (discovers via NIP-65 or uses embedded list)
-4. Subscribes to chunk events (filter by transfer_id and sender pubkey)
-5. Sends ready ACK (seq=0)
-6. Collects chunks into HashMap by sequence number (5 min timeout)
-7. Decrypts all chunks with AES-256-GCM
-8. Checks `nostr_transfer_type` field
-9. For files: writes to output file atomically
-10. For folders: extracts tar archive using `folder.rs`
-11. Sends completion ACK (seq=-1)
+### `nostr_receiver.rs` (Hybrid fallback, internal)
+Relay-based file receiving when WebRTC direct connection fails:
+- `receive_nostr_with_token()` - Extracts credentials from hybrid token
+- Connects to relays and subscribes to chunk events
+- Decrypts and reassembles chunks
+- Sends completion ACK (seq=-1)
 
 ### `onion_sender.rs` (Tor mode, requires `onion` feature)
 1. For folders: creates tar archive using `folder.rs`
@@ -694,12 +673,12 @@ src/
 ├── sender_iroh.rs       # iroh mode file/folder sender
 ├── receiver_iroh.rs     # iroh mode file/folder receiver
 ├── nostr_protocol.rs    # Nostr event structures and protocol logic
-├── nostr_pin.rs         # PIN-based wormhole code exchange (Argon2id + AES-GCM)
-├── nostr_sender.rs      # Nostr mode file/folder sender
-├── nostr_receiver.rs    # Nostr mode file/folder receiver
-├── webrtc_common.rs     # WebRTC/PeerJS client (requires webrtc feature)
-├── webrtc_sender.rs     # WebRTC mode file/folder sender (requires webrtc feature)
-├── webrtc_receiver.rs   # WebRTC mode file/folder receiver (requires webrtc feature)
+├── nostr_sender.rs      # Hybrid relay fallback sender (internal, webrtc feature)
+├── nostr_receiver.rs    # Hybrid relay fallback receiver (internal, webrtc feature)
+├── nostr_signaling.rs   # Nostr signaling for WebRTC (webrtc feature)
+├── webrtc_common.rs     # WebRTC data channel client (webrtc feature)
+├── hybrid_sender.rs     # Hybrid mode sender - WebRTC + Nostr signaling (webrtc feature)
+├── hybrid_receiver.rs   # Hybrid mode receiver - WebRTC + Nostr signaling (webrtc feature)
 ├── onion_sender.rs      # Tor mode file/folder sender (requires onion feature)
 └── onion_receiver.rs    # Tor mode file/folder receiver (requires onion feature)
 

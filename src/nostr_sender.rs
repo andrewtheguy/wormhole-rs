@@ -1,69 +1,83 @@
+//! Nostr relay transport for hybrid fallback
+//!
+//! This module provides relay-based file transfer when WebRTC direct connection fails.
+//! It uses the same credentials (keys, transfer_id, key) from the hybrid signaling.
+
 use anyhow::{Context, Result};
 use futures::stream::{self, StreamExt};
 use nostr_sdk::prelude::*;
-use std::path::Path;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use tokio::fs::File;
 use tokio::io::AsyncReadExt;
 use tokio::time::{timeout, Duration};
 
-use crate::crypto::{encrypt_chunk, generate_key};
-use crate::folder::{create_tar_archive, print_tar_creation_info};
-use crate::nostr_pin::{create_pin_exchange_event, generate_pin};
+use crate::crypto::encrypt_chunk;
 use crate::nostr_protocol::{
-    create_chunk_event, generate_transfer_id, get_best_relays, get_transfer_id, is_ack_event,
-    parse_ack_event, publish_relay_list_event, DEFAULT_NOSTR_RELAYS, MAX_NOSTR_FILE_SIZE,
-    NOSTR_CHUNK_SIZE,
+    create_chunk_event, get_transfer_id, is_ack_event, is_retry_event, parse_ack_event,
+    parse_retry_event, DEFAULT_NOSTR_RELAYS, MAX_NOSTR_FILE_SIZE, NOSTR_CHUNK_SIZE,
 };
 use crate::transfer::format_bytes;
-use crate::wormhole::generate_nostr_code;
 
-const COMPLETION_ACK_TIMEOUT_SECS: u64 = 60; // Match secure-send-web timeout
+/// Timeout for completion ACK (extended to handle retries)
+const COMPLETION_ACK_TIMEOUT_SECS: u64 = 60 * 60; // 1 hour
 const MIN_RELAYS_REQUIRED: usize = 2;
-const SUBSCRIPTION_SETUP_DELAY_SECS: u64 = 3; // Wait for subscription to propagate
-const CONCURRENT_CHUNKS: usize = 5; // Number of chunks to send concurrently
+const SUBSCRIPTION_SETUP_DELAY_SECS: u64 = 3;
+const CONCURRENT_CHUNKS: usize = 5;
 
-/// Internal helper for common Nostr transfer logic.
-/// Handles relay connection, encryption, wormhole code, and chunk transfer with ACKs.
-async fn transfer_data_nostr_internal(
+/// Result of a relay transfer indicating whether completion was confirmed
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TransferResult {
+    /// Transfer completed and receiver confirmed receipt
+    Confirmed,
+    /// All data sent but receiver did not confirm receipt
+    /// (could be ACK lost due to ephemeral event timing)
+    Unconfirmed,
+}
+
+/// Send file data via Nostr relay as fallback for hybrid transport.
+///
+/// This function uses existing credentials from the hybrid signaling,
+/// so the receiver can use the same wormhole code that was already displayed.
+///
+/// # Arguments
+/// * `file` - Open file handle to send
+/// * `file_size` - Size of the file in bytes
+/// * `sender_keys` - Sender's Nostr keys (from hybrid signaling)
+/// * `transfer_id` - Transfer ID (from hybrid signaling)
+/// * `encryption_key` - AES-256-GCM key (from hybrid signaling)
+/// * `relay_urls` - Relay URLs to use (from hybrid signaling)
+pub async fn send_relay_fallback(
     mut file: File,
-    filename: String,
     file_size: u64,
-    transfer_type: &str, // "file" or "folder"
-    custom_relays: Option<Vec<String>>,
-    use_default_relays: bool,
-    use_outbox: bool,
-    use_pin: bool,
-) -> Result<()> {
-    // Generate ephemeral keypair for this transfer
-    let sender_keys = Keys::generate();
+    sender_keys: Keys,
+    transfer_id: String,
+    encryption_key: [u8; 32],
+    relay_urls: Vec<String>,
+) -> Result<TransferResult> {
+    // Validate file size
+    if file_size > MAX_NOSTR_FILE_SIZE {
+        anyhow::bail!(
+            "File size ({}) exceeds Nostr relay limit ({})\n\
+             WebRTC connection is required for larger files.",
+            format_bytes(file_size),
+            format_bytes(MAX_NOSTR_FILE_SIZE)
+        );
+    }
+
     let sender_pubkey = sender_keys.public_key();
-    println!("🔑 Generated ephemeral sender key: {}", sender_pubkey.to_hex());
+    println!("Using existing credentials for relay fallback");
+    println!("   Sender: {}", sender_pubkey.to_hex());
+    println!("   Transfer ID: {}", transfer_id);
 
-    // Generate transfer ID
-    let transfer_id = generate_transfer_id();
-    println!("🆔 Transfer ID: {}", transfer_id);
-
-    // Generate encryption key (always required for Nostr)
-    let encryption_key = generate_key();
-    println!("🔐 AES-256-GCM encryption enabled (mandatory for Nostr)");
-
-    // Determine which relays to use
-    let relay_urls = if let Some(relays) = custom_relays {
-        println!("📡 Using custom relays");
-        relays
-    } else if use_default_relays {
-        println!("📡 Using default hardcoded relays");
-        DEFAULT_NOSTR_RELAYS
-            .iter()
-            .map(|s| s.to_string())
-            .collect()
+    // Use provided relays or fall back to defaults
+    let relay_urls = if relay_urls.is_empty() {
+        DEFAULT_NOSTR_RELAYS.iter().map(|s| s.to_string()).collect()
     } else {
-        get_best_relays().await
+        relay_urls
     };
 
-    println!("📡 Connecting to {} Nostr relays...", relay_urls.len());
+    println!("Connecting to {} Nostr relays...", relay_urls.len());
     for url in &relay_urls {
         println!("   - {}", url);
     }
@@ -71,21 +85,15 @@ async fn transfer_data_nostr_internal(
     // Create Nostr client and connect to relays
     let client = Client::new(sender_keys.clone());
     for relay_url in &relay_urls {
-        match client.add_relay(relay_url).await {
-            Ok(_) => {}
-            Err(e) => {
-                eprintln!("⚠️  Failed to add relay {}: {}", relay_url, e);
-            }
+        if let Err(e) = client.add_relay(relay_url).await {
+            eprintln!("Warning: Failed to add relay {}: {}", relay_url, e);
         }
     }
 
-    // Connect to all relays
     client.connect().await;
-
-    // Wait a moment for connections to establish
     tokio::time::sleep(Duration::from_secs(2)).await;
 
-    // Check actual connection status
+    // Check connection status
     let relay_statuses = client.relays().await;
     let mut connected_count = 0;
     let mut failed_relays = Vec::new();
@@ -96,95 +104,40 @@ async fn transfer_data_nostr_internal(
                 if relay.is_connected() {
                     connected_count += 1;
                 } else {
-                    failed_relays.push(relay_url_str.as_str());
+                    failed_relays.push(relay_url_str.clone());
                 }
             } else {
-                failed_relays.push(relay_url_str.as_str());
+                failed_relays.push(relay_url_str.clone());
             }
         } else {
-            failed_relays.push(relay_url_str.as_str());
+            failed_relays.push(relay_url_str.clone());
         }
     }
 
-    // Log failed relays
     if !failed_relays.is_empty() {
         for failed in &failed_relays {
-            eprintln!("⚠️  Failed to connect to relay: {}", failed);
+            eprintln!("Warning: Failed to connect to relay: {}", failed);
         }
     }
 
-    // Check if we have enough relays
     if connected_count < MIN_RELAYS_REQUIRED {
         anyhow::bail!(
-            "Failed to connect to enough relays ({}/{} connected, need {}+)\n\
-             Check network connectivity or try custom relays with --nostr-relay",
+            "Failed to connect to enough relays ({}/{} connected, need {}+)",
             connected_count,
             relay_urls.len(),
             MIN_RELAYS_REQUIRED
         );
     }
 
-    println!("✅ Connected to {} relays", connected_count);
-
-    // If using outbox model, publish NIP-65 relay list
-    if use_outbox {
-        let bridge_relays: Vec<String> = DEFAULT_NOSTR_RELAYS.iter().map(|s| s.to_string()).collect();
-        println!("📡 Publishing relay list to bridge relays (NIP-65 Outbox model)...");
-        publish_relay_list_event(&sender_keys, &relay_urls, &bridge_relays).await?;
-        println!("✅ Relay list published to {} bridge relays", bridge_relays.len());
-    }
-
-    // Generate wormhole code
-    let code = generate_nostr_code(
-        &encryption_key,
-        sender_pubkey.to_hex(),
-        transfer_id.clone(),
-        if use_outbox { None } else { Some(relay_urls.clone()) },
-        filename.clone(),
-        use_outbox,
-        transfer_type,
-    )?;
-
-    // Display wormhole code or PIN
-    if use_pin {
-        let pin = generate_pin();
-        println!("\n🔑 Deriving encryption key from PIN (this may take a moment)...");
-        let pin_event = create_pin_exchange_event(&sender_keys, &code, &transfer_id, &pin)?;
-
-        // Publish PIN exchange event to bridge relays (same relays receiver will query)
-        let bridge_client = Client::new(sender_keys.clone());
-        for relay in DEFAULT_NOSTR_RELAYS {
-            let _ = bridge_client.add_relay(relay.to_string()).await;
-        }
-        bridge_client.connect().await;
-        tokio::time::sleep(Duration::from_secs(2)).await;
-
-        bridge_client
-            .send_event(&pin_event)
-            .await
-            .context("Failed to publish PIN exchange event to bridge relays")?;
-
-        bridge_client.disconnect().await;
-
-        println!("\n🔢 PIN Code: {}\n", pin);
-        println!("On the receiving end, run:");
-        println!("  wormhole-rs receive --nostr-pin\n");
-        println!("Then enter the PIN when prompted.\n");
-    } else {
-        println!("\n🔮 Wormhole code:\n{}\n", code);
-        println!("On the receiving end, run:");
-        println!("  wormhole-rs receive\n");
-        println!("Then enter the code above when prompted.\n");
-    }
+    println!("Connected to {} relays", connected_count);
 
     // Calculate total chunks
     let total_chunks = ((file_size + NOSTR_CHUNK_SIZE as u64 - 1) / NOSTR_CHUNK_SIZE as u64) as u32;
-    println!("📊 Data will be sent in {} chunks", total_chunks);
+    println!("Data will be sent in {} chunks", total_chunks);
 
-    // Single notifications stream
+    // Subscribe to ACK events
     let mut notifications = client.notifications();
 
-    // Subscribe to ACK events from any receiver for this transfer
     let filter = Filter::new()
         .kind(crate::nostr_protocol::nostr_file_transfer_kind())
         .custom_tag(
@@ -198,18 +151,15 @@ async fn transfer_data_nostr_internal(
 
     if let Err(e) = client.subscribe(filter, None).await {
         anyhow::bail!(
-            "Failed to subscribe to ACK events (transfer_id: {}, sender: {}): {}\n\
+            "Failed to subscribe to ACK events: {}\n\
              Without subscription, receiver ACKs cannot be received.",
-            transfer_id,
-            sender_pubkey.to_hex(),
             e
         );
     }
 
-    // Wait for subscription to propagate
     tokio::time::sleep(Duration::from_secs(SUBSCRIPTION_SETUP_DELAY_SECS)).await;
 
-    println!("⏳ Waiting for receiver to connect...");
+    println!("Waiting for receiver to connect via relay...");
 
     // Wait for first ACK to confirm receiver is ready
     let mut receiver_ready = false;
@@ -219,8 +169,9 @@ async fn transfer_data_nostr_internal(
     while !receiver_ready && start_time.elapsed() < ready_timeout {
         match timeout(Duration::from_secs(5), notifications.recv()).await {
             Ok(Ok(RelayPoolNotification::Event { event, .. })) => {
-                if is_ack_event(&event) && get_transfer_id(&event).as_deref() == Some(&transfer_id) {
-                    println!("✅ Receiver connected and ready!");
+                if is_ack_event(&event) && get_transfer_id(&event).as_deref() == Some(&transfer_id)
+                {
+                    println!("Receiver connected and ready!");
                     receiver_ready = true;
                 }
             }
@@ -234,10 +185,12 @@ async fn transfer_data_nostr_internal(
         anyhow::bail!("Timeout waiting for receiver to connect (5 minutes)");
     }
 
-    // Read all data and prepare encrypted chunks upfront (max 512KB, fits in memory)
-    println!("📦 Reading and encrypting {} chunks...", total_chunks);
+    // Read and encrypt all chunks
+    println!("Reading and encrypting {} chunks...", total_chunks);
     let mut all_data = Vec::with_capacity(file_size as usize);
-    file.read_to_end(&mut all_data).await.context("Failed to read file data")?;
+    file.read_to_end(&mut all_data)
+        .await
+        .context("Failed to read file data")?;
 
     // Prepare all chunk events
     let mut chunk_events = Vec::with_capacity(total_chunks as usize);
@@ -246,11 +199,9 @@ async fn transfer_data_nostr_internal(
         let end = std::cmp::min(start + NOSTR_CHUNK_SIZE, all_data.len());
         let chunk_data = &all_data[start..end];
 
-        // Encrypt chunk
-        let encrypted_chunk =
-            encrypt_chunk(&encryption_key, seq as u64, chunk_data).context("Failed to encrypt chunk")?;
+        let encrypted_chunk = encrypt_chunk(&encryption_key, seq as u64, chunk_data)
+            .context("Failed to encrypt chunk")?;
 
-        // Create chunk event
         let chunk_event = create_chunk_event(
             &sender_keys,
             &transfer_id,
@@ -262,8 +213,11 @@ async fn transfer_data_nostr_internal(
         chunk_events.push((seq, chunk_event));
     }
 
-    // Send chunks concurrently (fire-and-forget)
-    println!("📤 Sending {} chunks ({} concurrent)...", total_chunks, CONCURRENT_CHUNKS);
+    // Send chunks concurrently
+    println!(
+        "Sending {} chunks ({} concurrent)...",
+        total_chunks, CONCURRENT_CHUNKS
+    );
     let chunks_sent = Arc::new(AtomicU32::new(0));
     let client = Arc::new(client);
 
@@ -291,30 +245,84 @@ async fn transfer_data_nostr_internal(
         .collect()
         .await;
 
-    // Check for any errors
     for result in send_results {
         result?;
     }
 
-    // Unwrap Arc to get client back for completion ACK
     let client = Arc::try_unwrap(client).unwrap_or_else(|arc| (*arc).clone());
+    println!("All chunks sent successfully!");
 
-    println!("✅ All chunks sent successfully!");
-
-    // Wait for final completion ACK
-    println!("⏳ Waiting for receiver to confirm completion...");
+    // Wait for final completion ACK or handle retry requests
+    println!("Waiting for receiver to confirm completion...");
     let final_ack_timeout = Duration::from_secs(COMPLETION_ACK_TIMEOUT_SECS);
     let final_ack_deadline = tokio::time::Instant::now() + final_ack_timeout;
     let mut final_ack_received = false;
 
     while tokio::time::Instant::now() < final_ack_deadline {
-        match timeout(Duration::from_secs(1), notifications.recv()).await {
+        match timeout(Duration::from_secs(2), notifications.recv()).await {
             Ok(Ok(RelayPoolNotification::Event { event, .. })) => {
-                if is_ack_event(&event) && get_transfer_id(&event).as_deref() == Some(&transfer_id) {
+                // Check for completion ACK
+                if is_ack_event(&event) && get_transfer_id(&event).as_deref() == Some(&transfer_id)
+                {
                     if let Ok(ack_seq) = parse_ack_event(&event) {
                         if ack_seq == -1 {
                             final_ack_received = true;
                             break;
+                        }
+                    }
+                }
+
+                // Check for retry request
+                if is_retry_event(&event)
+                    && get_transfer_id(&event).as_deref() == Some(&transfer_id)
+                {
+                    if let Ok(missing_seqs) = parse_retry_event(&event) {
+                        println!(
+                            "Received retry request for {} chunks, resending...",
+                            missing_seqs.len()
+                        );
+
+                        // Resend missing chunks
+                        for seq in missing_seqs {
+                            if seq >= total_chunks {
+                                continue; // Invalid sequence number
+                            }
+
+                            let start = (seq as usize) * NOSTR_CHUNK_SIZE;
+                            let end = std::cmp::min(start + NOSTR_CHUNK_SIZE, all_data.len());
+                            let chunk_data = &all_data[start..end];
+
+                            match encrypt_chunk(&encryption_key, seq as u64, chunk_data) {
+                                Ok(encrypted_chunk) => {
+                                    match create_chunk_event(
+                                        &sender_keys,
+                                        &transfer_id,
+                                        seq,
+                                        total_chunks,
+                                        &encrypted_chunk,
+                                    ) {
+                                        Ok(chunk_event) => {
+                                            if let Err(e) = client.send_event(&chunk_event).await {
+                                                eprintln!(
+                                                    "Warning: Failed to resend chunk {}: {}",
+                                                    seq, e
+                                                );
+                                            } else {
+                                                println!("   Resent chunk {}", seq);
+                                            }
+                                        }
+                                        Err(e) => {
+                                            eprintln!(
+                                                "Warning: Failed to create chunk event {}: {}",
+                                                seq, e
+                                            );
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    eprintln!("Warning: Failed to encrypt chunk {}: {}", seq, e);
+                                }
+                            }
                         }
                     }
                 }
@@ -325,143 +333,14 @@ async fn transfer_data_nostr_internal(
         }
     }
 
-    if !final_ack_received {
-        eprintln!("⚠️  Did not receive final completion ACK from receiver");
-    } else {
-        println!("✅ Receiver confirmed completion!");
-    }
-
-    // Disconnect from relays
     client.disconnect().await;
-    println!("👋 Disconnected from Nostr relays.");
+    println!("Disconnected from Nostr relays.");
 
-    Ok(())
-}
-
-/// Send a file via Nostr relays
-///
-/// # Arguments
-/// * `file_path` - Path to the file to send
-/// * `custom_relays` - Optional custom relay URLs to use for transfer
-/// * `use_default_relays` - Use hardcoded default relays instead of discovering
-/// * `use_outbox` - Enable NIP-65 Outbox model for relay discovery
-/// * `use_pin` - Enable PIN-based wormhole code exchange
-pub async fn send_file_nostr(
-    file_path: &Path,
-    custom_relays: Option<Vec<String>>,
-    use_default_relays: bool,
-    use_outbox: bool,
-    use_pin: bool,
-) -> Result<()> {
-    // Get file metadata
-    let metadata = tokio::fs::metadata(file_path)
-        .await
-        .context("Failed to read file metadata")?;
-    let file_size = metadata.len();
-    let filename = file_path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .context("Invalid filename")?
-        .to_string();
-
-    // Validate file size
-    if file_size > MAX_NOSTR_FILE_SIZE {
-        anyhow::bail!(
-            "File size ({}) exceeds Nostr limit ({})\n\
-             Use regular 'send' command for larger files via iroh.",
-            format_bytes(file_size),
-            format_bytes(MAX_NOSTR_FILE_SIZE)
-        );
+    if final_ack_received {
+        println!("Receiver confirmed completion!");
+        Ok(TransferResult::Confirmed)
+    } else {
+        eprintln!("Warning: Did not receive final completion ACK from receiver");
+        Ok(TransferResult::Unconfirmed)
     }
-
-    println!(
-        "📁 Preparing to send via Nostr: {} ({})",
-        filename,
-        format_bytes(file_size)
-    );
-
-    // Open file
-    let file = File::open(file_path).await.context("Failed to open file")?;
-
-    // Transfer using common logic
-    transfer_data_nostr_internal(
-        file,
-        filename,
-        file_size,
-        "file",
-        custom_relays,
-        use_default_relays,
-        use_outbox,
-        use_pin,
-    )
-    .await
-}
-
-/// Send a folder via Nostr relays (as tar archive)
-///
-/// # Arguments
-/// * `folder_path` - Path to the folder to send
-/// * `custom_relays` - Optional custom relay URLs to use for transfer
-/// * `use_default_relays` - Use hardcoded default relays instead of discovering
-/// * `use_outbox` - Enable NIP-65 Outbox model for relay discovery
-/// * `use_pin` - Enable PIN-based wormhole code exchange
-pub async fn send_folder_nostr(
-    folder_path: &Path,
-    custom_relays: Option<Vec<String>>,
-    use_default_relays: bool,
-    use_outbox: bool,
-    use_pin: bool,
-) -> Result<()> {
-    // Validate folder
-    if !folder_path.is_dir() {
-        anyhow::bail!("Not a directory: {}", folder_path.display());
-    }
-
-    let folder_name = folder_path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .context("Invalid folder name")?;
-
-    println!("📁 Creating tar archive of: {}", folder_name);
-    print_tar_creation_info();
-
-    // Create tar archive using shared folder logic
-    let tar_archive = create_tar_archive(folder_path)?;
-    let file_size = tar_archive.file_size;
-    let tar_filename = tar_archive.filename;
-
-    // Validate archive size
-    if file_size > MAX_NOSTR_FILE_SIZE {
-        anyhow::bail!(
-            "Folder archive ({}) exceeds Nostr limit ({})\n\
-             Use --transport iroh for larger folders.",
-            format_bytes(file_size),
-            format_bytes(MAX_NOSTR_FILE_SIZE)
-        );
-    }
-
-    println!(
-        "📦 Archive created: {} ({})",
-        tar_filename,
-        format_bytes(file_size)
-    );
-
-    // Open tar file
-    let file = File::open(tar_archive.temp_file.path())
-        .await
-        .context("Failed to open tar file")?;
-
-    // Transfer using common logic
-    // Note: tar_archive.temp_file is kept alive until this function returns
-    transfer_data_nostr_internal(
-        file,
-        tar_filename,
-        file_size,
-        "folder",
-        custom_relays,
-        use_default_relays,
-        use_outbox,
-        use_pin,
-    )
-    .await
 }

@@ -1,8 +1,12 @@
-//! WebRTC-based file receiver using PeerJS signaling
+//! Hybrid transport receiver: WebRTC with Nostr signaling + relay fallback
 //!
-//! This module handles receiving files over WebRTC data channels.
+//! This module handles receiving files over hybrid transport:
+//! 1. Uses Nostr for WebRTC signaling (replacing PeerJS)
+//! 2. Attempts direct P2P connection via STUN
+//! 3. Falls back to Nostr relay mode if WebRTC fails
 
 use anyhow::{Context, Result};
+use base64::Engine;
 use bytes::Bytes;
 use std::io::Write;
 use std::path::PathBuf;
@@ -10,26 +14,21 @@ use std::sync::Arc;
 use tempfile::NamedTempFile;
 use tokio::sync::{mpsc, Mutex};
 use tokio::time::{timeout, Duration};
-use uuid::Uuid;
 use webrtc::ice_transport::ice_candidate::RTCIceCandidateInit;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
-
-/// Type alias for PeerJS client shared between tasks
-type SharedPeerJs = Arc<PeerJsClient>;
 
 use crate::crypto::decrypt_chunk;
 use crate::folder::{
     extract_tar_archive, get_extraction_dir, print_skipped_entries, print_tar_extraction_info,
 };
+use crate::nostr_receiver;
+use crate::nostr_signaling::{create_receiver_signaling, NostrSignaling, SignalingMessage};
 use crate::transfer::{format_bytes, num_chunks, FileHeader, TransferType};
-use crate::webrtc_common::{
-    generate_peer_id, setup_data_channel_handlers, PeerJsClient, ServerMessage, WebRtcPeer,
-    DEFAULT_PEERJS_SERVER,
-};
-use crate::wormhole::{decode_key, parse_code, PROTOCOL_WEBRTC};
+use crate::webrtc_common::{setup_data_channel_handlers, WebRtcPeer};
+use crate::wormhole::{decode_key, parse_code, PROTOCOL_HYBRID};
 
 /// Connection timeout for WebRTC handshake
-const CONNECTION_TIMEOUT: Duration = Duration::from_secs(60);
+const WEBRTC_CONNECTION_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Shared state for temp file cleanup on interrupt
 type TempFileCleanup = Arc<Mutex<Option<PathBuf>>>;
@@ -79,166 +78,176 @@ fn setup_dir_cleanup_handler(cleanup_path: ExtractDirCleanup) {
     });
 }
 
-/// Receive a file or folder via WebRTC
-pub async fn receive_webrtc(code: &str, output_dir: Option<PathBuf>) -> Result<()> {
-    println!("Parsing wormhole code...");
+/// Result of WebRTC connection attempt
+enum WebRtcResult {
+    Success,
+    Failed(String),
+}
 
-    // Parse the wormhole code
-    let token = parse_code(code).context("Failed to parse wormhole code")?;
-
-    if token.protocol != PROTOCOL_WEBRTC {
-        anyhow::bail!("Expected WebRTC protocol, got: {}", token.protocol);
-    }
-
-    // Extract WebRTC-specific fields
-    let sender_peer_id = token
-        .webrtc_peer_id
-        .context("Missing peer ID in wormhole code")?;
-    let key = token
-        .key
-        .as_ref()
-        .map(|k| decode_key(k))
-        .transpose()
-        .context("Failed to decode encryption key")?
-        .context("Encryption key required for WebRTC transfers")?;
-    let server = token.webrtc_server.as_deref();
-
-    println!("Encryption enabled");
-    println!("Connecting to sender: {}", sender_peer_id);
-
-    // Generate our own peer ID
-    let my_peer_id = generate_peer_id();
-
-    // Connect to PeerJS server
-    let peerjs_server = server.unwrap_or(DEFAULT_PEERJS_SERVER);
-    let peerjs = PeerJsClient::connect(&my_peer_id, Some(peerjs_server)).await?;
-    peerjs.wait_for_open().await?;
+/// Attempt WebRTC receive with Nostr signaling
+async fn try_webrtc_receive(
+    signaling: &NostrSignaling,
+    sender_pubkey: &nostr_sdk::PublicKey,
+    key: &[u8; 32],
+    output_dir: Option<PathBuf>,
+) -> Result<WebRtcResult> {
+    println!("Attempting WebRTC connection...");
 
     // Create WebRTC peer
     let mut rtc_peer = WebRtcPeer::new().await?;
 
-    // Create data channel BEFORE creating offer (so it's included in SDP)
+    // Create data channel BEFORE creating offer
     let _local_dc = rtc_peer.create_data_channel("file-transfer").await?;
 
-    // Generate connection ID
-    let connection_id = Uuid::new_v4().to_string();
+    // Start listening for signaling messages
+    let (mut signal_rx, signal_handle) = signaling.start_message_receiver();
 
     // Create and send offer to sender
     let offer = rtc_peer.create_offer().await?;
     rtc_peer.set_local_description(offer.clone()).await?;
-    peerjs
-        .send_offer(&sender_peer_id, &offer.sdp, &connection_id)
-        .await?;
+    signaling.publish_offer(sender_pubkey, &offer.sdp).await?;
     println!("Sent offer to sender");
 
     // Wait for answer with timeout
-    let answer_result = timeout(CONNECTION_TIMEOUT, async {
+    let answer_result = timeout(WEBRTC_CONNECTION_TIMEOUT, async {
         loop {
-            match peerjs.recv_message().await {
-                Ok(ServerMessage::Answer { payload, .. }) => {
+            match signal_rx.recv().await {
+                Some(SignalingMessage::Answer { sdp, .. }) => {
                     println!("Received answer from sender");
-                    let answer_sdp = RTCSessionDescription::answer(payload.sdp.sdp)
+                    let answer_sdp = RTCSessionDescription::answer(sdp.sdp)
                         .context("Failed to create answer SDP")?;
                     rtc_peer.set_remote_description(answer_sdp).await?;
                     return Ok::<(), anyhow::Error>(());
                 }
-                Ok(ServerMessage::Candidate { payload, .. }) => {
+                Some(SignalingMessage::IceCandidate { candidate, seq, .. }) => {
                     // Handle early ICE candidates
-                    let candidate = RTCIceCandidateInit {
-                        candidate: payload.candidate.candidate,
-                        sdp_mid: payload.candidate.sdp_mid,
-                        sdp_mline_index: payload.candidate.sdp_m_line_index,
+                    println!("Received early ICE candidate (seq: {})", seq);
+                    let candidate_init = RTCIceCandidateInit {
+                        candidate: candidate.candidate,
+                        sdp_mid: candidate.sdp_mid,
+                        sdp_mline_index: candidate.sdp_m_line_index,
                         username_fragment: None,
                     };
-                    let _ = rtc_peer.add_ice_candidate(candidate).await;
+                    let _ = rtc_peer.add_ice_candidate(candidate_init).await;
                 }
-                Ok(ServerMessage::Heartbeat) => {
-                    let _ = peerjs.send_heartbeat().await;
-                }
-                Ok(msg) => {
-                    println!("Ignoring message while waiting for answer: {:?}", msg);
-                }
-                Err(e) => {
-                    return Err(anyhow::anyhow!("Error receiving message: {}", e));
+                Some(_) => continue,
+                None => {
+                    return Err(anyhow::anyhow!("Signaling channel closed"));
                 }
             }
         }
     })
     .await;
 
-    answer_result
-        .context("Timeout waiting for answer from sender")?
-        .context("Failed to receive answer")?;
+    if answer_result.is_err() {
+        signal_handle.abort();
+        return Ok(WebRtcResult::Failed(
+            "Timeout waiting for answer from sender".to_string(),
+        ));
+    }
 
-    // Set up ICE candidate exchange
-    // Use Arc<PeerJsClient> - no outer Mutex needed since PeerJsClient has interior mutability
-    let peerjs_arc: SharedPeerJs = Arc::new(peerjs);
-    let sender_peer_id_clone = sender_peer_id.clone();
-    let connection_id_clone = connection_id.clone();
-    let peerjs_clone = peerjs_arc.clone();
+    if let Err(e) = answer_result.unwrap() {
+        signal_handle.abort();
+        return Ok(WebRtcResult::Failed(format!(
+            "Failed to receive answer: {}",
+            e
+        )));
+    }
 
     // Take ownership of receivers before wrapping rtc_peer in Arc
-    let mut ice_rx = rtc_peer.take_ice_candidate_rx().expect("ICE candidate receiver already taken");
-    let mut data_channel_rx = rtc_peer.take_data_channel_rx().expect("Data channel receiver already taken");
+    let mut ice_rx = rtc_peer
+        .take_ice_candidate_rx()
+        .expect("ICE candidate receiver already taken");
+    let mut data_channel_rx = rtc_peer
+        .take_data_channel_rx()
+        .expect("Data channel receiver already taken");
 
-    // Spawn task to send our ICE candidates (no mutex lock needed)
+    // Spawn task to send our ICE candidates
+    let signaling_client = signaling.client.clone();
+    let signaling_keys = signaling.keys.clone();
+    let transfer_id = signaling.transfer_id().to_string();
+    let sender_pubkey_clone = *sender_pubkey;
+
+    let ice_seq = Arc::new(std::sync::atomic::AtomicU32::new(0));
+    let ice_seq_clone = ice_seq.clone();
+
     tokio::spawn(async move {
         while let Some(candidate) = ice_rx.recv().await {
-            let candidate_str = candidate.to_json().map(|c| c.candidate).unwrap_or_default();
-            let sdp_mid = candidate.to_json().ok().and_then(|c| c.sdp_mid);
-            let sdp_m_line_index = candidate.to_json().ok().and_then(|c| c.sdp_mline_index);
+            let candidate_json = match candidate.to_json() {
+                Ok(json) => json,
+                Err(_) => continue,
+            };
 
-            let _ = peerjs_clone
-                .send_candidate(
-                    &sender_peer_id_clone,
-                    &candidate_str,
-                    sdp_mid.as_deref(),
-                    sdp_m_line_index,
-                    &connection_id_clone,
-                )
-                .await;
+            let seq = ice_seq_clone.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+
+            // Create ICE candidate event manually
+            let payload = crate::nostr_signaling::IceCandidatePayload {
+                candidate: candidate_json.candidate,
+                sdp_m_line_index: candidate_json.sdp_mline_index,
+                sdp_mid: candidate_json.sdp_mid,
+            };
+
+            let content = base64::engine::general_purpose::STANDARD
+                .encode(serde_json::to_string(&payload).unwrap());
+
+            let tags = vec![
+                nostr_sdk::Tag::custom(
+                    nostr_sdk::TagKind::SingleLetter(nostr_sdk::SingleLetterTag::lowercase(
+                        nostr_sdk::Alphabet::T,
+                    )),
+                    vec![transfer_id.clone()],
+                ),
+                nostr_sdk::Tag::custom(
+                    nostr_sdk::TagKind::SingleLetter(nostr_sdk::SingleLetterTag::lowercase(
+                        nostr_sdk::Alphabet::P,
+                    )),
+                    vec![sender_pubkey_clone.to_hex()],
+                ),
+                nostr_sdk::Tag::custom(
+                    nostr_sdk::TagKind::Custom("type".into()),
+                    vec!["webrtc-ice".to_string()],
+                ),
+                nostr_sdk::Tag::custom(
+                    nostr_sdk::TagKind::Custom("seq".into()),
+                    vec![seq.to_string()],
+                ),
+            ];
+
+            if let Ok(event) = nostr_sdk::EventBuilder::new(
+                crate::nostr_protocol::nostr_file_transfer_kind(),
+                &content,
+            )
+            .tags(tags)
+            .sign_with_keys(&signaling_keys)
+            {
+                let _ = signaling_client.send_event(&event).await;
+            }
         }
     });
 
-    // Take message receiver for dedicated receiving task (allows concurrent send/receive)
-    let mut peerjs_rx = peerjs_arc
-        .take_message_rx()
-        .await
-        .expect("Message receiver already taken");
-
     // Process incoming ICE candidates in background
-    let peerjs_clone2 = peerjs_arc.clone();
     let rtc_peer_arc = Arc::new(rtc_peer);
     let rtc_peer_clone = rtc_peer_arc.clone();
 
     tokio::spawn(async move {
-        while let Some(msg) = peerjs_rx.recv().await {
-            match msg {
-                ServerMessage::Candidate { payload, .. } => {
-                    let candidate = RTCIceCandidateInit {
-                        candidate: payload.candidate.candidate,
-                        sdp_mid: payload.candidate.sdp_mid,
-                        sdp_mline_index: payload.candidate.sdp_m_line_index,
-                        username_fragment: None,
-                    };
-                    let _ = rtc_peer_clone.add_ice_candidate(candidate).await;
-                }
-                ServerMessage::Heartbeat => {
-                    let _ = peerjs_clone2.send_heartbeat().await;
-                }
-                ServerMessage::Leave { .. } => {
-                    break;
-                }
-                _ => {}
+        while let Some(msg) = signal_rx.recv().await {
+            if let SignalingMessage::IceCandidate { candidate, .. } = msg {
+                let candidate_init = RTCIceCandidateInit {
+                    candidate: candidate.candidate,
+                    sdp_mid: candidate.sdp_mid,
+                    sdp_mline_index: candidate.sdp_m_line_index,
+                    username_fragment: None,
+                };
+                let _ = rtc_peer_clone.add_ice_candidate(candidate_init).await;
             }
         }
     });
 
     // Wait for data channel from sender
     println!("Waiting for data channel from sender...");
-    let data_channel = timeout(CONNECTION_TIMEOUT, data_channel_rx.recv())
+    let data_channel = timeout(WEBRTC_CONNECTION_TIMEOUT, data_channel_rx.recv())
         .await
-        .context("Timeout waiting for data channel")?
+        .map_err(|_| anyhow::anyhow!("Timeout waiting for data channel"))?
         .context("Failed to receive data channel")?;
 
     // Set up message receiving
@@ -252,25 +261,32 @@ pub async fn receive_webrtc(code: &str, output_dir: Option<PathBuf>) -> Result<(
             println!("Data channel opened successfully");
         }
         Ok(Err(_)) => {
-            // oneshot sender was dropped without sending - channel setup failed
-            anyhow::bail!("Data channel failed to open: sender dropped");
+            signal_handle.abort();
+            return Ok(WebRtcResult::Failed(
+                "Data channel failed to open".to_string(),
+            ));
         }
         Err(_) => {
-            // Timeout elapsed
-            anyhow::bail!("Timeout waiting for data channel to open");
+            signal_handle.abort();
+            return Ok(WebRtcResult::Failed(
+                "Timeout waiting for data channel to open".to_string(),
+            ));
         }
     }
 
     // Display connection info
     let conn_info = rtc_peer_arc.get_connection_info().await;
-    conn_info.print(&sender_peer_id);
+    println!("WebRTC connection established!");
+    println!("   Connection: {}", conn_info.connection_type);
+    if let (Some(local), Some(remote)) = (&conn_info.local_address, &conn_info.remote_address) {
+        println!("   Local: {} -> Remote: {}", local, remote);
+    }
 
     // Receive header message
     println!("Receiving file information...");
     let header_msg = timeout(Duration::from_secs(30), async {
         while let Some(msg) = message_rx.recv().await {
-            if msg.len() >= 1 && msg[0] == 0 {
-                // Message type: header
+            if !msg.is_empty() && msg[0] == 0 {
                 return Ok(msg);
             }
         }
@@ -284,14 +300,15 @@ pub async fn receive_webrtc(code: &str, output_dir: Option<PathBuf>) -> Result<(
     if header_msg.len() < 5 {
         anyhow::bail!("Header message too short");
     }
-    let encrypted_len = u32::from_be_bytes([header_msg[1], header_msg[2], header_msg[3], header_msg[4]]) as usize;
+    let encrypted_len =
+        u32::from_be_bytes([header_msg[1], header_msg[2], header_msg[3], header_msg[4]]) as usize;
     if header_msg.len() < 5 + encrypted_len {
         anyhow::bail!("Header message truncated");
     }
     let encrypted_header = &header_msg[5..5 + encrypted_len];
 
     // Decrypt header
-    let header_bytes = decrypt_chunk(&key, 0, encrypted_header)?;
+    let header_bytes = decrypt_chunk(key, 0, encrypted_header)?;
     let header = FileHeader::from_bytes(&header_bytes)?;
 
     println!(
@@ -303,18 +320,87 @@ pub async fn receive_webrtc(code: &str, output_dir: Option<PathBuf>) -> Result<(
     // Dispatch based on transfer type
     match header.transfer_type {
         TransferType::File => {
-            receive_file_impl(&mut message_rx, &header, &key, output_dir, &data_channel).await?;
+            receive_file_impl(&mut message_rx, &header, key, output_dir, &data_channel).await?;
         }
         TransferType::Folder => {
-            receive_folder_impl(&mut message_rx, &header, &key, output_dir, &data_channel).await?;
+            receive_folder_impl(&mut message_rx, &header, key, output_dir, &data_channel).await?;
         }
     }
 
     // Close connections
     let _ = rtc_peer_arc.close().await;
-    println!("Connection closed.");
+    signal_handle.abort();
 
-    Ok(())
+    Ok(WebRtcResult::Success)
+}
+
+/// Receive a file or folder via hybrid transport
+pub async fn receive_hybrid(code: &str, output_dir: Option<PathBuf>) -> Result<()> {
+    println!("Parsing wormhole code...");
+
+    // Parse the wormhole code
+    let token = parse_code(code).context("Failed to parse wormhole code")?;
+
+    if token.protocol != PROTOCOL_HYBRID {
+        anyhow::bail!("Expected hybrid protocol, got: {}", token.protocol);
+    }
+
+    // Extract hybrid-specific fields
+    let sender_pubkey_hex = token
+        .hybrid_sender_pubkey
+        .clone()
+        .context("Missing sender pubkey in wormhole code")?;
+    let transfer_id = token
+        .hybrid_transfer_id
+        .clone()
+        .context("Missing transfer ID in wormhole code")?;
+    let relays = token
+        .hybrid_relays
+        .clone()
+        .context("Missing relay list in wormhole code")?;
+    let key = token
+        .key
+        .as_ref()
+        .map(|k| decode_key(k))
+        .transpose()
+        .context("Failed to decode encryption key")?
+        .context("Encryption key required for hybrid transfers")?;
+
+    // Parse sender public key
+    let sender_pubkey: nostr_sdk::PublicKey = sender_pubkey_hex
+        .parse()
+        .context("Failed to parse sender public key")?;
+
+    println!("Encryption enabled");
+    println!("Connecting to sender: {}", sender_pubkey_hex);
+
+    // Create Nostr signaling client
+    println!("Connecting to Nostr relays for signaling...");
+    let signaling = create_receiver_signaling(&transfer_id, relays.clone()).await?;
+
+    println!("Receiver pubkey: {}", signaling.public_key().to_hex());
+
+    // Send ready signal to sender
+    signaling.publish_ready(&sender_pubkey).await?;
+    println!("Sent ready signal to sender");
+
+    // Try WebRTC transfer
+    match try_webrtc_receive(&signaling, &sender_pubkey, &key, output_dir.clone()).await? {
+        WebRtcResult::Success => {
+            signaling.disconnect().await;
+            println!("Connection closed.");
+            return Ok(());
+        }
+        WebRtcResult::Failed(reason) => {
+            println!("\nWebRTC connection failed: {}", reason);
+            println!("Falling back to Nostr relay mode...\n");
+        }
+    }
+
+    // Fallback to Nostr relay mode
+    signaling.disconnect().await;
+
+    nostr_receiver::receive_nostr_with_token(&token, output_dir).await
 }
 
 /// Internal implementation for receiving a file via WebRTC
@@ -376,7 +462,6 @@ async fn receive_file_impl(
             .context("Timeout waiting for chunk")?
             .context("Channel closed")?;
 
-        // Check message type
         if msg.is_empty() {
             continue;
         }
@@ -401,7 +486,9 @@ async fn receive_file_impl(
                 let chunk = decrypt_chunk(key, chunk_num, encrypted_chunk)?;
 
                 // Write to temp file
-                temp_file.write_all(&chunk).context("Failed to write chunk")?;
+                temp_file
+                    .write_all(&chunk)
+                    .context("Failed to write chunk")?;
 
                 bytes_received += chunk.len() as u64;
 
@@ -469,7 +556,7 @@ async fn receive_folder_impl(
     println!("Extracting to: {}", extract_dir.display());
     print_tar_extraction_info();
 
-    // Collect all chunks first (WebRTC provides them as messages)
+    // Collect all chunks first
     let mut tar_data = Vec::new();
     let mut bytes_received = 0u64;
     let total_chunks = num_chunks(header.file_size);

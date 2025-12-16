@@ -334,6 +334,7 @@ pub async fn get_best_relays() -> Vec<String> {
 /// Event type tag values
 pub const EVENT_TYPE_CHUNK: &str = "chunk";
 pub const EVENT_TYPE_ACK: &str = "ack";
+pub const EVENT_TYPE_RETRY: &str = "retry";
 
 /// Tag names for file transfer metadata
 pub const TAG_TRANSFER_ID: &str = "t";
@@ -526,6 +527,76 @@ pub fn is_ack_event(event: &Event) -> bool {
         .and_then(|t| t.content())
         .map(|s| s == EVENT_TYPE_ACK)
         .unwrap_or(false)
+}
+
+/// Check if event is a retry request event
+pub fn is_retry_event(event: &Event) -> bool {
+    event
+        .tags
+        .iter()
+        .find(|t| {
+            let kind = t.kind();
+            kind.to_string() == TAG_TYPE
+        })
+        .and_then(|t| t.content())
+        .map(|s| s == EVENT_TYPE_RETRY)
+        .unwrap_or(false)
+}
+
+/// Create a retry request event for missing chunks
+///
+/// # Arguments
+/// * `keys` - Receiver's keys for signing
+/// * `sender_pubkey` - Sender's public key
+/// * `transfer_id` - Unique transfer session ID
+/// * `missing_seqs` - List of missing chunk sequence numbers
+pub fn create_retry_event(
+    keys: &Keys,
+    sender_pubkey: &PublicKey,
+    transfer_id: &str,
+    missing_seqs: &[u32],
+) -> Result<Event> {
+    // Content is JSON array of missing sequence numbers
+    let content = serde_json::to_string(missing_seqs)
+        .context("Failed to serialize missing sequences")?;
+
+    let event = EventBuilder::new(nostr_file_transfer_kind(), content)
+        .tags(vec![
+            Tag::public_key(*sender_pubkey),
+            Tag::custom(
+                TagKind::Custom(TAG_TRANSFER_ID.into()),
+                vec![transfer_id.to_string()],
+            ),
+            Tag::custom(
+                TagKind::Custom(TAG_TYPE.into()),
+                vec![EVENT_TYPE_RETRY.to_string()],
+            ),
+        ])
+        .sign_with_keys(keys)
+        .context("Failed to sign retry event")?;
+
+    Ok(event)
+}
+
+/// Parse a retry request event and extract missing sequence numbers
+///
+/// Returns: list of missing chunk sequence numbers
+pub fn parse_retry_event(event: &Event) -> Result<Vec<u32>> {
+    // Validate event kind
+    if event.kind != nostr_file_transfer_kind() {
+        anyhow::bail!("Invalid event kind: expected {}", nostr_file_transfer_kind());
+    }
+
+    // Validate event type
+    if !is_retry_event(event) {
+        anyhow::bail!("Event is not a retry request");
+    }
+
+    // Parse content as JSON array of sequence numbers
+    let missing_seqs: Vec<u32> = serde_json::from_str(&event.content)
+        .context("Failed to parse retry request content")?;
+
+    Ok(missing_seqs)
 }
 
 // ============================================================================

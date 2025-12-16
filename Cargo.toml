@@ -21,16 +21,6 @@ name = "onion_receiver_test"
 path = "examples/onion_receiver_test.rs"
 required-features = ["onion"]
 
-[[example]]
-name = "webrtc_sender_test"
-path = "examples/webrtc_sender_test.rs"
-required-features = ["webrtc"]
-
-[[example]]
-name = "webrtc_receiver_test"
-path = "examples/webrtc_receiver_test.rs"
-required-features = ["webrtc"]
-
 [features]
 default = []
 onion = ["dep:arti-client", "dep:tor-hsservice", "dep:tor-cell", "dep:safelog", "dep:rusqlite"]
