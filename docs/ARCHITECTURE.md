@@ -557,48 +557,6 @@ Published to well-known bridge relays for receiver discovery.
 └──────────┴─────────────────┴─────────────┘
 ```
 
-### WebRTC Mode
-
-**Wormhole Code:**
-```json
-{
-  "version": 2,
-  "protocol": "webrtc",
-  "extra_encrypt": true,
-  "key": "<base64-encoded-32-bytes>",
-  "webrtc_peer_id": "happy-apple-sunset",
-  "webrtc_server": "custom-peerjs.example.com"
-}
-```
-The `webrtc_server` field is optional; defaults to `0.peerjs.com` if omitted.
-
-**Data Channel Message Types:**
-
-| Type | Value | Description |
-|------|-------|-------------|
-| Header | 0 | File metadata (encrypted) |
-| Chunk | 1 | File data chunk (encrypted) |
-| Done | 2 | Transfer complete signal |
-| ACK | 3 | Receiver confirmation |
-
-**Header Message:**
-```
-┌──────────┬────────────────┬─────────────────────────┐
-│  type    │  encrypted_len │    encrypted header     │
-│ (1 byte) │   (4 bytes)    │ nonce + header + GCM    │
-│   0x00   │                │                         │
-└──────────┴────────────────┴─────────────────────────┘
-```
-
-**Chunk Message:**
-```
-┌──────────┬───────────────┬────────────────┬─────────────────────────┐
-│  type    │   chunk_num   │  encrypted_len │    encrypted chunk      │
-│ (1 byte) │   (8 bytes)   │   (4 bytes)    │ nonce + data + GCM      │
-│   0x01   │               │                │                         │
-└──────────┴───────────────┴────────────────┴─────────────────────────┘
-```
-
 ### Tor Mode
 
 **Wormhole Code:**
