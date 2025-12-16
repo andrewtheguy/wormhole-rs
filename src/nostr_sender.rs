@@ -7,6 +7,7 @@ use tokio::time::{timeout, Duration};
 
 use crate::crypto::{encrypt_chunk, generate_key};
 use crate::folder::{create_tar_archive, print_tar_creation_info};
+use crate::nostr_pin::{create_pin_exchange_event, generate_pin};
 use crate::nostr_protocol::{
     create_chunk_event, generate_transfer_id, get_best_relays, get_transfer_id, is_ack_event,
     parse_ack_event, publish_relay_list_event, DEFAULT_NOSTR_RELAYS, MAX_NOSTR_FILE_SIZE,
@@ -30,6 +31,7 @@ async fn transfer_data_nostr_internal(
     custom_relays: Option<Vec<String>>,
     use_default_relays: bool,
     use_outbox: bool,
+    use_pin: bool,
 ) -> Result<()> {
     // Generate ephemeral keypair for this transfer
     let sender_keys = Keys::generate();
@@ -129,7 +131,7 @@ async fn transfer_data_nostr_internal(
         println!("✅ Relay list published to {} bridge relays", bridge_relays.len());
     }
 
-    // Generate and display wormhole code
+    // Generate wormhole code
     let code = generate_nostr_code(
         &encryption_key,
         sender_pubkey.to_hex(),
@@ -140,10 +142,37 @@ async fn transfer_data_nostr_internal(
         transfer_type,
     )?;
 
-    println!("\n🔮 Wormhole code:\n{}\n", code);
-    println!("On the receiving end, run:");
-    println!("  wormhole-rs receive\n");
-    println!("Then enter the code above when prompted.\n");
+    // Display wormhole code or PIN
+    if use_pin {
+        let pin = generate_pin();
+        println!("\n🔑 Deriving encryption key from PIN (this may take a moment)...");
+        let pin_event = create_pin_exchange_event(&sender_keys, &code, &transfer_id, &pin)?;
+
+        // Publish PIN exchange event to bridge relays (same relays receiver will query)
+        let bridge_client = Client::new(sender_keys.clone());
+        for relay in DEFAULT_NOSTR_RELAYS {
+            let _ = bridge_client.add_relay(relay.to_string()).await;
+        }
+        bridge_client.connect().await;
+        tokio::time::sleep(Duration::from_secs(2)).await;
+
+        bridge_client
+            .send_event(&pin_event)
+            .await
+            .context("Failed to publish PIN exchange event to bridge relays")?;
+
+        bridge_client.disconnect().await;
+
+        println!("\n🔢 PIN Code: {}\n", pin);
+        println!("On the receiving end, run:");
+        println!("  wormhole-rs receive --nostr-pin\n");
+        println!("Then enter the PIN when prompted.\n");
+    } else {
+        println!("\n🔮 Wormhole code:\n{}\n", code);
+        println!("On the receiving end, run:");
+        println!("  wormhole-rs receive\n");
+        println!("Then enter the code above when prompted.\n");
+    }
 
     // Calculate total chunks
     let total_chunks = ((file_size + NOSTR_CHUNK_SIZE as u64 - 1) / NOSTR_CHUNK_SIZE as u64) as u32;
@@ -340,11 +369,13 @@ async fn transfer_data_nostr_internal(
 /// * `custom_relays` - Optional custom relay URLs to use for transfer
 /// * `use_default_relays` - Use hardcoded default relays instead of discovering
 /// * `use_outbox` - Enable NIP-65 Outbox model for relay discovery
+/// * `use_pin` - Enable PIN-based wormhole code exchange
 pub async fn send_file_nostr(
     file_path: &Path,
     custom_relays: Option<Vec<String>>,
     use_default_relays: bool,
     use_outbox: bool,
+    use_pin: bool,
 ) -> Result<()> {
     // Get file metadata
     let metadata = tokio::fs::metadata(file_path)
@@ -385,6 +416,7 @@ pub async fn send_file_nostr(
         custom_relays,
         use_default_relays,
         use_outbox,
+        use_pin,
     )
     .await
 }
@@ -396,11 +428,13 @@ pub async fn send_file_nostr(
 /// * `custom_relays` - Optional custom relay URLs to use for transfer
 /// * `use_default_relays` - Use hardcoded default relays instead of discovering
 /// * `use_outbox` - Enable NIP-65 Outbox model for relay discovery
+/// * `use_pin` - Enable PIN-based wormhole code exchange
 pub async fn send_folder_nostr(
     folder_path: &Path,
     custom_relays: Option<Vec<String>>,
     use_default_relays: bool,
     use_outbox: bool,
+    use_pin: bool,
 ) -> Result<()> {
     // Validate folder
     if !folder_path.is_dir() {
@@ -451,6 +485,7 @@ pub async fn send_folder_nostr(
         custom_relays,
         use_default_relays,
         use_outbox,
+        use_pin,
     )
     .await
 }

@@ -69,6 +69,10 @@ enum Commands {
         #[arg(long)]
         no_outbox: bool,
 
+        /// Use PIN-based code exchange for Nostr (displays 8-char PIN instead of full code)
+        #[arg(long)]
+        nostr_pin: bool,
+
         /// Custom PeerJS server URL (for webrtc transport)
         #[arg(long = "peerjs-server")]
         peerjs_server: Option<String>,
@@ -87,6 +91,10 @@ enum Commands {
         /// Custom relay server URLs (for iroh transport)
         #[arg(long)]
         relay_url: Vec<String>,
+
+        /// Use PIN-based code exchange for Nostr (prompts for PIN input)
+        #[arg(long)]
+        nostr_pin: bool,
     },
 }
 
@@ -104,6 +112,7 @@ async fn main() -> Result<()> {
             nostr_relay,
             use_default_relays,
             no_outbox,
+            nostr_pin,
             peerjs_server,
         } => {
             // Validate path exists
@@ -143,9 +152,9 @@ async fn main() -> Result<()> {
                     let use_outbox = !no_outbox;
                     // Size validation is handled inside the send functions with better error messages
                     if folder {
-                        nostr_sender::send_folder_nostr(&path, custom_relays, use_default_relays, use_outbox).await?;
+                        nostr_sender::send_folder_nostr(&path, custom_relays, use_default_relays, use_outbox, nostr_pin).await?;
                     } else {
-                        nostr_sender::send_file_nostr(&path, custom_relays, use_default_relays, use_outbox).await?;
+                        nostr_sender::send_file_nostr(&path, custom_relays, use_default_relays, use_outbox, nostr_pin).await?;
                     }
                 }
                 #[cfg(feature = "onion")]
@@ -167,12 +176,17 @@ async fn main() -> Result<()> {
             }
         }
 
-        Commands::Receive { code, output, relay_url } => {
+        Commands::Receive { code, output, relay_url, nostr_pin } => {
             // Validate output directory if provided
             if let Some(ref dir) = output {
                 if !dir.is_dir() {
                     anyhow::bail!("Output directory does not exist: {}", dir.display());
                 }
+            }
+
+            // Check if PIN mode for Nostr
+            if nostr_pin {
+                return nostr_receiver::receive_with_pin(output).await;
             }
 
             // Get code from argument or prompt
