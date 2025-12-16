@@ -22,8 +22,8 @@ use crate::crypto::{encrypt_chunk, generate_key, CHUNK_SIZE};
 use crate::folder::{create_tar_archive, print_tar_creation_info};
 use crate::nostr_protocol::MAX_NOSTR_FILE_SIZE;
 // Re-export TransferResult for public API
-pub use crate::nostr_sender::TransferResult;
-use crate::nostr_sender;
+pub use crate::nostr_relay::{send_relay_fallback, TransferResult};
+
 use crate::nostr_signaling::{create_sender_signaling, NostrSignaling, SignalingMessage};
 use crate::transfer::{format_bytes, num_chunks, FileHeader, TransferType};
 use crate::webrtc_common::{setup_data_channel_handlers, WebRtcPeer};
@@ -425,7 +425,7 @@ async fn transfer_data_webrtc_internal(
         println!("Then enter the code above when prompted.\n");
 
         // Go directly to relay mode
-        let result = nostr_sender::send_relay_fallback(
+        let result = crate::nostr_relay::send_relay_fallback(
             file,
             file_size,
             signaling.keys.clone(),
@@ -490,7 +490,7 @@ async fn transfer_data_webrtc_internal(
     // Reset file position
     file.rewind().await.context("Failed to reset file position")?;
 
-    let result = nostr_sender::send_relay_fallback(
+    let result = crate::nostr_relay::send_relay_fallback(
         file,
         file_size,
         signaling.keys.clone(),

@@ -21,7 +21,7 @@ use crate::crypto::decrypt_chunk;
 use crate::folder::{
     extract_tar_archive, get_extraction_dir, print_skipped_entries, print_tar_extraction_info,
 };
-use crate::nostr_receiver;
+
 use crate::nostr_signaling::{create_receiver_signaling, NostrSignaling, SignalingMessage};
 use crate::transfer::{format_bytes, num_chunks, FileHeader, TransferType};
 use crate::webrtc_common::{setup_data_channel_handlers, WebRtcPeer};
@@ -402,7 +402,7 @@ pub async fn receive_webrtc(code: &str, output_dir: Option<PathBuf>) -> Result<(
     // Fallback to Nostr relay mode
     signaling.disconnect().await;
 
-    nostr_receiver::receive_nostr_with_token(&token, output_dir).await
+    crate::nostr_relay::receive_nostr_with_token(&token, output_dir).await
 }
 
 /// Internal implementation for receiving a file via WebRTC
