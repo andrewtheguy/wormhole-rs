@@ -28,21 +28,35 @@ pub const TXT_TRANSFER_ID: &str = "transfer_id";
 pub const TXT_FILENAME: &str = "filename";
 pub const TXT_FILE_SIZE: &str = "file_size";
 pub const TXT_TRANSFER_TYPE: &str = "transfer_type";
+pub const TXT_SALT: &str = "salt";
 
-/// Fixed salt for Argon2id key derivation.
-/// Using a fixed salt is acceptable here because:
-/// 1. The passphrase is chosen by the user and should be unique per transfer
-/// 2. Transfers are ephemeral (not stored)
-/// 3. This is for local network transfers where threat model is different
-const MDNS_SALT: &[u8] = b"wormhole-rs-mdns-transfer-v1";
+/// Salt length in bytes (128 bits)
+pub const SALT_LENGTH: usize = 16;
 
-/// Derive a 256-bit encryption key from a passphrase using Argon2id.
+/// Generate a cryptographically secure random salt.
+pub fn generate_salt() -> [u8; SALT_LENGTH] {
+    rand::thread_rng().gen()
+}
+
+/// Derive a 256-bit encryption key from a passphrase and salt using Argon2id.
 ///
 /// Parameters match the documented security settings:
 /// - Memory: 64 MiB
 /// - Iterations: 3
 /// - Parallelism: 4 lanes
-pub fn derive_key_from_passphrase(passphrase: &str) -> Result<[u8; 32]> {
+///
+/// # Arguments
+/// * `passphrase` - User-provided passphrase
+/// * `salt` - Per-transfer random salt (must be SALT_LENGTH bytes)
+pub fn derive_key_from_passphrase(passphrase: &str, salt: &[u8]) -> Result<[u8; 32]> {
+    if salt.len() != SALT_LENGTH {
+        anyhow::bail!(
+            "Invalid salt length: expected {} bytes, got {}",
+            SALT_LENGTH,
+            salt.len()
+        );
+    }
+
     let params = Params::new(
         65536, // m_cost: 64 MiB memory (in KiB)
         3,     // t_cost: 3 iterations
@@ -55,7 +69,7 @@ pub fn derive_key_from_passphrase(passphrase: &str) -> Result<[u8; 32]> {
 
     let mut key = [0u8; 32];
     argon2
-        .hash_password_into(passphrase.as_bytes(), MDNS_SALT, &mut key)
+        .hash_password_into(passphrase.as_bytes(), salt, &mut key)
         .map_err(|e| anyhow::anyhow!("Failed to derive key: {}", e))?;
 
     Ok(key)
@@ -92,4 +106,6 @@ pub struct MdnsServiceInfo {
     pub file_size: u64,
     pub transfer_type: String,
     pub addresses: Vec<IpAddr>,
+    /// Per-transfer random salt for key derivation (hex-encoded in TXT record)
+    pub salt: [u8; SALT_LENGTH],
 }

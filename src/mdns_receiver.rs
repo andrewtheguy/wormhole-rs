@@ -16,14 +16,16 @@ use tempfile::NamedTempFile;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
 use tokio::sync::Mutex;
+use tokio::task::JoinHandle;
+use tokio_util::sync::CancellationToken;
 
 use crate::folder::{
     extract_tar_archive_returning_reader, get_extraction_dir, print_skipped_entries,
     print_tar_extraction_info, StreamingReader,
 };
 use crate::mdns_common::{
-    derive_key_from_passphrase, MdnsServiceInfo, SERVICE_TYPE, TXT_FILENAME, TXT_FILE_SIZE,
-    TXT_TRANSFER_ID, TXT_TRANSFER_TYPE,
+    derive_key_from_passphrase, MdnsServiceInfo, SALT_LENGTH, SERVICE_TYPE, TXT_FILENAME,
+    TXT_FILE_SIZE, TXT_SALT, TXT_TRANSFER_ID, TXT_TRANSFER_TYPE,
 };
 use crate::transfer::{format_bytes, num_chunks, recv_encrypted_chunk, recv_encrypted_header, TransferType};
 
@@ -93,6 +95,25 @@ pub async fn receive_mdns(output_dir: Option<PathBuf>) -> Result<()> {
                         .map(|v| v.val_str().to_string())
                         .unwrap_or_else(|| "file".to_string());
 
+                    // Parse salt from TXT record (hex-encoded)
+                    let salt_result: Result<[u8; SALT_LENGTH], _> = properties
+                        .get(TXT_SALT)
+                        .map(|v| v.val_str())
+                        .ok_or_else(|| "missing salt")
+                        .and_then(|hex_str| {
+                            hex::decode(hex_str)
+                                .map_err(|_| "invalid hex")
+                                .and_then(|bytes| {
+                                    bytes.try_into().map_err(|_| "invalid salt length")
+                                })
+                        });
+
+                    // Skip services without valid salt
+                    let salt = match salt_result {
+                        Ok(s) => s,
+                        Err(_) => continue,
+                    };
+
                     // Filter and deduplicate addresses: prefer IPv4 and non-link-local IPv6
                     let all_addrs: Vec<IpAddr> = info.get_addresses().iter().map(|s| s.to_ip_addr()).collect();
                     let filtered: HashSet<IpAddr> = all_addrs
@@ -113,6 +134,7 @@ pub async fn receive_mdns(output_dir: Option<PathBuf>) -> Result<()> {
                         file_size,
                         transfer_type,
                         addresses,
+                        salt,
                     };
 
                     if !transfer_id.is_empty() {
@@ -212,9 +234,9 @@ pub async fn receive_mdns(output_dir: Option<PathBuf>) -> Result<()> {
     // Prompt for passphrase
     let passphrase = prompt_passphrase()?;
 
-    // Derive key
+    // Derive key using per-transfer salt
     println!("Deriving encryption key...");
-    let key = derive_key_from_passphrase(&passphrase)?;
+    let key = derive_key_from_passphrase(&passphrase, &selected.salt)?;
 
     // Connect to sender
     let addr = selected
@@ -307,7 +329,8 @@ async fn receive_file_impl(
     let mut temp_file = NamedTempFile::new_in(&output_dir).context("Failed to create temp file")?;
     let temp_path = temp_file.path().to_path_buf();
     let cleanup_path: TempFileCleanup = Arc::new(Mutex::new(Some(temp_path.clone())));
-    setup_file_cleanup_handler(cleanup_path.clone());
+    let cleanup_cancel = CancellationToken::new();
+    let _cleanup_handle = setup_file_cleanup_handler(cleanup_path.clone(), cleanup_cancel.clone());
 
     // Receive chunks and write directly to file (streaming)
     let total_chunks = num_chunks(file_size);
@@ -347,8 +370,9 @@ async fn receive_file_impl(
         }
     }
 
-    // Clear cleanup before persist
+    // Clear cleanup and cancel handler before persist
     cleanup_path.lock().await.take();
+    cleanup_cancel.cancel();
 
     // Flush and persist temp file to final path
     temp_file.flush().context("Failed to flush file")?;
@@ -381,7 +405,8 @@ async fn receive_folder_impl(
     std::fs::create_dir_all(&extract_dir)?;
 
     let cleanup_path: ExtractDirCleanup = Arc::new(Mutex::new(Some(extract_dir.clone())));
-    setup_dir_cleanup_handler(cleanup_path.clone());
+    let cleanup_cancel = CancellationToken::new();
+    let _cleanup_handle = setup_dir_cleanup_handler(cleanup_path.clone(), cleanup_cancel.clone());
 
     println!("Extracting to: {}", extract_dir.display());
     print_tar_extraction_info();
@@ -408,6 +433,7 @@ async fn receive_folder_impl(
 
     print_skipped_entries(&skipped);
     cleanup_path.lock().await.take();
+    cleanup_cancel.cancel();
 
     println!("\nFolder received successfully!");
     println!("Extracted to: {}", extract_dir.display());
@@ -462,27 +488,55 @@ fn prompt_overwrite(path: &PathBuf) -> Result<bool> {
 }
 
 /// Set up Ctrl+C handler for temp file cleanup.
-fn setup_file_cleanup_handler(cleanup_path: TempFileCleanup) {
+///
+/// Returns a JoinHandle that can be aborted when cleanup is no longer needed.
+/// The handler uses select! to race between Ctrl+C and cancellation.
+/// On Ctrl+C: cleans up the temp file and returns (does not exit).
+/// On cancellation: returns immediately without cleanup.
+fn setup_file_cleanup_handler(
+    cleanup_path: TempFileCleanup,
+    cancel_token: CancellationToken,
+) -> JoinHandle<()> {
     tokio::spawn(async move {
-        if tokio::signal::ctrl_c().await.is_ok() {
-            if let Some(path) = cleanup_path.lock().await.take() {
-                let _ = tokio::fs::remove_file(&path).await;
-                eprintln!("\nInterrupted. Cleaned up temp file.");
+        tokio::select! {
+            _ = cancel_token.cancelled() => {
+                // Cancelled by caller - cleanup no longer needed
             }
-            std::process::exit(130);
+            result = tokio::signal::ctrl_c() => {
+                if result.is_ok() {
+                    if let Some(path) = cleanup_path.lock().await.take() {
+                        let _ = tokio::fs::remove_file(&path).await;
+                        eprintln!("\nInterrupted. Cleaned up temp file.");
+                    }
+                }
+            }
         }
-    });
+    })
 }
 
 /// Set up Ctrl+C handler for extraction directory cleanup.
-fn setup_dir_cleanup_handler(cleanup_path: ExtractDirCleanup) {
+///
+/// Returns a JoinHandle that can be aborted when cleanup is no longer needed.
+/// The handler uses select! to race between Ctrl+C and cancellation.
+/// On Ctrl+C: cleans up the extraction directory and returns (does not exit).
+/// On cancellation: returns immediately without cleanup.
+fn setup_dir_cleanup_handler(
+    cleanup_path: ExtractDirCleanup,
+    cancel_token: CancellationToken,
+) -> JoinHandle<()> {
     tokio::spawn(async move {
-        if tokio::signal::ctrl_c().await.is_ok() {
-            if let Some(path) = cleanup_path.lock().await.take() {
-                let _ = tokio::fs::remove_dir_all(&path).await;
-                eprintln!("\nInterrupted. Cleaned up extraction directory.");
+        tokio::select! {
+            _ = cancel_token.cancelled() => {
+                // Cancelled by caller - cleanup no longer needed
             }
-            std::process::exit(130);
+            result = tokio::signal::ctrl_c() => {
+                if result.is_ok() {
+                    if let Some(path) = cleanup_path.lock().await.take() {
+                        let _ = tokio::fs::remove_dir_all(&path).await;
+                        eprintln!("\nInterrupted. Cleaned up extraction directory.");
+                    }
+                }
+            }
         }
-    });
+    })
 }

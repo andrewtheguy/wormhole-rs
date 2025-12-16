@@ -17,9 +17,9 @@ use tokio::sync::Mutex;
 use crate::crypto::CHUNK_SIZE;
 use crate::folder::{create_tar_archive, print_tar_creation_info, TarArchive};
 use crate::mdns_common::{
-    derive_key_from_passphrase, generate_passphrase, generate_transfer_id, PORT_RANGE_END,
-    PORT_RANGE_START, SERVICE_TYPE, TXT_FILENAME, TXT_FILE_SIZE, TXT_TRANSFER_ID,
-    TXT_TRANSFER_TYPE,
+    derive_key_from_passphrase, generate_passphrase, generate_salt, generate_transfer_id,
+    PORT_RANGE_END, PORT_RANGE_START, SERVICE_TYPE, TXT_FILENAME, TXT_FILE_SIZE, TXT_SALT,
+    TXT_TRANSFER_ID, TXT_TRANSFER_TYPE,
 };
 use crate::transfer::{
     format_bytes, num_chunks, send_encrypted_chunk, send_encrypted_header, FileHeader,
@@ -71,13 +71,14 @@ pub async fn send_file_mdns(file_path: &Path) -> Result<()> {
 
     println!("Preparing to send: {} ({})", filename, format_bytes(file_size));
 
-    // Generate random passphrase
+    // Generate random passphrase and salt
     let passphrase = generate_passphrase();
+    let salt = generate_salt();
     println!("\nPassphrase: {}\n", passphrase);
     println!("Share this passphrase with the receiver.\n");
 
-    // Derive encryption key from passphrase
-    let key = derive_key_from_passphrase(&passphrase)?;
+    // Derive encryption key from passphrase and salt
+    let key = derive_key_from_passphrase(&passphrase, &salt)?;
 
     // Open file
     let file = File::open(file_path)
@@ -85,7 +86,7 @@ pub async fn send_file_mdns(file_path: &Path) -> Result<()> {
         .context("Failed to open file")?;
 
     // Transfer using common logic
-    transfer_data_internal(file, filename, file_size, TransferType::File, key).await
+    transfer_data_internal(file, filename, file_size, TransferType::File, key, salt).await
 }
 
 /// Send a folder as a tar archive via mDNS transport.
@@ -130,13 +131,14 @@ pub async fn send_folder_mdns(folder_path: &Path) -> Result<()> {
         folder_path.display()
     );
 
-    // Generate random passphrase
+    // Generate random passphrase and salt
     let passphrase = generate_passphrase();
+    let salt = generate_salt();
     println!("\nPassphrase: {}\n", passphrase);
     println!("Share this passphrase with the receiver.\n");
 
-    // Derive encryption key from passphrase
-    let key = derive_key_from_passphrase(&passphrase)?;
+    // Derive encryption key from passphrase and salt
+    let key = derive_key_from_passphrase(&passphrase, &salt)?;
 
     // Open tar file
     let file = File::open(&temp_path)
@@ -144,7 +146,7 @@ pub async fn send_folder_mdns(folder_path: &Path) -> Result<()> {
         .context("Failed to open tar file")?;
 
     // Transfer
-    let result = transfer_data_internal(file, tar_filename, file_size, TransferType::Folder, key).await;
+    let result = transfer_data_internal(file, tar_filename, file_size, TransferType::Folder, key, salt).await;
 
     // Clear cleanup path (file will be dropped with temp_file)
     cleanup_path.lock().await.take();
@@ -159,6 +161,7 @@ async fn transfer_data_internal(
     file_size: u64,
     transfer_type: TransferType,
     key: [u8; 32],
+    salt: [u8; 16],
 ) -> Result<()> {
     // Generate transfer ID
     let transfer_id = generate_transfer_id();
@@ -187,6 +190,8 @@ async fn transfer_data_internal(
             TransferType::Folder => "folder".to_string(),
         },
     );
+    // Add salt for key derivation (hex-encoded)
+    properties.insert(TXT_SALT.to_string(), hex::encode(salt));
 
     // Register service with auto address discovery
     let my_hostname = format!("{}.local.", random_host);
@@ -326,17 +331,30 @@ async fn send_data_over_tcp(
 
     println!("\nAll data sent!");
 
-    // Wait for ACK
+    // Wait for ACK with timeout (same as handshake timeout)
     println!("Waiting for receiver confirmation...");
     let mut ack_buf = [0u8; 3];
     use tokio::io::AsyncReadExt;
-    stream
-        .read_exact(&mut ack_buf)
-        .await
-        .context("Failed to receive ACK")?;
+    use tokio::time::timeout;
 
-    if &ack_buf != b"ACK" {
-        anyhow::bail!("Invalid acknowledgment from receiver");
+    let ack_result = timeout(
+        std::time::Duration::from_secs(10),
+        stream.read_exact(&mut ack_buf),
+    )
+    .await;
+
+    match ack_result {
+        Ok(Ok(_)) => {
+            if &ack_buf != b"ACK" {
+                anyhow::bail!("Invalid acknowledgment from receiver");
+            }
+        }
+        Ok(Err(e)) => {
+            return Err(e).context("Failed to receive ACK from receiver");
+        }
+        Err(_) => {
+            anyhow::bail!("Timed out waiting for receiver confirmation (10s)");
+        }
     }
 
     println!("Receiver confirmed!");
