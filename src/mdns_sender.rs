@@ -28,8 +28,14 @@ use crate::transfer::{
 
 /// Find an available TCP port in the configured range.
 /// Binds to [::] for dual-stack (IPv4 + IPv6) support.
+/// Starts at a random port within the range for unpredictability.
 fn find_available_port() -> Result<TcpListener> {
-    for port in PORT_RANGE_START..=PORT_RANGE_END {
+    use rand::Rng;
+    let range_size = PORT_RANGE_END - PORT_RANGE_START + 1;
+    let start_offset: u16 = rand::thread_rng().gen_range(0..range_size);
+
+    for i in 0..range_size {
+        let port = PORT_RANGE_START + ((start_offset + i) % range_size);
         // Try IPv6 dual-stack first (accepts both IPv4 and IPv6)
         if let Ok(listener) = TcpListener::bind((std::net::Ipv6Addr::UNSPECIFIED, port)) {
             return Ok(listener);

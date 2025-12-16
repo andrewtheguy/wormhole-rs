@@ -19,9 +19,9 @@ const PASSPHRASE_LENGTH: usize = 12;
 /// mDNS service type for wormhole file transfers
 pub const SERVICE_TYPE: &str = "_wormhole._tcp.local.";
 
-/// TCP port range for file transfer
-pub const PORT_RANGE_START: u16 = 9000;
-pub const PORT_RANGE_END: u16 = 9100;
+/// TCP port range for file transfer (dynamic/private port range)
+pub const PORT_RANGE_START: u16 = 49152;
+pub const PORT_RANGE_END: u16 = 65535;
 
 /// TXT record keys
 pub const TXT_TRANSFER_ID: &str = "transfer_id";
