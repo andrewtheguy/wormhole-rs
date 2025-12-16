@@ -21,6 +21,8 @@ use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 use crate::crypto::{encrypt_chunk, generate_key, CHUNK_SIZE};
 use crate::folder::{create_tar_archive, print_tar_creation_info};
 use crate::nostr_protocol::MAX_NOSTR_FILE_SIZE;
+// Re-export TransferResult for public API
+pub use crate::nostr_sender::TransferResult;
 use crate::nostr_sender;
 use crate::nostr_signaling::{create_sender_signaling, NostrSignaling, SignalingMessage};
 use crate::transfer::{format_bytes, num_chunks, FileHeader, TransferType};
@@ -377,7 +379,7 @@ async fn transfer_data_hybrid_internal(
     force_relay: bool,
     custom_relays: Option<Vec<String>>,
     use_default_relays: bool,
-) -> Result<()> {
+) -> Result<TransferResult> {
     // Generate encryption key (always required)
     let key = generate_key();
     println!("Encryption enabled for transfer");
@@ -476,7 +478,7 @@ async fn transfer_data_hybrid_internal(
         WebRtcResult::Success => {
             signaling.disconnect().await;
             println!("Connection closed.");
-            return Ok(());
+            return Ok(TransferResult::Confirmed);
         }
         WebRtcResult::Failed(reason) => {
             println!("\nWebRTC connection failed: {}", reason);
@@ -508,7 +510,7 @@ pub async fn send_file_hybrid(
     force_relay: bool,
     custom_relays: Option<Vec<String>>,
     use_default_relays: bool,
-) -> Result<()> {
+) -> Result<TransferResult> {
     // Get file metadata
     let metadata = tokio::fs::metadata(file_path)
         .await
@@ -550,7 +552,7 @@ pub async fn send_folder_hybrid(
     force_relay: bool,
     custom_relays: Option<Vec<String>>,
     use_default_relays: bool,
-) -> Result<()> {
+) -> Result<TransferResult> {
     // Validate folder
     if !folder_path.is_dir() {
         anyhow::bail!("Not a directory: {}", folder_path.display());

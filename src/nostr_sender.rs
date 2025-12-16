@@ -25,6 +25,16 @@ const MIN_RELAYS_REQUIRED: usize = 2;
 const SUBSCRIPTION_SETUP_DELAY_SECS: u64 = 3;
 const CONCURRENT_CHUNKS: usize = 5;
 
+/// Result of a relay transfer indicating whether completion was confirmed
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TransferResult {
+    /// Transfer completed and receiver confirmed receipt
+    Confirmed,
+    /// All data sent but receiver did not confirm receipt
+    /// (could be ACK lost due to ephemeral event timing)
+    Unconfirmed,
+}
+
 /// Send file data via Nostr relay as fallback for hybrid transport.
 ///
 /// This function uses existing credentials from the hybrid signaling,
@@ -44,7 +54,7 @@ pub async fn send_relay_fallback(
     transfer_id: String,
     encryption_key: [u8; 32],
     relay_urls: Vec<String>,
-) -> Result<()> {
+) -> Result<TransferResult> {
     // Validate file size
     if file_size > MAX_NOSTR_FILE_SIZE {
         anyhow::bail!(
@@ -323,14 +333,14 @@ pub async fn send_relay_fallback(
         }
     }
 
-    if !final_ack_received {
-        eprintln!("Warning: Did not receive final completion ACK from receiver");
-    } else {
-        println!("Receiver confirmed completion!");
-    }
-
     client.disconnect().await;
     println!("Disconnected from Nostr relays.");
 
-    Ok(())
+    if final_ack_received {
+        println!("Receiver confirmed completion!");
+        Ok(TransferResult::Confirmed)
+    } else {
+        eprintln!("Warning: Did not receive final completion ACK from receiver");
+        Ok(TransferResult::Unconfirmed)
+    }
 }

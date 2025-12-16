@@ -8,7 +8,7 @@ use wormhole_rs::{receiver_iroh, sender_iroh, wormhole};
 use wormhole_rs::{onion_receiver, onion_sender};
 
 #[cfg(feature = "webrtc")]
-use wormhole_rs::{hybrid_receiver, hybrid_sender};
+use wormhole_rs::{hybrid_receiver, hybrid_sender::{self, TransferResult}};
 
 /// Transport protocol for file transfer
 #[derive(Clone, Debug, ValueEnum)]
@@ -146,10 +146,13 @@ async fn main() -> Result<()> {
                     } else {
                         Some(nostr_relay)
                     };
-                    if folder {
-                        hybrid_sender::send_folder_hybrid(&path, force_nostr_relay, custom_relays, use_default_relays).await?;
+                    let result = if folder {
+                        hybrid_sender::send_folder_hybrid(&path, force_nostr_relay, custom_relays, use_default_relays).await?
                     } else {
-                        hybrid_sender::send_file_hybrid(&path, force_nostr_relay, custom_relays, use_default_relays).await?;
+                        hybrid_sender::send_file_hybrid(&path, force_nostr_relay, custom_relays, use_default_relays).await?
+                    };
+                    if result == TransferResult::Unconfirmed {
+                        eprintln!("Note: Transfer may have succeeded but receiver confirmation was not received.");
                     }
                 }
             }

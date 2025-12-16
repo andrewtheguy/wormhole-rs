@@ -392,6 +392,12 @@ pub fn parse_code(code: &str) -> Result<WormholeToken> {
         if token.key.is_none() {
             anyhow::bail!("Invalid v2 hybrid token: encryption key required for hybrid transfers");
         }
+        if token.hybrid_filename.is_none() {
+            anyhow::bail!("Invalid v2 hybrid token: missing filename");
+        }
+        if token.hybrid_transfer_type.is_none() {
+            anyhow::bail!("Invalid v2 hybrid token: missing transfer type");
+        }
     }
 
     Ok(token)
