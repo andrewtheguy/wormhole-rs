@@ -8,7 +8,7 @@ use wormhole_rs::{nostr_receiver, nostr_sender, receiver_iroh, sender_iroh, worm
 use wormhole_rs::{onion_receiver, onion_sender};
 
 #[cfg(feature = "webrtc")]
-use wormhole_rs::{webrtc_receiver, webrtc_sender};
+use wormhole_rs::{hybrid_receiver, hybrid_sender};
 
 /// Transport protocol for file transfer
 #[derive(Clone, Debug, ValueEnum)]
@@ -20,9 +20,9 @@ enum Transport {
     /// Tor hidden service transfer
     #[cfg(feature = "onion")]
     Tor,
-    /// WebRTC peer-to-peer transfer via PeerJS
+    /// Hybrid: WebRTC with Nostr signaling + relay fallback
     #[cfg(feature = "webrtc")]
-    Webrtc,
+    Hybrid,
 }
 
 #[derive(Parser)]
@@ -73,9 +73,9 @@ enum Commands {
         #[arg(long)]
         nostr_pin: bool,
 
-        /// Custom PeerJS server URL (for webrtc transport)
-        #[arg(long = "peerjs-server")]
-        peerjs_server: Option<String>,
+        /// Force Nostr relay mode for hybrid transport (skip WebRTC)
+        #[arg(long)]
+        force_nostr_relay: bool,
     },
 
     /// Receive a file or folder (auto-detects transport and type from wormhole code)
@@ -113,7 +113,7 @@ async fn main() -> Result<()> {
             use_default_relays,
             no_outbox,
             nostr_pin,
-            peerjs_server,
+            force_nostr_relay,
         } => {
             // Validate path exists
             if !path.exists() {
@@ -133,7 +133,7 @@ async fn main() -> Result<()> {
 
             // Suppress unused variable warning when webrtc feature is disabled
             #[cfg(not(feature = "webrtc"))]
-            let _ = &peerjs_server;
+            let _ = &force_nostr_relay;
 
             match transport {
                 Transport::Iroh => {
@@ -166,11 +166,16 @@ async fn main() -> Result<()> {
                     }
                 }
                 #[cfg(feature = "webrtc")]
-                Transport::Webrtc => {
-                    if folder {
-                        webrtc_sender::send_folder_webrtc(&path, peerjs_server.as_deref()).await?;
+                Transport::Hybrid => {
+                    let custom_relays = if nostr_relay.is_empty() {
+                        None
                     } else {
-                        webrtc_sender::send_file_webrtc(&path, peerjs_server.as_deref()).await?;
+                        Some(nostr_relay)
+                    };
+                    if folder {
+                        hybrid_sender::send_folder_hybrid(&path, force_nostr_relay, custom_relays, use_default_relays).await?;
+                    } else {
+                        hybrid_sender::send_file_hybrid(&path, force_nostr_relay, custom_relays, use_default_relays).await?;
                     }
                 }
             }
@@ -222,9 +227,17 @@ async fn main() -> Result<()> {
                     onion_receiver::receive_tor(&code, output).await?;
                 }
                 #[cfg(feature = "webrtc")]
+                wormhole::PROTOCOL_HYBRID => {
+                    // Hybrid transport: WebRTC with Nostr signaling + relay fallback
+                    hybrid_receiver::receive_hybrid(&code, output).await?;
+                }
+                #[cfg(feature = "webrtc")]
                 wormhole::PROTOCOL_WEBRTC => {
-                    // WebRTC transport: auto-detects file vs folder from header
-                    webrtc_receiver::receive_webrtc(&code, output).await?;
+                    // Legacy WebRTC transport (deprecated, use hybrid)
+                    anyhow::bail!(
+                        "This wormhole code uses the legacy WebRTC transport (PeerJS).\n\
+                         Please use '--transport hybrid' on the sender side instead."
+                    );
                 }
                 proto => {
                     #[cfg(not(feature = "onion"))]
@@ -236,9 +249,9 @@ async fn main() -> Result<()> {
                         );
                     }
                     #[cfg(not(feature = "webrtc"))]
-                    if proto == wormhole::PROTOCOL_WEBRTC {
+                    if proto == wormhole::PROTOCOL_WEBRTC || proto == wormhole::PROTOCOL_HYBRID {
                         anyhow::bail!(
-                            "This wormhole code uses WebRTC transport, but WebRTC support is disabled.\n\
+                            "This wormhole code uses hybrid/WebRTC transport, but WebRTC support is disabled.\n\
                              To enable WebRTC support, rebuild with: cargo build --features webrtc\n\
                              Or run with: cargo run --features webrtc -- receive"
                         );

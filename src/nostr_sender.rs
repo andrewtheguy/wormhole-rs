@@ -465,3 +465,52 @@ pub async fn send_folder_nostr(
     )
     .await
 }
+
+/// Send an already-open file via Nostr relays (for hybrid fallback)
+///
+/// # Arguments
+/// * `file` - An already-open File handle
+/// * `filename` - Name of the file
+/// * `file_size` - Size of the file in bytes
+/// * `custom_relays` - Optional custom relay URLs to use for transfer
+/// * `use_default_relays` - Use hardcoded default relays instead of discovering
+/// * `use_outbox` - Enable NIP-65 Outbox model for relay discovery
+/// * `use_pin` - Enable PIN-based wormhole code exchange
+pub async fn send_file_nostr_with_file(
+    file: File,
+    filename: String,
+    file_size: u64,
+    custom_relays: Option<Vec<String>>,
+    use_default_relays: bool,
+    use_outbox: bool,
+    use_pin: bool,
+) -> Result<()> {
+    // Validate file size
+    if file_size > MAX_NOSTR_FILE_SIZE {
+        anyhow::bail!(
+            "File size ({}) exceeds Nostr limit ({})\n\
+             Use regular 'send' command for larger files via iroh.",
+            format_bytes(file_size),
+            format_bytes(MAX_NOSTR_FILE_SIZE)
+        );
+    }
+
+    println!(
+        "📁 Preparing to send via Nostr relay: {} ({})",
+        filename,
+        format_bytes(file_size)
+    );
+
+    // Transfer using common logic
+    transfer_data_nostr_internal(
+        file,
+        filename,
+        file_size,
+        "file",
+        custom_relays,
+        use_default_relays,
+        use_outbox,
+        use_pin,
+    )
+    .await
+}

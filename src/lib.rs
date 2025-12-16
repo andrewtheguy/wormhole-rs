@@ -16,11 +16,13 @@ pub mod onion_receiver;
 pub mod onion_sender;
 
 #[cfg(feature = "webrtc")]
+pub mod hybrid_receiver;
+#[cfg(feature = "webrtc")]
+pub mod hybrid_sender;
+#[cfg(feature = "webrtc")]
+pub mod nostr_signaling;
+#[cfg(feature = "webrtc")]
 pub mod webrtc_common;
-#[cfg(feature = "webrtc")]
-pub mod webrtc_receiver;
-#[cfg(feature = "webrtc")]
-pub mod webrtc_sender;
 
 #[cfg(test)]
 mod crypto_tests;
