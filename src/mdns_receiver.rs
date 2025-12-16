@@ -184,7 +184,13 @@ pub async fn receive_mdns(output_dir: Option<PathBuf>) -> Result<()> {
     }
 
     // Prompt user to select
-    let selection = prompt_selection(service_list.len())?;
+    let selection = match prompt_selection(service_list.len())? {
+        Some(idx) => idx,
+        None => {
+            println!("Cancelled.");
+            return Ok(());
+        }
+    };
     let selected = service_list[selection].clone();
 
     println!("\nSelected: {}", selected.filename);
@@ -418,16 +424,27 @@ async fn receive_folder_impl(
 }
 
 /// Prompt user to select a sender.
-fn prompt_selection(max: usize) -> Result<usize> {
-    print!("\nSelect sender [1-{}]: ", max);
-    std::io::stdout().flush()?;
-    let mut input = String::new();
-    std::io::stdin().read_line(&mut input)?;
-    let selection: usize = input.trim().parse().context("Invalid selection")?;
-    if selection < 1 || selection > max {
-        anyhow::bail!("Selection out of range");
+fn prompt_selection(max: usize) -> Result<Option<usize>> {
+    loop {
+        print!("\nSelect sender [1-{}] or 'q' to quit: ", max);
+        std::io::stdout().flush()?;
+        let mut input = String::new();
+        std::io::stdin().read_line(&mut input)?;
+        let input = input.trim();
+
+        if input.eq_ignore_ascii_case("q") {
+            return Ok(None);
+        }
+
+        match input.parse::<usize>() {
+            Ok(selection) if selection >= 1 && selection <= max => {
+                return Ok(Some(selection - 1));
+            }
+            _ => {
+                println!("Invalid selection. Please enter a number between 1 and {}, or 'q' to quit.", max);
+            }
+        }
     }
-    Ok(selection - 1)
 }
 
 /// Prompt user for passphrase.
