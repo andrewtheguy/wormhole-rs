@@ -38,4 +38,8 @@ pub mod webrtc_common;
 #[cfg(test)]
 mod crypto_tests;
 #[cfg(test)]
+#[cfg(test)]
 mod nostr_protocol_tests;
+
+#[cfg(all(test, feature = "webrtc"))]
+mod hybrid_receiver_tests;
