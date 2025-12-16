@@ -27,9 +27,15 @@ use crate::transfer::{
 };
 
 /// Find an available TCP port in the configured range.
+/// Binds to [::] for dual-stack (IPv4 + IPv6) support.
 fn find_available_port() -> Result<TcpListener> {
     for port in PORT_RANGE_START..=PORT_RANGE_END {
-        if let Ok(listener) = TcpListener::bind(("0.0.0.0", port)) {
+        // Try IPv6 dual-stack first (accepts both IPv4 and IPv6)
+        if let Ok(listener) = TcpListener::bind((std::net::Ipv6Addr::UNSPECIFIED, port)) {
+            return Ok(listener);
+        }
+        // Fallback to IPv4 only if IPv6 not available
+        if let Ok(listener) = TcpListener::bind((std::net::Ipv4Addr::UNSPECIFIED, port)) {
             return Ok(listener);
         }
     }

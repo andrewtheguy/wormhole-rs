@@ -52,27 +52,9 @@ pub async fn receive_mdns(output_dir: Option<PathBuf>) -> Result<()> {
     let browse_start = std::time::Instant::now();
 
     println!(
-        "Searching for senders (timeout: {}s)...",
+        "Searching for senders (timeout: {}s)...\n",
         BROWSE_TIMEOUT_SECS
     );
-    println!("Press Enter to stop searching and select from found senders.\n");
-
-    // Spawn a task to watch for Enter key press
-    let (stop_tx, mut stop_rx) = tokio::sync::oneshot::channel::<()>();
-    let stop_tx = Arc::new(Mutex::new(Some(stop_tx)));
-    let stop_tx_clone = stop_tx.clone();
-
-    tokio::spawn(async move {
-        let mut input = String::new();
-        let _ = tokio::task::spawn_blocking(move || {
-            let _ = std::io::stdin().read_line(&mut input);
-        })
-        .await;
-
-        if let Some(tx) = stop_tx_clone.lock().await.take() {
-            let _ = tx.send(());
-        }
-    });
 
     // Browse for services
     loop {
@@ -81,9 +63,8 @@ pub async fn receive_mdns(output_dir: Option<PathBuf>) -> Result<()> {
             break;
         }
 
-        // Check if user pressed Enter
-        if stop_rx.try_recv().is_ok() {
-            println!("\nStopping search...");
+        // Stop early if we found at least one sender and haven't received updates for a while
+        if !services.is_empty() && browse_start.elapsed() > Duration::from_secs(5) {
             break;
         }
 
@@ -179,9 +160,6 @@ pub async fn receive_mdns(output_dir: Option<PathBuf>) -> Result<()> {
     // Stop browsing
     let _ = mdns.stop_browse(SERVICE_TYPE);
     let _ = mdns.shutdown();
-
-    // Cancel the Enter key watcher
-    stop_tx.lock().await.take();
 
     if services.is_empty() {
         println!("\nNo wormhole senders found on the network.");
