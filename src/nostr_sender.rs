@@ -1,6 +1,9 @@
 use anyhow::{Context, Result};
+use futures::stream::{self, StreamExt};
 use nostr_sdk::prelude::*;
 use std::path::Path;
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::Arc;
 use tokio::fs::File;
 use tokio::io::AsyncReadExt;
 use tokio::time::{timeout, Duration};
@@ -16,10 +19,10 @@ use crate::nostr_protocol::{
 use crate::transfer::format_bytes;
 use crate::wormhole::generate_nostr_code;
 
-const ACK_TIMEOUT_SECS: u64 = 30; // Increased from 10s to 30s for better reliability
-const MAX_RETRIES: u32 = 3;
+const COMPLETION_ACK_TIMEOUT_SECS: u64 = 60; // Match secure-send-web timeout
 const MIN_RELAYS_REQUIRED: usize = 2;
 const SUBSCRIPTION_SETUP_DELAY_SECS: u64 = 3; // Wait for subscription to propagate
+const CONCURRENT_CHUNKS: usize = 5; // Number of chunks to send concurrently
 
 /// Internal helper for common Nostr transfer logic.
 /// Handles relay connection, encryption, wormhole code, and chunk transfer with ACKs.
@@ -231,103 +234,76 @@ async fn transfer_data_nostr_internal(
         anyhow::bail!("Timeout waiting for receiver to connect (5 minutes)");
     }
 
-    // Send chunks
-    let mut buffer = vec![0u8; NOSTR_CHUNK_SIZE];
-    let mut bytes_sent = 0u64;
+    // Read all data and prepare encrypted chunks upfront (max 512KB, fits in memory)
+    println!("📦 Reading and encrypting {} chunks...", total_chunks);
+    let mut all_data = Vec::with_capacity(file_size as usize);
+    file.read_to_end(&mut all_data).await.context("Failed to read file data")?;
 
-    println!("📤 Sending {} chunks...", total_chunks);
-
+    // Prepare all chunk events
+    let mut chunk_events = Vec::with_capacity(total_chunks as usize);
     for seq in 0..total_chunks {
-        let bytes_read = file.read(&mut buffer).await.context("Failed to read data")?;
-        if bytes_read == 0 {
-            break;
-        }
-
-        let chunk_data = &buffer[..bytes_read];
+        let start = (seq as usize) * NOSTR_CHUNK_SIZE;
+        let end = std::cmp::min(start + NOSTR_CHUNK_SIZE, all_data.len());
+        let chunk_data = &all_data[start..end];
 
         // Encrypt chunk
         let encrypted_chunk =
             encrypt_chunk(&encryption_key, seq as u64, chunk_data).context("Failed to encrypt chunk")?;
 
-        // Try sending chunk with retries
-        let mut attempt = 0;
-        let mut ack_received = false;
+        // Create chunk event
+        let chunk_event = create_chunk_event(
+            &sender_keys,
+            &transfer_id,
+            seq,
+            total_chunks,
+            &encrypted_chunk,
+        )?;
 
-        while attempt < MAX_RETRIES && !ack_received {
-            attempt += 1;
-
-            // Create and publish chunk event
-            let chunk_event = create_chunk_event(
-                &sender_keys,
-                &transfer_id,
-                seq,
-                total_chunks,
-                &encrypted_chunk,
-            )?;
-
-            client
-                .send_event(&chunk_event)
-                .await
-                .context("Failed to send chunk event")?;
-
-            // Wait for ACK
-            let ack_deadline = tokio::time::Instant::now() + Duration::from_secs(ACK_TIMEOUT_SECS);
-
-            while tokio::time::Instant::now() < ack_deadline {
-                match timeout(Duration::from_secs(1), notifications.recv()).await {
-                    Ok(Ok(RelayPoolNotification::Event { event, .. })) => {
-                        if is_ack_event(&event)
-                            && get_transfer_id(&event).as_deref() == Some(&transfer_id)
-                        {
-                            if let Ok(ack_seq) = parse_ack_event(&event) {
-                                if ack_seq == seq as i32 {
-                                    ack_received = true;
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                    Ok(Ok(_)) => continue,
-                    Ok(Err(_)) => break,
-                    Err(_) => continue,
-                }
-            }
-
-            if !ack_received && attempt < MAX_RETRIES {
-                eprintln!("⚠️  Chunk {} ACK timeout, retrying ({}/{})", seq, attempt, MAX_RETRIES);
-            }
-        }
-
-        if !ack_received {
-            anyhow::bail!("❌ Chunk {} failed after {} retries", seq, MAX_RETRIES);
-        }
-
-        bytes_sent += bytes_read as u64;
-
-        // Progress update
-        let percent = if file_size == 0 {
-            100
-        } else {
-            (bytes_sent as f64 / file_size as f64 * 100.0) as u32
-        };
-        println!(
-            "   Progress: {}% ({}/{}) - Chunk {}/{}",
-            percent,
-            format_bytes(bytes_sent),
-            format_bytes(file_size),
-            seq + 1,
-            total_chunks
-        );
-
-        // Small delay between chunks
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        chunk_events.push((seq, chunk_event));
     }
+
+    // Send chunks concurrently (fire-and-forget)
+    println!("📤 Sending {} chunks ({} concurrent)...", total_chunks, CONCURRENT_CHUNKS);
+    let chunks_sent = Arc::new(AtomicU32::new(0));
+    let client = Arc::new(client);
+
+    let send_results: Vec<Result<u32, anyhow::Error>> = stream::iter(chunk_events)
+        .map(|(seq, chunk_event)| {
+            let client = Arc::clone(&client);
+            let chunks_sent = Arc::clone(&chunks_sent);
+            async move {
+                client
+                    .send_event(&chunk_event)
+                    .await
+                    .context(format!("Failed to send chunk {}", seq))?;
+
+                let sent = chunks_sent.fetch_add(1, Ordering::SeqCst) + 1;
+                let percent = (sent as f64 / total_chunks as f64 * 100.0) as u32;
+                println!(
+                    "   Progress: {}% - Chunk {}/{} sent",
+                    percent, sent, total_chunks
+                );
+
+                Ok(seq)
+            }
+        })
+        .buffer_unordered(CONCURRENT_CHUNKS)
+        .collect()
+        .await;
+
+    // Check for any errors
+    for result in send_results {
+        result?;
+    }
+
+    // Unwrap Arc to get client back for completion ACK
+    let client = Arc::try_unwrap(client).unwrap_or_else(|arc| (*arc).clone());
 
     println!("✅ All chunks sent successfully!");
 
     // Wait for final completion ACK
     println!("⏳ Waiting for receiver to confirm completion...");
-    let final_ack_timeout = Duration::from_secs(30);
+    let final_ack_timeout = Duration::from_secs(COMPLETION_ACK_TIMEOUT_SECS);
     let final_ack_deadline = tokio::time::Instant::now() + final_ack_timeout;
     let mut final_ack_received = false;
 
