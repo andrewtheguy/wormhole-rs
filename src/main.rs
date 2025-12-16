@@ -3,7 +3,7 @@ use clap::{Parser, Subcommand};
 use std::io::{self, Write};
 use std::path::PathBuf;
 #[cfg(feature = "iroh")]
-use wormhole_rs::{receiver_iroh, sender_iroh};
+use wormhole_rs::{iroh_receiver, iroh_sender};
 use wormhole_rs::wormhole;
 
 #[cfg(feature = "onion")]
@@ -164,9 +164,9 @@ async fn main() -> Result<()> {
             } => {
                 validate_path(&path, folder)?;
                 if folder {
-                    sender_iroh::send_folder(&path, extra_encrypt, relay_url).await?;
+                    iroh_sender::send_folder(&path, extra_encrypt, relay_url).await?;
                 } else {
-                    sender_iroh::send_file(&path, extra_encrypt, relay_url).await?;
+                    iroh_sender::send_file(&path, extra_encrypt, relay_url).await?;
                 }
             }
 
@@ -267,7 +267,7 @@ async fn receive_with_code(
     match token.protocol.as_str() {
         #[cfg(feature = "iroh")]
         wormhole::PROTOCOL_IROH => {
-            receiver_iroh::receive(code, output, relay_url).await?;
+            iroh_receiver::receive(code, output, relay_url).await?;
         }
         #[cfg(feature = "onion")]
         wormhole::PROTOCOL_TOR => {

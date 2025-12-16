@@ -4,9 +4,9 @@ pub mod folder;
 pub mod iroh_common;
 pub mod nostr_protocol;
 #[cfg(feature = "iroh")]
-pub mod receiver_iroh;
+pub mod iroh_receiver;
 #[cfg(feature = "iroh")]
-pub mod sender_iroh;
+pub mod iroh_sender;
 pub mod transfer;
 pub mod wormhole;
 
