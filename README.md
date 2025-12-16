@@ -1,15 +1,21 @@
 # wormhole-rs
 
-A secure peer-to-peer file transfer tool with four transport modes:
+A secure peer-to-peer file transfer tool with two main transport categories:
+
+**1. Internet Transfers** (Wormhole Code)
 - **iroh mode** - Direct P2P transfers using [iroh](https://github.com/n0-computer/iroh) with QUIC/TLS (automatic relay fallback)
 - **Hybrid mode** - WebRTC transfers with Nostr signaling and relay fallback - requires `webrtc` feature
 - **Tor mode** - Anonymous transfers via Tor hidden services (.onion addresses) - requires `onion` feature
+
+**2. Local Transfers** (Passphrase)
 - **Local mode** - LAN transfers using mDNS discovery and TCP - no internet required
 
 ## Features
 
 - **End-to-end encryption** - All connections use strong encryption (AES-256-GCM / ChaCha20-Poly1305)
-- **Four transport modes** - Choose between Iroh P2P, Hybrid (WebRTC+Nostr), Tor, or Local LAN
+- **Two Transfer Categories**
+    - **Internet**: Global P2P via Iroh, Hybrid (WebRTC+Nostr), or Tor
+    - **Local**: Private LAN transfers using mDNS
 - **File and folder transfers** - Send individual files or entire directories (automatically archived)
 - **Local discovery** - mDNS for same-network transfers
 - **NAT traversal** - STUN/TURN for WebRTC, relay fallback for Iroh/Nostr
