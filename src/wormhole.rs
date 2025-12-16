@@ -12,8 +12,8 @@ pub const PROTOCOL_IROH: &str = "iroh";
 /// Protocol identifier for tor transport
 pub const PROTOCOL_TOR: &str = "tor";
 
-/// Protocol identifier for hybrid transport (WebRTC + Nostr signaling + relay fallback)
-pub const PROTOCOL_HYBRID: &str = "hybrid";
+/// Protocol identifier for webrtc transport (WebRTC + Nostr signaling + relay fallback)
+pub const PROTOCOL_WEBRTC: &str = "webrtc";
 
 /// Minimal address for serialization - only contains node ID and relay URL
 /// IP addresses are auto-discovered by iroh, so we don't need them in the wormhole code
@@ -62,7 +62,7 @@ impl MinimalAddr {
 pub struct WormholeToken {
     /// Token format version (for future compatibility checks)
     pub version: u8,
-    /// Protocol identifier (e.g., "iroh", "tor", "hybrid")
+    /// Protocol identifier (e.g., "iroh", "tor", "webrtc")
     pub protocol: String,
     /// Whether extra AES-256-GCM encryption layer is used
     pub extra_encrypt: bool,
@@ -79,22 +79,22 @@ pub struct WormholeToken {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub onion_address: Option<String>,
 
-    // Version 2 fields (Hybrid-specific):
+    // Version 2 fields (WebRTC-specific):
     /// Sender's ephemeral Nostr public key for signaling (hex)
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub hybrid_sender_pubkey: Option<String>,
+    pub webrtc_sender_pubkey: Option<String>,
     /// Unique transfer session ID
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub hybrid_transfer_id: Option<String>,
+    pub webrtc_transfer_id: Option<String>,
     /// List of Nostr relay URLs for signaling
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub hybrid_relays: Option<Vec<String>>,
+    pub webrtc_relays: Option<Vec<String>>,
     /// Transfer type: "file" or "folder"
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub hybrid_transfer_type: Option<String>,
-    /// Original filename for hybrid transfers
+    pub webrtc_transfer_type: Option<String>,
+    /// Original filename for webrtc transfers
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub hybrid_filename: Option<String>,
+    pub webrtc_filename: Option<String>,
 }
 
 /// Generate a wormhole code from endpoint address
@@ -124,11 +124,11 @@ pub fn generate_code(
         key: key.map(|k| URL_SAFE_NO_PAD.encode(k)),
         addr: Some(minimal_addr),
         onion_address: None,
-        hybrid_sender_pubkey: None,
-        hybrid_transfer_id: None,
-        hybrid_relays: None,
-        hybrid_transfer_type: None,
-        hybrid_filename: None,
+        webrtc_sender_pubkey: None,
+        webrtc_transfer_id: None,
+        webrtc_relays: None,
+        webrtc_transfer_type: None,
+        webrtc_filename: None,
     };
 
     let serialized =
@@ -160,11 +160,11 @@ pub fn generate_tor_code(
         key: key.map(|k| URL_SAFE_NO_PAD.encode(k)),
         addr: None,
         onion_address: Some(onion_address),
-        hybrid_sender_pubkey: None,
-        hybrid_transfer_id: None,
-        hybrid_relays: None,
-        hybrid_transfer_type: None,
-        hybrid_filename: None,
+        webrtc_sender_pubkey: None,
+        webrtc_transfer_id: None,
+        webrtc_relays: None,
+        webrtc_transfer_type: None,
+        webrtc_filename: None,
     };
 
     let serialized =
@@ -173,17 +173,17 @@ pub fn generate_tor_code(
     Ok(URL_SAFE_NO_PAD.encode(&serialized))
 }
 
-/// Generate a wormhole code for hybrid transfer (WebRTC + Nostr signaling + relay fallback)
+/// Generate a wormhole code for webrtc transfer (WebRTC + Nostr signaling + relay fallback)
 /// Format: base64url(json(WormholeToken))
 ///
 /// # Arguments
-/// * `key` - The AES-256-GCM encryption key (always required for hybrid)
+/// * `key` - The AES-256-GCM encryption key (always required for webrtc)
 /// * `sender_pubkey` - Sender's ephemeral Nostr public key for signaling (hex)
 /// * `transfer_id` - Unique transfer session ID
 /// * `relays` - List of Nostr relay URLs for signaling
 /// * `filename` - Original filename
 /// * `transfer_type` - "file" or "folder"
-pub fn generate_hybrid_code(
+pub fn generate_webrtc_code(
     key: &[u8; 32],
     sender_pubkey: String,
     transfer_id: String,
@@ -193,16 +193,16 @@ pub fn generate_hybrid_code(
 ) -> Result<String> {
     let token = WormholeToken {
         version: CURRENT_VERSION,
-        protocol: PROTOCOL_HYBRID.to_string(),
-        extra_encrypt: true, // Always true for hybrid
+        protocol: PROTOCOL_WEBRTC.to_string(),
+        extra_encrypt: true, // Always true for webrtc
         key: Some(URL_SAFE_NO_PAD.encode(key)),
         addr: None,
         onion_address: None,
-        hybrid_sender_pubkey: Some(sender_pubkey),
-        hybrid_transfer_id: Some(transfer_id),
-        hybrid_relays: relays,
-        hybrid_transfer_type: Some(transfer_type.to_string()),
-        hybrid_filename: Some(filename),
+        webrtc_sender_pubkey: Some(sender_pubkey),
+        webrtc_transfer_id: Some(transfer_id),
+        webrtc_relays: relays,
+        webrtc_transfer_type: Some(transfer_type.to_string()),
+        webrtc_filename: Some(filename),
     };
 
     let serialized =
@@ -276,14 +276,14 @@ pub fn parse_code(code: &str) -> Result<WormholeToken> {
     if token.version == 2 {
         if token.protocol != PROTOCOL_IROH
             && token.protocol != PROTOCOL_TOR
-            && token.protocol != PROTOCOL_HYBRID
+            && token.protocol != PROTOCOL_WEBRTC
         {
             anyhow::bail!(
                 "Invalid protocol '{}' in v2 token. Supported protocols: '{}', '{}', '{}'",
                 token.protocol,
                 PROTOCOL_IROH,
                 PROTOCOL_TOR,
-                PROTOCOL_HYBRID
+                PROTOCOL_WEBRTC
             );
         }
     }
@@ -323,22 +323,22 @@ pub fn parse_code(code: &str) -> Result<WormholeToken> {
         }
     }
 
-    // For version 2 with hybrid protocol, ensure hybrid fields and key are present
-    if token.version == 2 && token.protocol == PROTOCOL_HYBRID {
-        if token.hybrid_sender_pubkey.is_none() {
-            anyhow::bail!("Invalid v2 hybrid token: missing sender pubkey");
+    // For version 2 with webrtc protocol, ensure webrtc fields and key are present
+    if token.version == 2 && token.protocol == PROTOCOL_WEBRTC {
+        if token.webrtc_sender_pubkey.is_none() {
+            anyhow::bail!("Invalid v2 webrtc token: missing sender pubkey");
         }
-        if token.hybrid_transfer_id.is_none() {
-            anyhow::bail!("Invalid v2 hybrid token: missing transfer ID");
+        if token.webrtc_transfer_id.is_none() {
+            anyhow::bail!("Invalid v2 webrtc token: missing transfer ID");
         }
         if token.key.is_none() {
-            anyhow::bail!("Invalid v2 hybrid token: encryption key required for hybrid transfers");
+            anyhow::bail!("Invalid v2 webrtc token: encryption key required for webrtc transfers");
         }
-        if token.hybrid_filename.is_none() {
-            anyhow::bail!("Invalid v2 hybrid token: missing filename");
+        if token.webrtc_filename.is_none() {
+            anyhow::bail!("Invalid v2 webrtc token: missing filename");
         }
-        if token.hybrid_transfer_type.is_none() {
-            anyhow::bail!("Invalid v2 hybrid token: missing transfer type");
+        if token.webrtc_transfer_type.is_none() {
+            anyhow::bail!("Invalid v2 webrtc token: missing transfer type");
         }
     }
 

@@ -1,7 +1,7 @@
-//! Nostr relay transport for hybrid fallback
+//! Nostr relay transport for webrtc fallback
 //!
 //! This module provides relay-based file transfer when WebRTC direct connection fails.
-//! It uses the same credentials (keys, transfer_id, key) from the hybrid signaling.
+//! It uses the same credentials (keys, transfer_id, key) from the webrtc signaling.
 
 use anyhow::{Context, Result};
 use futures::stream::{self, StreamExt};
@@ -35,18 +35,18 @@ pub enum TransferResult {
     Unconfirmed,
 }
 
-/// Send file data via Nostr relay as fallback for hybrid transport.
+/// Send file data via Nostr relay as fallback for webrtc transport.
 ///
-/// This function uses existing credentials from the hybrid signaling,
+/// This function uses existing credentials from the webrtc signaling,
 /// so the receiver can use the same wormhole code that was already displayed.
 ///
 /// # Arguments
 /// * `file` - Open file handle to send
 /// * `file_size` - Size of the file in bytes
-/// * `sender_keys` - Sender's Nostr keys (from hybrid signaling)
-/// * `transfer_id` - Transfer ID (from hybrid signaling)
-/// * `encryption_key` - AES-256-GCM key (from hybrid signaling)
-/// * `relay_urls` - Relay URLs to use (from hybrid signaling)
+/// * `sender_keys` - Sender's Nostr keys (from webrtc signaling)
+/// * `transfer_id` - Transfer ID (from webrtc signaling)
+/// * `encryption_key` - AES-256-GCM key (from webrtc signaling)
+/// * `relay_urls` - Relay URLs to use (from webrtc signaling)
 pub async fn send_relay_fallback(
     mut file: File,
     file_size: u64,

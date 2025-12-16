@@ -1,7 +1,7 @@
-//! Nostr relay transport receiver for hybrid fallback
+//! Nostr relay transport receiver for webrtc fallback
 //!
 //! This module provides relay-based file receiving when WebRTC direct connection fails.
-//! It uses credentials from the hybrid token that was already displayed to the user.
+//! It uses credentials from the webrtc token that was already displayed to the user.
 
 use anyhow::{Context, Result};
 use nostr_sdk::prelude::*;
@@ -21,7 +21,7 @@ use crate::nostr_protocol::{
     create_ack_event, create_retry_event, get_transfer_id, is_chunk_event, parse_chunk_event,
 };
 use crate::transfer::format_bytes;
-use crate::wormhole::{WormholeToken, PROTOCOL_HYBRID};
+use crate::wormhole::{WormholeToken, PROTOCOL_WEBRTC};
 
 const CHUNK_RECEIVE_TIMEOUT_SECS: u64 = 300;
 const MIN_RELAYS_REQUIRED: usize = 2;
@@ -49,38 +49,46 @@ fn setup_cleanup_handler(cleanup_path: TempFileCleanup) {
     });
 }
 
-/// Receive a file via Nostr relays using a hybrid WormholeToken (for fallback).
+/// Receive a file via Nostr relays using a webrtc WormholeToken (for fallback).
 pub async fn receive_nostr_with_token(
     token: &WormholeToken,
     output_dir: Option<PathBuf>,
 ) -> Result<()> {
-    // Only support hybrid tokens
-    if token.protocol != PROTOCOL_HYBRID {
+    // Only support webrtc tokens
+    if token.protocol != PROTOCOL_WEBRTC {
         anyhow::bail!(
-            "receive_nostr_with_token only supports hybrid protocol, got: {}",
+            "receive_nostr_with_token only supports webrtc protocol, got: {}",
             token.protocol
         );
     }
 
     println!("Receiving via Nostr relay mode...");
 
-    // Extract fields from hybrid token
+    // Extract fields from webrtc token
     let sender_pubkey_hex = token
-        .hybrid_sender_pubkey
+        .webrtc_sender_pubkey
         .clone()
-        .context("Missing sender pubkey in hybrid token")?;
+        .context("Missing sender pubkey in wormhole code")?;
     let transfer_id = token
-        .hybrid_transfer_id
+        .webrtc_transfer_id
         .clone()
-        .context("Missing transfer ID in hybrid token")?;
+        .context("Missing transfer ID in wormhole code")?;
     let relay_urls = token
-        .hybrid_relays
+        .webrtc_relays
         .clone()
-        .context("Missing relay list in hybrid token")?;
+        .context("Missing relays in wormhole code")?;
     let transfer_type = token
-        .hybrid_transfer_type
+        .webrtc_transfer_type
         .clone()
-        .unwrap_or_else(|| "file".to_string());
+        .context("Missing transfer type in wormhole code")?;
+
+    // Use filename from token if available, otherwise use default
+    let filename = if let Some(name) = &token.webrtc_filename {
+        name.clone()
+    } else {
+        // Fallback or error
+        "downloaded_file".to_string()
+    };
 
     let sender_pubkey =
         PublicKey::from_hex(&sender_pubkey_hex).context("Invalid sender public key")?;
@@ -324,12 +332,6 @@ pub async fn receive_nostr_with_token(
         println!("\nFolder received successfully!");
         println!("Extracted to: {}", extract_dir.display());
     } else {
-        // Get filename from hybrid_filename
-        let filename = token.hybrid_filename.clone().unwrap_or_else(|| {
-            let truncated_id = transfer_id.chars().take(8).collect::<String>();
-            format!("received_file_{}.bin", truncated_id)
-        });
-
         println!("Filename: {}", filename);
 
         let output_dir = output_dir.unwrap_or_else(|| PathBuf::from("."));

@@ -4,7 +4,7 @@ A secure peer-to-peer file transfer tool with two main transport categories:
 
 **1. Internet Transfers** (Wormhole Code)
 - **iroh mode** - Direct P2P transfers using [iroh](https://github.com/n0-computer/iroh) with QUIC/TLS (automatic relay fallback)
-- **Hybrid mode** - WebRTC transfers with Nostr signaling and relay fallback - requires `webrtc` feature
+- **WebRTC mode** - WebRTC transfers with Nostr signaling and relay fallback - requires `webrtc` feature
 - **Tor mode** - Anonymous transfers via Tor hidden services (.onion addresses) - requires `onion` feature
 
 **2. Local Transfers** (Passphrase)
@@ -14,7 +14,7 @@ A secure peer-to-peer file transfer tool with two main transport categories:
 
 - **End-to-end encryption** - All connections use strong encryption (AES-256-GCM / ChaCha20-Poly1305)
 - **Two Transfer Categories**
-    - **Internet**: Global P2P via Iroh, Hybrid (WebRTC+Nostr), or Tor
+    - **Internet**: Global P2P via Iroh, WebRTC, or Tor
     - **Local**: Private LAN transfers using mDNS
 - **File and folder transfers** - Send individual files or entire directories (automatically archived)
 - **Local discovery** - mDNS for same-network transfers
@@ -47,16 +47,22 @@ Install with custom release tag:
 irm https://raw.githubusercontent.com/andrewtheguy/wormhole-rs/main/install.ps1 | iex -Args <RELEASE_TAG>
 ```
 
-### Manual Build
+### From Source
 
 ```bash
-# Build with default features (Local mode only)
+# Default build (Local mode only - lightweight)
 cargo build --release
 
-# Build with Iroh support
+# With Iroh support (recommended)
 cargo build --release --features iroh
 
-# Build with all features (Iroh + Local + Hybrid + Tor)
+# With WebRTC support
+cargo build --release --features webrtc
+
+# With Tor support
+cargo build --release --features onion
+
+# Full feauture set
 cargo build --release --all-features
 ```
 
@@ -81,7 +87,7 @@ wormhole-rs send iroh /path/to/folder --folder
 wormhole-rs send iroh /path/to/file --extra-encrypt
 ```
 
-#### 2. Hybrid Mode
+#### 2. WebRTC Mode
 *Browser-compatible. Uses WebRTC + Nostr signaling.*
 > Requires building with `--features webrtc`.
 
@@ -126,13 +132,13 @@ wormhole-rs receive-local
 ## Security
 
 All modes provide end-to-end encryption.
-- **Global Modes (Iroh, Hybrid, Tor)**: The **Wormhole Code** contains the key/address information.
+- **Global Modes (Iroh, WebRTC, Tor)**: The **Wormhole Code** contains the key/address information.
 - **Local Mode**: Uses a short **Passphrase** for key derivation.
 
 | Mode | Type | Key Exchange | Transport Encryption |
 |------|------|--------------|---------------------|
 | iroh | Internet | Wormhole Code | QUIC/TLS 1.3 |
-| Hybrid | Internet | Wormhole Code | DTLS (WebRTC) / TLS (Relay) |
+| WebRTC | Internet | Wormhole Code | DTLS (WebRTC) / TLS (Relay) |
 | Tor | Internet | Wormhole Code | Tor circuits |
 | Local | LAN | **Passphrase** | None (TCP) |
 

@@ -10,7 +10,7 @@ pub mod sender_iroh;
 pub mod transfer;
 pub mod wormhole;
 
-// Internal modules for hybrid fallback (only needed with webrtc feature)
+// Internal modules for webrtc fallback (only needed with webrtc feature)
 #[cfg(feature = "webrtc")]
 pub(crate) mod nostr_receiver;
 #[cfg(feature = "webrtc")]
@@ -27,13 +27,13 @@ pub mod mdns_receiver;
 pub mod mdns_sender;
 
 #[cfg(feature = "webrtc")]
-pub mod hybrid_receiver;
+pub mod webrtc_sender;
 #[cfg(feature = "webrtc")]
-pub mod hybrid_sender;
-#[cfg(feature = "webrtc")]
-pub mod nostr_signaling;
+pub mod webrtc_receiver;
 #[cfg(feature = "webrtc")]
 pub mod webrtc_common;
+#[cfg(feature = "webrtc")]
+pub mod nostr_signaling;
 
 #[cfg(test)]
 mod crypto_tests;
@@ -41,5 +41,6 @@ mod crypto_tests;
 #[cfg(test)]
 mod nostr_protocol_tests;
 
-#[cfg(all(test, feature = "webrtc"))]
-mod hybrid_receiver_tests;
+#[cfg(test)]
+#[cfg(feature = "webrtc")]
+mod webrtc_receiver_tests;

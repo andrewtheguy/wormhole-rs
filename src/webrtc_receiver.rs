@@ -1,6 +1,6 @@
-//! Hybrid transport receiver: WebRTC with Nostr signaling + relay fallback
+//! WebRTC transport receiver: WebRTC with Nostr signaling + relay fallback
 //!
-//! This module handles receiving files over hybrid transport:
+//! This module handles receiving files over webrtc transport:
 //! 1. Uses Nostr for WebRTC signaling (replacing PeerJS)
 //! 2. Attempts direct P2P connection via STUN
 //! 3. Falls back to Nostr relay mode if WebRTC fails
@@ -25,7 +25,7 @@ use crate::nostr_receiver;
 use crate::nostr_signaling::{create_receiver_signaling, NostrSignaling, SignalingMessage};
 use crate::transfer::{format_bytes, num_chunks, FileHeader, TransferType};
 use crate::webrtc_common::{setup_data_channel_handlers, WebRtcPeer};
-use crate::wormhole::{decode_key, parse_code, PROTOCOL_HYBRID};
+use crate::wormhole::{decode_key, parse_code, PROTOCOL_WEBRTC};
 
 /// Connection timeout for WebRTC handshake
 const WEBRTC_CONNECTION_TIMEOUT: Duration = Duration::from_secs(30);
@@ -334,28 +334,30 @@ async fn try_webrtc_receive(
     Ok(WebRtcResult::Success)
 }
 
-/// Receive a file or folder via hybrid transport
-pub async fn receive_hybrid(code: &str, output_dir: Option<PathBuf>) -> Result<()> {
+
+
+/// Receive a file or folder via webrtc transport
+pub async fn receive_webrtc(code: &str, output_dir: Option<PathBuf>) -> Result<()> {
     println!("Parsing wormhole code...");
 
     // Parse the wormhole code
     let token = parse_code(code).context("Failed to parse wormhole code")?;
 
-    if token.protocol != PROTOCOL_HYBRID {
-        anyhow::bail!("Expected hybrid protocol, got: {}", token.protocol);
+    if token.protocol != PROTOCOL_WEBRTC {
+        anyhow::bail!("Expected webrtc protocol, got: {}", token.protocol);
     }
 
-    // Extract hybrid-specific fields
+    // Extract webrtc-specific fields
     let sender_pubkey_hex = token
-        .hybrid_sender_pubkey
+        .webrtc_sender_pubkey
         .clone()
         .context("Missing sender pubkey in wormhole code")?;
     let transfer_id = token
-        .hybrid_transfer_id
+        .webrtc_transfer_id
         .clone()
         .context("Missing transfer ID in wormhole code")?;
     let relays = token
-        .hybrid_relays
+        .webrtc_relays
         .clone()
         .context("Missing relay list in wormhole code")?;
     let key = token
@@ -364,7 +366,7 @@ pub async fn receive_hybrid(code: &str, output_dir: Option<PathBuf>) -> Result<(
         .map(|k| decode_key(k))
         .transpose()
         .context("Failed to decode encryption key")?
-        .context("Encryption key required for hybrid transfers")?;
+        .context("Encryption key required for webrtc transfers")?;
 
     // Parse sender public key
     let sender_pubkey: nostr_sdk::PublicKey = sender_pubkey_hex

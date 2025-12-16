@@ -1,4 +1,4 @@
-//! Nostr-based WebRTC signaling for hybrid transport
+//! Nostr-based WebRTC signaling for webrtc transport
 //!
 //! This module provides WebRTC signaling via Nostr events, replacing the PeerJS
 //! WebSocket signaling server. It enables decentralized peer discovery and

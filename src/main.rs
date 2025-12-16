@@ -10,7 +10,7 @@ use wormhole_rs::wormhole;
 use wormhole_rs::{onion_receiver, onion_sender};
 
 #[cfg(feature = "webrtc")]
-use wormhole_rs::{hybrid_receiver, hybrid_sender::{self, TransferResult}};
+use wormhole_rs::{webrtc_receiver, webrtc_sender::{self, TransferResult}};
 
 use wormhole_rs::{mdns_receiver, mdns_sender};
 
@@ -92,7 +92,7 @@ enum SendTransport {
 
     #[cfg(feature = "webrtc")]
     /// Send via WebRTC with Nostr signaling + relay fallback
-    Hybrid {
+    WebRtc {
         /// Path to file or folder
         path: PathBuf,
 
@@ -185,7 +185,7 @@ async fn main() -> Result<()> {
             }
 
             #[cfg(feature = "webrtc")]
-            SendTransport::Hybrid {
+            SendTransport::WebRtc {
                 path,
                 folder,
                 nostr_relay,
@@ -199,7 +199,7 @@ async fn main() -> Result<()> {
                     Some(nostr_relay)
                 };
                 let result = if folder {
-                    hybrid_sender::send_folder_hybrid(
+                    webrtc_sender::send_folder_webrtc(
                         &path,
                         force_nostr_relay,
                         custom_relays,
@@ -207,7 +207,7 @@ async fn main() -> Result<()> {
                     )
                     .await?
                 } else {
-                    hybrid_sender::send_file_hybrid(
+                    webrtc_sender::send_file_webrtc(
                         &path,
                         force_nostr_relay,
                         custom_relays,
@@ -274,8 +274,8 @@ async fn receive_with_code(
             onion_receiver::receive_tor(code, output).await?;
         }
         #[cfg(feature = "webrtc")]
-        wormhole::PROTOCOL_HYBRID => {
-            hybrid_receiver::receive_hybrid(code, output).await?;
+        wormhole::PROTOCOL_WEBRTC => {
+            webrtc_receiver::receive_webrtc(code, output).await?;
         }
         proto => {
             #[cfg(not(feature = "iroh"))]
@@ -295,9 +295,9 @@ async fn receive_with_code(
                 );
             }
             #[cfg(not(feature = "webrtc"))]
-            if proto == wormhole::PROTOCOL_HYBRID {
+            if proto == wormhole::PROTOCOL_WEBRTC {
                 anyhow::bail!(
-                    "This wormhole code uses hybrid transport, but WebRTC support is disabled.\n\
+                    "This wormhole code uses webrtc transport, but WebRTC support is disabled.\n\
                      To enable WebRTC support, rebuild with: cargo build --features webrtc\n\
                      Or run with: cargo run --features webrtc -- receive"
                 );

@@ -1,6 +1,6 @@
-//! Hybrid transport sender: WebRTC with Nostr signaling + relay fallback
+//! WebRTC transport sender: WebRTC with Nostr signaling + relay fallback
 //!
-//! This module implements the hybrid transport which:
+//! This module implements the webrtc transport which:
 //! 1. Uses Nostr for WebRTC signaling (replacing PeerJS)
 //! 2. Attempts direct P2P connection via STUN
 //! 3. Falls back to Nostr relay mode if WebRTC fails
@@ -27,7 +27,7 @@ use crate::nostr_sender;
 use crate::nostr_signaling::{create_sender_signaling, NostrSignaling, SignalingMessage};
 use crate::transfer::{format_bytes, num_chunks, FileHeader, TransferType};
 use crate::webrtc_common::{setup_data_channel_handlers, WebRtcPeer};
-use crate::wormhole::generate_hybrid_code;
+use crate::wormhole::generate_webrtc_code;
 
 /// Connection timeout for WebRTC handshake
 const WEBRTC_CONNECTION_TIMEOUT: Duration = Duration::from_secs(30);
@@ -370,8 +370,8 @@ async fn try_webrtc_transfer(
     Ok(WebRtcResult::Success)
 }
 
-/// Internal helper for hybrid transfer logic.
-async fn transfer_data_hybrid_internal(
+/// Internal helper for webrtc transfer logic.
+async fn transfer_data_webrtc_internal(
     mut file: File,
     filename: String,
     file_size: u64,
@@ -407,7 +407,7 @@ async fn transfer_data_hybrid_internal(
         println!("Transfer ID: {}", signaling.transfer_id());
 
         // Generate wormhole code
-        let code = generate_hybrid_code(
+        let code = generate_webrtc_code(
             &key,
             signaling.public_key().to_hex(),
             signaling.transfer_id().to_string(),
@@ -447,7 +447,7 @@ async fn transfer_data_hybrid_internal(
     println!("Transfer ID: {}", signaling.transfer_id());
 
     // Generate wormhole code
-    let code = generate_hybrid_code(
+    let code = generate_webrtc_code(
         &key,
         signaling.public_key().to_hex(),
         signaling.transfer_id().to_string(),
@@ -504,8 +504,8 @@ async fn transfer_data_hybrid_internal(
     result
 }
 
-/// Send a file via hybrid transport (WebRTC + Nostr fallback)
-pub async fn send_file_hybrid(
+/// Send a file via webrtc transport (WebRTC + Nostr fallback)
+pub async fn send_file_webrtc(
     file_path: &Path,
     force_relay: bool,
     custom_relays: Option<Vec<String>>,
@@ -533,8 +533,8 @@ pub async fn send_file_hybrid(
         .await
         .context("Failed to open file")?;
 
-    // Transfer using hybrid transport
-    transfer_data_hybrid_internal(
+    // Transfer using webrtc transport
+    transfer_data_webrtc_internal(
         file,
         filename,
         file_size,
@@ -546,8 +546,8 @@ pub async fn send_file_hybrid(
     .await
 }
 
-/// Send a folder as a tar archive via hybrid transport
-pub async fn send_folder_hybrid(
+/// Send a folder as a tar archive via webrtc transport
+pub async fn send_folder_webrtc(
     folder_path: &Path,
     force_relay: bool,
     custom_relays: Option<Vec<String>>,
@@ -584,8 +584,8 @@ pub async fn send_folder_hybrid(
         .await
         .context("Failed to open tar file")?;
 
-    // Transfer using hybrid transport
-    let result = transfer_data_hybrid_internal(
+    // Transfer using webrtc transport
+    let result = transfer_data_webrtc_internal(
         file,
         tar_filename,
         file_size,
