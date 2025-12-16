@@ -26,6 +26,8 @@ use crate::wormhole::{WormholeToken, PROTOCOL_HYBRID};
 const CHUNK_RECEIVE_TIMEOUT_SECS: u64 = 300;
 const MIN_RELAYS_REQUIRED: usize = 2;
 const SUBSCRIPTION_SETUP_DELAY_SECS: u64 = 3;
+/// How often to resend ready ACK (ephemeral events may be missed due to timing)
+const READY_ACK_INTERVAL_SECS: u64 = 5;
 
 /// Shared state for temp file cleanup on interrupt
 type TempFileCleanup = Arc<Mutex<Option<PathBuf>>>;
@@ -165,6 +167,8 @@ pub async fn receive_nostr_with_token(
     let mut received_chunks: HashMap<u32, Vec<u8>> = HashMap::new();
     let mut total_chunks: Option<u32> = None;
     let mut last_chunk_time = tokio::time::Instant::now();
+    let mut last_ack_time = tokio::time::Instant::now();
+    let mut first_chunk_received = false;
 
     println!("Receiving chunks...");
 
@@ -181,6 +185,18 @@ pub async fn receive_nostr_with_token(
             break;
         }
 
+        // Periodically resend ready ACK until first chunk is received
+        // (ephemeral events may be missed due to timing when both sides create new clients)
+        if !first_chunk_received
+            && last_ack_time.elapsed() > Duration::from_secs(READY_ACK_INTERVAL_SECS)
+        {
+            let ack_event = create_ack_event(&receiver_keys, &sender_pubkey, &transfer_id, 0)?;
+            if let Err(e) = client.send_event(&ack_event).await {
+                eprintln!("Warning: Failed to resend ready ACK: {}", e);
+            }
+            last_ack_time = tokio::time::Instant::now();
+        }
+
         match timeout(Duration::from_secs(5), notifications.recv()).await {
             Ok(Ok(RelayPoolNotification::Event { event, .. })) => {
                 if !is_chunk_event(&event) {
@@ -192,6 +208,10 @@ pub async fn receive_nostr_with_token(
 
                 match parse_chunk_event(&event) {
                     Ok((seq, total, encrypted_chunk)) => {
+                        if !first_chunk_received {
+                            first_chunk_received = true;
+                        }
+
                         if total_chunks.is_none() {
                             total_chunks = Some(total);
                             println!("Transfer consists of {} chunks", total);
