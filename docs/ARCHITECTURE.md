@@ -83,12 +83,12 @@ sequenceDiagram
 
     Relays->>Sender: 9. Forward ready ACK
 
-    loop For each 16KB chunk (fire-and-forget)
-        Sender->>Sender: Encrypt with AES-256-GCM
-        Sender->>Relays: Publish chunk event (kind 24242)
-        Relays->>Receiver: Forward chunk event
-        Receiver->>Receiver: Store chunk
-        Note over Sender: 100ms delay between chunks
+    Sender->>Sender: Encrypt all chunks upfront
+
+    par Send chunks concurrently (5 in-flight)
+        Sender->>Relays: Publish chunk events (kind 24242)
+        Relays->>Receiver: Forward chunk events
+        Receiver->>Receiver: Store chunks (out-of-order OK)
     end
 
     Receiver->>Receiver: 10. Decrypt all chunks
@@ -367,8 +367,9 @@ PIN-based wormhole code exchange for Nostr:
 5. Connects to Nostr relays (from API, custom, or defaults)
 6. Generates wormhole code with Nostr metadata (including transfer_type)
 7. Waits for receiver ready signal (ACK seq=0, 5 min timeout)
-8. Sends encrypted chunks as Nostr events (fire-and-forget, 100ms delay)
-9. Waits for completion ACK (seq=-1, 60s timeout)
+8. Reads all data and encrypts chunks upfront
+9. Sends chunks concurrently (5 in-flight, fire-and-forget)
+10. Waits for completion ACK (seq=-1, 60s timeout)
 
 ### `nostr_receiver.rs` (Nostr mode)
 1. Parses wormhole code for Nostr metadata
