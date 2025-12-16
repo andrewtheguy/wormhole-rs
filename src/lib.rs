@@ -1,6 +1,7 @@
 pub mod crypto;
 pub mod folder;
 pub mod iroh_common;
+pub mod nostr_pin;
 pub mod nostr_protocol;
 pub mod nostr_receiver;
 pub mod nostr_sender;

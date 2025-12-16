@@ -12,8 +12,13 @@ use crate::crypto::decrypt_chunk;
 use crate::folder::{
     extract_tar_archive, get_extraction_dir, print_skipped_entries, print_tar_extraction_info,
 };
+use crate::nostr_pin::{
+    compute_pin_hint, decrypt_wormhole_code, parse_pin_exchange_event, pin_exchange_kind,
+    PIN_LENGTH,
+};
 use crate::nostr_protocol::{
     create_ack_event, discover_sender_relays, get_transfer_id, is_chunk_event, parse_chunk_event,
+    DEFAULT_NOSTR_RELAYS,
 };
 use crate::transfer::format_bytes;
 use crate::wormhole::{parse_code, PROTOCOL_NOSTR};
@@ -427,4 +432,98 @@ pub async fn receive_file_nostr(
     println!("👋 Disconnected from Nostr relays.");
 
     Ok(())
+}
+
+/// Receive a file via Nostr using PIN-based wormhole code exchange.
+///
+/// Prompts the user to enter a PIN, then queries Nostr relays for the
+/// corresponding PIN exchange event, decrypts the wormhole code, and
+/// proceeds with the normal file transfer.
+pub async fn receive_with_pin(output_dir: Option<PathBuf>) -> Result<()> {
+    // Prompt for PIN input (visible, not masked)
+    print!("Enter PIN: ");
+    std::io::stdout().flush()?;
+    let mut pin = String::new();
+    std::io::stdin().read_line(&mut pin)?;
+    let pin = pin.trim();
+
+    // Validate PIN format
+    if pin.len() != PIN_LENGTH {
+        anyhow::bail!(
+            "Invalid PIN length: expected {} characters, got {}",
+            PIN_LENGTH,
+            pin.len()
+        );
+    }
+
+    println!("\n🔢 Using PIN: {}", pin);
+
+    // Compute PIN hint for filtering
+    let pin_hint = compute_pin_hint(pin);
+    println!("🔍 Searching for PIN exchange event...");
+
+    // Connect to bridge relays
+    let client = Client::default();
+    for relay in DEFAULT_NOSTR_RELAYS {
+        let _ = client.add_relay(relay.to_string()).await;
+    }
+    client.connect().await;
+
+    // Wait for connections to establish
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
+    // Query for PIN exchange events matching hint
+    let filter = Filter::new()
+        .kind(pin_exchange_kind())
+        .custom_tag(SingleLetterTag::lowercase(Alphabet::H), pin_hint.clone())
+        .since(Timestamp::now() - 3600) // Last hour
+        .limit(10);
+
+    let events = client
+        .fetch_events(filter, Duration::from_secs(15))
+        .await
+        .context("Failed to fetch PIN exchange events")?;
+
+    if events.is_empty() {
+        client.disconnect().await;
+        anyhow::bail!(
+            "No PIN exchange event found.\n\
+             Make sure the sender has started the transfer and the PIN is correct."
+        );
+    }
+
+    println!("📥 Found {} potential PIN exchange event(s)", events.len());
+
+    // Try decrypting each matching event
+    let mut wormhole_code: Option<String> = None;
+
+    for event in events.iter() {
+        match parse_pin_exchange_event(event) {
+            Ok((encrypted, salt)) => {
+                println!("🔑 Deriving decryption key from PIN (this may take a moment)...");
+                match decrypt_wormhole_code(&encrypted, pin, &salt) {
+                    Ok(code) => {
+                        println!("✅ Found and decrypted wormhole code!");
+                        wormhole_code = Some(code);
+                        break;
+                    }
+                    Err(_) => {
+                        // Wrong PIN or corrupted, try next event
+                        continue;
+                    }
+                }
+            }
+            Err(_) => continue,
+        }
+    }
+
+    client.disconnect().await;
+
+    let code = wormhole_code.context(
+        "No valid PIN exchange event found.\n\
+         Check PIN and try again.",
+    )?;
+
+    // Continue with normal receive flow using the decrypted wormhole code
+    receive_file_nostr(&code, output_dir).await
 }
