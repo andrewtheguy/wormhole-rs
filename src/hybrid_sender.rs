@@ -381,19 +381,49 @@ async fn transfer_data_hybrid_internal(
     let key = generate_key();
     println!("Encryption enabled for transfer");
 
-    // If force relay mode, skip WebRTC entirely
+    // If force relay mode, we need to set up signaling just for credentials
+    // then immediately use relay mode
     if force_relay {
         println!("Force relay mode enabled, using Nostr relay transport");
-        return nostr_sender::send_file_nostr_with_file(
+
+        // Create signaling to get credentials
+        println!("Connecting to Nostr relays for signaling...");
+        let signaling = create_sender_signaling(custom_relays.clone(), use_default_relays).await?;
+
+        println!("Sender pubkey: {}", signaling.public_key().to_hex());
+        println!("Transfer ID: {}", signaling.transfer_id());
+
+        // Generate wormhole code
+        let code = generate_hybrid_code(
+            &key,
+            signaling.public_key().to_hex(),
+            signaling.transfer_id().to_string(),
+            Some(signaling.relay_urls().to_vec()),
+            filename.clone(),
+            match transfer_type {
+                TransferType::File => "file",
+                TransferType::Folder => "folder",
+            },
+        )?;
+
+        println!("\nWormhole code:\n{}\n", code);
+        println!("On the receiving end, run:");
+        println!("  wormhole-rs receive\n");
+        println!("Then enter the code above when prompted.\n");
+
+        // Go directly to relay mode
+        let result = nostr_sender::send_relay_fallback(
             file,
-            filename,
             file_size,
-            custom_relays,
-            use_default_relays,
-            true, // use_outbox
-            false, // use_pin
+            signaling.keys.clone(),
+            signaling.transfer_id().to_string(),
+            key,
+            signaling.relay_urls().to_vec(),
         )
         .await;
+
+        signaling.disconnect().await;
+        return result;
     }
 
     // Create Nostr signaling client
@@ -443,22 +473,22 @@ async fn transfer_data_hybrid_internal(
         }
     }
 
-    // Fallback to Nostr relay mode
-    signaling.disconnect().await;
-
+    // Fallback to Nostr relay mode using existing credentials
     // Reset file position
     file.rewind().await.context("Failed to reset file position")?;
 
-    nostr_sender::send_file_nostr_with_file(
+    let result = nostr_sender::send_relay_fallback(
         file,
-        filename,
         file_size,
-        custom_relays,
-        use_default_relays,
-        true,  // use_outbox
-        false, // use_pin
+        signaling.keys.clone(),
+        signaling.transfer_id().to_string(),
+        key,
+        signaling.relay_urls().to_vec(),
     )
-    .await
+    .await;
+
+    signaling.disconnect().await;
+    result
 }
 
 /// Send a file via hybrid transport (WebRTC + Nostr fallback)

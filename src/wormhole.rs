@@ -8,9 +8,6 @@ pub const CURRENT_VERSION: u8 = 2;
 /// Protocol identifier for iroh transport
 pub const PROTOCOL_IROH: &str = "iroh";
 
-/// Protocol identifier for nostr transport
-pub const PROTOCOL_NOSTR: &str = "nostr";
-
 /// Protocol identifier for tor transport
 pub const PROTOCOL_TOR: &str = "tor";
 
@@ -64,38 +61,17 @@ impl MinimalAddr {
 pub struct WormholeToken {
     /// Token format version (for future compatibility checks)
     pub version: u8,
-    /// Protocol identifier (e.g., "iroh" or "nostr")
+    /// Protocol identifier (e.g., "iroh", "tor", "hybrid")
     pub protocol: String,
     /// Whether extra AES-256-GCM encryption layer is used
     pub extra_encrypt: bool,
     /// AES-256-GCM key as base64 string (only present if extra_encrypt is true)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub key: Option<String>,
-    /// Minimal endpoint address for connection (None for nostr-only transfers)
+    /// Minimal endpoint address for connection (None for non-iroh transports)
     /// Contains only node ID and relay URL - IP addresses are auto-discovered
     #[serde(skip_serializing_if = "Option::is_none")]
     pub addr: Option<MinimalAddr>,
-
-    // Version 2 fields (Nostr-specific):
-    /// Sender's ephemeral Nostr public key (hex)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub nostr_sender_pubkey: Option<String>,
-    /// List of Nostr relay URLs (only for legacy mode; omitted in outbox mode)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub nostr_relays: Option<Vec<String>>,
-    /// Unique transfer session ID
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub nostr_transfer_id: Option<String>,
-    /// Original filename (for Nostr transfers)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub nostr_filename: Option<String>,
-    /// Transfer type: "file" (default) or "folder" (tar archive)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub nostr_transfer_type: Option<String>,
-    /// Whether to use NIP-65 Outbox model for relay discovery
-    /// When true, receiver discovers relays via NIP-65 from well-known bridge relays
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub nostr_use_outbox: Option<bool>,
 
     // Version 2 fields (Tor-specific):
     /// Onion address for Tor hidden service (e.g., "abc123...xyz.onion")
@@ -123,6 +99,9 @@ pub struct WormholeToken {
     /// Transfer type: "file" or "folder"
     #[serde(skip_serializing_if = "Option::is_none")]
     pub hybrid_transfer_type: Option<String>,
+    /// Original filename for hybrid transfers
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hybrid_filename: Option<String>,
 }
 
 /// Generate a wormhole code from endpoint address
@@ -150,12 +129,6 @@ pub fn generate_code(
         extra_encrypt,
         key: key.map(|k| URL_SAFE_NO_PAD.encode(k)),
         addr: Some(minimal_addr),
-        nostr_sender_pubkey: None,
-        nostr_relays: None,
-        nostr_transfer_id: None,
-        nostr_filename: None,
-        nostr_transfer_type: None,
-        nostr_use_outbox: None,
         onion_address: None,
         webrtc_peer_id: None,
         webrtc_server: None,
@@ -163,53 +136,7 @@ pub fn generate_code(
         hybrid_transfer_id: None,
         hybrid_relays: None,
         hybrid_transfer_type: None,
-    };
-
-    let serialized =
-        serde_json::to_vec(&token).context("Failed to serialize wormhole token")?;
-
-    Ok(URL_SAFE_NO_PAD.encode(&serialized))
-}
-
-/// Generate a wormhole code for Nostr transfer
-/// Format: base64url(json(WormholeToken))
-///
-/// # Arguments
-/// * `key` - The AES-256-GCM encryption key (always required for Nostr)
-/// * `sender_pubkey` - Sender's ephemeral Nostr public key (hex)
-/// * `transfer_id` - Unique transfer session ID
-/// * `relays` - List of Nostr relay URLs (required for legacy mode, None for outbox mode)
-/// * `filename` - Original filename
-/// * `use_outbox` - Whether to use NIP-65 Outbox model for relay discovery
-/// * `transfer_type` - "file" or "folder"
-pub fn generate_nostr_code(
-    key: &[u8; 32],
-    sender_pubkey: String,
-    transfer_id: String,
-    relays: Option<Vec<String>>,
-    filename: String,
-    use_outbox: bool,
-    transfer_type: &str,
-) -> Result<String> {
-    let token = WormholeToken {
-        version: CURRENT_VERSION,
-        protocol: PROTOCOL_NOSTR.to_string(),
-        extra_encrypt: true, // Always true for Nostr
-        key: Some(URL_SAFE_NO_PAD.encode(key)),
-        addr: None,
-        nostr_sender_pubkey: Some(sender_pubkey),
-        nostr_relays: relays,
-        nostr_transfer_id: Some(transfer_id),
-        nostr_filename: Some(filename),
-        nostr_transfer_type: Some(transfer_type.to_string()),
-        nostr_use_outbox: if use_outbox { Some(true) } else { None },
-        onion_address: None,
-        webrtc_peer_id: None,
-        webrtc_server: None,
-        hybrid_sender_pubkey: None,
-        hybrid_transfer_id: None,
-        hybrid_relays: None,
-        hybrid_transfer_type: None,
+        hybrid_filename: None,
     };
 
     let serialized =
@@ -240,12 +167,6 @@ pub fn generate_tor_code(
         extra_encrypt,
         key: key.map(|k| URL_SAFE_NO_PAD.encode(k)),
         addr: None,
-        nostr_sender_pubkey: None,
-        nostr_relays: None,
-        nostr_transfer_id: None,
-        nostr_filename: None,
-        nostr_transfer_type: None,
-        nostr_use_outbox: None,
         onion_address: Some(onion_address),
         webrtc_peer_id: None,
         webrtc_server: None,
@@ -253,6 +174,7 @@ pub fn generate_tor_code(
         hybrid_transfer_id: None,
         hybrid_relays: None,
         hybrid_transfer_type: None,
+        hybrid_filename: None,
     };
 
     let serialized =
@@ -279,12 +201,6 @@ pub fn generate_webrtc_code(
         extra_encrypt: true, // Always true for WebRTC
         key: Some(URL_SAFE_NO_PAD.encode(key)),
         addr: None,
-        nostr_sender_pubkey: None,
-        nostr_relays: None,
-        nostr_transfer_id: None,
-        nostr_filename: None,
-        nostr_transfer_type: None,
-        nostr_use_outbox: None,
         onion_address: None,
         webrtc_peer_id: Some(peer_id),
         webrtc_server: server,
@@ -292,6 +208,7 @@ pub fn generate_webrtc_code(
         hybrid_transfer_id: None,
         hybrid_relays: None,
         hybrid_transfer_type: None,
+        hybrid_filename: None,
     };
 
     let serialized =
@@ -324,12 +241,6 @@ pub fn generate_hybrid_code(
         extra_encrypt: true, // Always true for hybrid
         key: Some(URL_SAFE_NO_PAD.encode(key)),
         addr: None,
-        nostr_sender_pubkey: None,
-        nostr_relays: None,
-        nostr_transfer_id: None,
-        nostr_filename: Some(filename),
-        nostr_transfer_type: None,
-        nostr_use_outbox: None,
         onion_address: None,
         webrtc_peer_id: None,
         webrtc_server: None,
@@ -337,6 +248,7 @@ pub fn generate_hybrid_code(
         hybrid_transfer_id: Some(transfer_id),
         hybrid_relays: relays,
         hybrid_transfer_type: Some(transfer_type.to_string()),
+        hybrid_filename: Some(filename),
     };
 
     let serialized =
@@ -409,16 +321,14 @@ pub fn parse_code(code: &str) -> Result<WormholeToken> {
     // Validate protocol for v2 tokens
     if token.version == 2 {
         if token.protocol != PROTOCOL_IROH
-            && token.protocol != PROTOCOL_NOSTR
             && token.protocol != PROTOCOL_TOR
             && token.protocol != PROTOCOL_WEBRTC
             && token.protocol != PROTOCOL_HYBRID
         {
             anyhow::bail!(
-                "Invalid protocol '{}' in v2 token. Supported protocols: '{}', '{}', '{}', '{}', '{}'",
+                "Invalid protocol '{}' in v2 token. Supported protocols: '{}', '{}', '{}', '{}'",
                 token.protocol,
                 PROTOCOL_IROH,
-                PROTOCOL_NOSTR,
                 PROTOCOL_TOR,
                 PROTOCOL_WEBRTC,
                 PROTOCOL_HYBRID
@@ -452,23 +362,6 @@ pub fn parse_code(code: &str) -> Result<WormholeToken> {
     // For version 2 with iroh protocol, ensure addr is present
     if token.version == 2 && token.protocol == PROTOCOL_IROH && token.addr.is_none() {
         anyhow::bail!("Invalid v2 iroh token: missing endpoint address");
-    }
-
-    // For version 2 with nostr protocol, ensure nostr fields are present
-    if token.version == 2 && token.protocol == PROTOCOL_NOSTR {
-        if token.nostr_sender_pubkey.is_none() {
-            anyhow::bail!("Invalid v2 nostr token: missing sender pubkey");
-        }
-        // nostr_relays is optional if nostr_use_outbox is true (relays discovered via NIP-65)
-        if !token.nostr_use_outbox.unwrap_or(false) && token.nostr_relays.is_none() {
-            anyhow::bail!("Invalid v2 nostr token: missing relay list");
-        }
-        if token.nostr_transfer_id.is_none() {
-            anyhow::bail!("Invalid v2 nostr token: missing transfer ID");
-        }
-        if token.key.is_none() {
-            anyhow::bail!("Invalid v2 nostr token: encryption key required for Nostr transfers");
-        }
     }
 
     // For version 2 with tor protocol, ensure onion_address is present

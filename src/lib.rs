@@ -1,14 +1,22 @@
 pub mod crypto;
 pub mod folder;
 pub mod iroh_common;
-pub mod nostr_pin;
 pub mod nostr_protocol;
-pub mod nostr_receiver;
-pub mod nostr_sender;
 pub mod receiver_iroh;
 pub mod sender_iroh;
 pub mod transfer;
 pub mod wormhole;
+
+// Internal modules for hybrid fallback (only needed with webrtc feature)
+#[cfg(feature = "webrtc")]
+pub(crate) mod nostr_receiver;
+#[cfg(feature = "webrtc")]
+pub(crate) mod nostr_sender;
+
+// nostr_pin is no longer used (was for standalone nostr transport)
+#[cfg(feature = "webrtc")]
+#[allow(dead_code)]
+mod nostr_pin;
 
 #[cfg(feature = "onion")]
 pub mod onion_receiver;

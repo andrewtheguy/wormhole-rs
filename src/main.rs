@@ -2,7 +2,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand, ValueEnum};
 use std::io::{self, Write};
 use std::path::PathBuf;
-use wormhole_rs::{nostr_receiver, nostr_sender, receiver_iroh, sender_iroh, wormhole};
+use wormhole_rs::{receiver_iroh, sender_iroh, wormhole};
 
 #[cfg(feature = "onion")]
 use wormhole_rs::{onion_receiver, onion_sender};
@@ -15,8 +15,6 @@ use wormhole_rs::{hybrid_receiver, hybrid_sender};
 enum Transport {
     /// Default: iroh-based peer-to-peer transfer
     Iroh,
-    /// Nostr relay-based transfer (max 512KB files)
-    Nostr,
     /// Tor hidden service transfer
     #[cfg(feature = "onion")]
     Tor,
@@ -57,21 +55,13 @@ enum Commands {
         #[arg(long)]
         relay_url: Vec<String>,
 
-        /// Custom Nostr relay URLs (for nostr transport)
+        /// Custom Nostr relay URLs (for hybrid transport signaling/fallback)
         #[arg(long = "nostr-relay")]
         nostr_relay: Vec<String>,
 
         /// Use default hardcoded Nostr relays instead of fetching from nostr.watch
         #[arg(long)]
         use_default_relays: bool,
-
-        /// Disable NIP-65 Outbox model for Nostr (for compatibility with old receivers)
-        #[arg(long)]
-        no_outbox: bool,
-
-        /// Use PIN-based code exchange for Nostr (displays 8-char PIN instead of full code)
-        #[arg(long)]
-        nostr_pin: bool,
 
         /// Force Nostr relay mode for hybrid transport (skip WebRTC)
         #[arg(long)]
@@ -91,10 +81,6 @@ enum Commands {
         /// Custom relay server URLs (for iroh transport)
         #[arg(long)]
         relay_url: Vec<String>,
-
-        /// Use PIN-based code exchange for Nostr (prompts for PIN input)
-        #[arg(long)]
-        nostr_pin: bool,
     },
 }
 
@@ -111,8 +97,6 @@ async fn main() -> Result<()> {
             relay_url,
             nostr_relay,
             use_default_relays,
-            no_outbox,
-            nostr_pin,
             force_nostr_relay,
         } => {
             // Validate path exists
@@ -131,9 +115,13 @@ async fn main() -> Result<()> {
                 }
             }
 
-            // Suppress unused variable warning when webrtc feature is disabled
+            // Suppress unused variable warnings when features are disabled
             #[cfg(not(feature = "webrtc"))]
-            let _ = &force_nostr_relay;
+            {
+                let _ = &force_nostr_relay;
+                let _ = &nostr_relay;
+                let _ = &use_default_relays;
+            }
 
             match transport {
                 Transport::Iroh => {
@@ -141,20 +129,6 @@ async fn main() -> Result<()> {
                         sender_iroh::send_folder(&path, extra_encrypt, relay_url).await?;
                     } else {
                         sender_iroh::send_file(&path, extra_encrypt, relay_url).await?;
-                    }
-                }
-                Transport::Nostr => {
-                    let custom_relays = if nostr_relay.is_empty() {
-                        None
-                    } else {
-                        Some(nostr_relay)
-                    };
-                    let use_outbox = !no_outbox;
-                    // Size validation is handled inside the send functions with better error messages
-                    if folder {
-                        nostr_sender::send_folder_nostr(&path, custom_relays, use_default_relays, use_outbox, nostr_pin).await?;
-                    } else {
-                        nostr_sender::send_file_nostr(&path, custom_relays, use_default_relays, use_outbox, nostr_pin).await?;
                     }
                 }
                 #[cfg(feature = "onion")]
@@ -181,17 +155,12 @@ async fn main() -> Result<()> {
             }
         }
 
-        Commands::Receive { code, output, relay_url, nostr_pin } => {
+        Commands::Receive { code, output, relay_url } => {
             // Validate output directory if provided
             if let Some(ref dir) = output {
                 if !dir.is_dir() {
                     anyhow::bail!("Output directory does not exist: {}", dir.display());
                 }
-            }
-
-            // Check if PIN mode for Nostr
-            if nostr_pin {
-                return nostr_receiver::receive_with_pin(output).await;
             }
 
             // Get code from argument or prompt
@@ -216,10 +185,6 @@ async fn main() -> Result<()> {
                 wormhole::PROTOCOL_IROH => {
                     // Iroh transport: auto-detects file vs folder from header
                     receiver_iroh::receive(&code, output, relay_url).await?;
-                }
-                wormhole::PROTOCOL_NOSTR => {
-                    // Nostr transport: auto-detects file vs folder from wormhole code
-                    nostr_receiver::receive_file_nostr(&code, output).await?;
                 }
                 #[cfg(feature = "onion")]
                 wormhole::PROTOCOL_TOR => {
