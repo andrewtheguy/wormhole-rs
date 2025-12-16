@@ -1,19 +1,21 @@
 # wormhole-rs
 
-A secure peer-to-peer file transfer tool with three transport modes:
+A secure peer-to-peer file transfer tool with four transport modes:
 - **iroh mode** - Direct P2P transfers using [iroh](https://github.com/n0-computer/iroh) with QUIC/TLS (default)
 - **Nostr mode** - Small file/folder transfers (≤512KB) via [Nostr relays](https://nostr.com) with mandatory AES-256-GCM encryption
+- **WebRTC mode** - Browser-compatible P2P transfers via WebRTC data channels - requires `webrtc` feature
 - **Tor mode** - Anonymous transfers via Tor hidden services (.onion addresses) - requires `onion` feature
 
 ## Features
 
-- 🔐 **End-to-end encryption** - All connections use strong encryption; optional AES-256-GCM layer
-- 🌐 **Three transport modes** - Choose between iroh P2P, Nostr relays, or Tor hidden services
+- 🔐 **End-to-end encryption** - All connections use strong encryption; mandatory AES-256-GCM for WebRTC/Nostr
+- 🌐 **Four transport modes** - Choose between iroh P2P, WebRTC, Nostr relays, or Tor hidden services
 - 📁 **File and folder transfers** - Send individual files or entire directories (as tar archives)
 - 🏠 **Local discovery** - mDNS for same-network transfers (iroh mode)
-- 📡 **Connection info** - Shows if transfer is Direct, Relay, or Mixed (iroh mode)
+- 📡 **Connection info** - Shows connection type (Direct/Relay) with addresses (iroh and WebRTC modes)
+- 🌍 **WebRTC NAT traversal** - STUN/TURN for connections through firewalls (WebRTC mode)
 - 🧅 **Tor anonymity** - Optional anonymous transfers via .onion addresses (Tor mode)
-- 🔧 **Custom relay servers** - Use your own private relays with automatic failover
+- 🔧 **Custom servers** - Use your own relay/PeerJS servers with automatic failover
 - 📊 **Progress display** - Real-time transfer progress for all modes
 - 💻 **Cross-platform** - Single binary with no dependencies, supports macOS, Linux, and Windows
 
@@ -177,6 +179,57 @@ wormhole-rs send /path/to/file --transport nostr --use-default-relays
 wormhole-rs send /path/to/file --transport nostr --no-outbox
 ```
 
+### WebRTC Mode (Browser-Compatible P2P)
+
+> **Note:** Requires building with `--features webrtc`. Uses PeerJS signaling for peer discovery.
+
+WebRTC mode provides direct P2P transfers using WebRTC data channels with STUN/TURN for NAT traversal. All transfers are encrypted with AES-256-GCM.
+
+```bash
+# Build with WebRTC support
+cargo build --release --features webrtc
+
+# Send file via WebRTC
+wormhole-rs send /path/to/file --transport webrtc
+
+# Send folder via WebRTC
+wormhole-rs send /path/to/folder --folder --transport webrtc
+```
+
+**Receive via WebRTC:**
+
+```bash
+wormhole-rs receive --code <WORMHOLE_CODE>
+```
+
+The receiver automatically detects WebRTC protocol from the wormhole code.
+
+**Custom PeerJS Server:**
+
+By default, wormhole-rs uses the public PeerJS server (`0.peerjs.com`). For private networks, you can run your own PeerJS server.
+
+```bash
+# Send with custom PeerJS server
+wormhole-rs send /path/to/file --transport webrtc --peerjs-server your-peerjs.example.com
+```
+
+**Connection Info:**
+
+When connected, wormhole-rs displays the connection type:
+```
+✅ Connected!
+   📡 Remote Peer: happy-apple-sunset
+   🔗 Connection: Direct (STUN)
+   📍 Local: 192.168.1.100:54321 → Remote: 203.0.113.50:12345
+```
+
+| Connection Type | Description |
+|-----------------|-------------|
+| Direct (Host) | Same local network, no NAT traversal needed |
+| Direct (STUN) | NAT traversal via STUN server (hole-punching) |
+| Direct (Peer Reflexive) | Discovered during ICE connectivity checks |
+| Relay (TURN) | Relayed through TURN server (firewall fallback) |
+
 ### Tor Mode (Anonymous Transfers)
 
 > **Note:** Requires building with `--features onion`. Tor mode uses Arti (Tor's Rust implementation).
@@ -296,6 +349,49 @@ Both connection types use the same QUIC/TLS 1.3 encryption. The TLS handshake is
 - Ephemeral events are not stored permanently by relays
 - Legacy mode (`--no-outbox`) requires sender and receiver to use the same relays
 
+### WebRTC Mode - Connection Flow
+
+```
+                      ┌─────────────┐
+                      │  PeerJS     │  (signaling server)
+                      │  Server     │
+                      └──────┬──────┘
+                             │
+   1. Register peer ID       │        2. Connect to peer
+         ┌───────────────────┴───────────────────┐
+         ▼                                       ▼
+    ┌────────┐                              ┌──────────┐
+    │ Sender │◄────────────────────────────►│ Receiver │
+    └────────┘   3. Exchange SDP offer/ans  └──────────┘
+         │              + ICE candidates           │
+         │                                         │
+         └──────────► 4. Direct P2P ◄──────────────┘
+                   (WebRTC data channel)
+```
+
+**Signaling Phase:**
+1. Sender generates human-friendly peer ID (e.g., `happy-apple-sunset`)
+2. Both peers connect to PeerJS WebSocket server
+3. Receiver sends SDP offer to sender's peer ID
+4. Sender replies with SDP answer
+5. ICE candidates exchanged for NAT traversal
+
+**Data Transfer:**
+```
+Sender ◄──── AES-256-GCM encrypted chunks ────► Receiver
+                    (WebRTC DTLS-SRTP)
+```
+
+**NAT Traversal (ICE):**
+- **STUN** - Discovers public IP/port for hole-punching (Google STUN server)
+- **Direct** - Peer-to-peer when both are reachable
+- **TURN** - Relay fallback for symmetric NAT (if configured)
+
+**Key properties:**
+- PeerJS server only handles signaling (SDP/ICE exchange) - never sees file data
+- Data channels use DTLS-SRTP encryption + application-layer AES-256-GCM
+- Human-friendly peer IDs (adjective-noun-noun format)
+
 ## Security & Encryption Model
 
 ### iroh Mode
@@ -393,6 +489,51 @@ Each 16KB chunk uses a unique nonce derived from the chunk sequence number, prev
 - Each transfer uses ephemeral Nostr keypairs (not linked to user identity)
 - Events are ephemeral (kind 20000-29999 range, not permanently stored)
 - Unique transfer ID per session prevents cross-transfer confusion
+
+### WebRTC Mode
+
+**Mandatory Encryption:**
+
+WebRTC mode always uses AES-256-GCM encryption on top of WebRTC's built-in DTLS-SRTP. This provides defense-in-depth since:
+- WebRTC data channels already use DTLS encryption
+- AES-256-GCM adds application-layer encryption the PeerJS server cannot access
+- Key is embedded in wormhole code, shared out-of-band
+
+**Key Exchange:**
+
+The 32-byte AES-256 encryption key is:
+1. **Generated randomly** by the sender
+2. **Embedded in the wormhole code** along with peer ID and optional custom server
+3. **Shared out-of-band** - you manually share the code with the receiver
+
+**What Each Party Sees:**
+
+| Party | Sees |
+|-------|------|
+| Sender | Plaintext file, encryption key, peer ID |
+| Receiver | Encryption key (from wormhole code), decrypted file |
+| PeerJS Server | Only SDP offers/answers and ICE candidates (signaling) |
+| STUN Server | Only IP addresses for NAT discovery |
+
+**Encryption Layers:**
+
+| Layer | Protection |
+|-------|------------|
+| AES-256-GCM | File content encryption (application layer, always enabled) |
+| DTLS-SRTP | WebRTC transport encryption (data channel layer) |
+
+**Nonce Handling:**
+
+Each 16KB chunk uses a unique nonce derived from the chunk number, preventing nonce reuse.
+
+**Connection Types:**
+
+| Type | Description |
+|------|-------------|
+| Direct (Host) | Both peers on same LAN |
+| Direct (STUN) | NAT hole-punching via STUN |
+| Direct (Peer Reflexive) | Discovered during ICE checks |
+| Relay (TURN) | Via TURN relay (if configured) |
 
 ## Wire Protocol Format
 
@@ -536,6 +677,68 @@ Published to well-known bridge relays (damus.io, nos.lol, nostr.wine) for receiv
 └──────────┴─────────────────┴─────────────┘
 ```
 
+### WebRTC Mode
+
+**Wormhole Code:**
+```json
+{
+  "version": 2,
+  "protocol": "webrtc",
+  "extra_encrypt": true,
+  "key": "<base64-encoded-32-bytes>",
+  "webrtc_peer_id": "happy-apple-sunset",
+  "webrtc_server": "custom-peerjs.example.com"
+}
+```
+The `webrtc_server` field is optional; defaults to `0.peerjs.com` if omitted.
+
+Base64url-encoded JSON token.
+
+**Data Channel Message Types:**
+
+| Type | Value | Description |
+|------|-------|-------------|
+| Header | 0 | File metadata (encrypted) |
+| Chunk | 1 | File data chunk (encrypted) |
+| Done | 2 | Transfer complete signal |
+| ACK | 3 | Receiver confirmation |
+
+**Header Message:**
+```
+┌──────────┬────────────────┬─────────────────────────┐
+│  type    │  encrypted_len │    encrypted header     │
+│ (1 byte) │   (4 bytes)    │ nonce + header + GCM    │
+│   0x00   │                │                         │
+└──────────┴────────────────┴─────────────────────────┘
+```
+
+**Chunk Message:**
+```
+┌──────────┬───────────────┬────────────────┬─────────────────────────┐
+│  type    │   chunk_num   │  encrypted_len │    encrypted chunk      │
+│ (1 byte) │   (8 bytes)   │   (4 bytes)    │ nonce + data + GCM      │
+│   0x01   │               │                │                         │
+└──────────┴───────────────┴────────────────┴─────────────────────────┘
+```
+
+**Done Message:**
+```
+┌──────────┐
+│  type    │
+│ (1 byte) │
+│   0x02   │
+└──────────┘
+```
+
+**ACK Message:**
+```
+┌──────────┐
+│  type    │
+│ (1 byte) │
+│   0x03   │
+└──────────┘
+```
+
 ## Tor Mode Details
 
 > **Warning:** Tor mode uses Arti (Tor's Rust implementation), which is not yet as secure as C-Tor. Do not use for highly security-sensitive purposes.
@@ -632,12 +835,17 @@ src/
 ├── nostr_protocol.rs    # Nostr event structures and protocol logic
 ├── nostr_sender.rs      # Nostr mode file/folder sender
 ├── nostr_receiver.rs    # Nostr mode file/folder receiver
+├── webrtc_common.rs     # WebRTC/PeerJS client and peer connection (requires webrtc feature)
+├── webrtc_sender.rs     # WebRTC mode file/folder sender (requires webrtc feature)
+├── webrtc_receiver.rs   # WebRTC mode file/folder receiver (requires webrtc feature)
 ├── onion_sender.rs      # Tor mode file/folder sender (requires onion feature)
 └── onion_receiver.rs    # Tor mode file/folder receiver (requires onion feature)
 
 examples/
-├── onion_sender.rs      # Standalone Tor sender example
-└── onion_receiver.rs    # Standalone Tor receiver example
+├── onion_sender_test.rs      # Standalone Tor sender example
+├── onion_receiver_test.rs    # Standalone Tor receiver example
+├── webrtc_sender_test.rs     # Standalone WebRTC sender example
+└── webrtc_receiver_test.rs   # Standalone WebRTC receiver example
 ```
 
 ## Dependencies
@@ -657,6 +865,12 @@ examples/
 - `rand` - Random generation
 - `tempfile` - Atomic file writing
 - `tar` - Folder archiving
+
+### WebRTC Feature (`--features webrtc`)
+- `webrtc` v0.11 - WebRTC implementation (data channels, ICE, DTLS)
+- `tokio-tungstenite` v0.21 - WebSocket client for PeerJS signaling
+- `uuid` v1 - Connection ID generation
+- `bytes` v1 - Binary data handling
 
 ## License
 
