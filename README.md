@@ -56,9 +56,12 @@ cargo build --release --all-features
 
 ## Usage
 
-### iroh Mode (Default)
+### Internet Transfers (`wormhole-rs send`)
 
-Best for large files with direct P2P connections.
+Use these modes for transfers over the internet. They all use a **Wormhole Code** for connection.
+
+#### 1. iroh Mode (Default)
+*Best for large files. Direct P2P with automatic relay fallback.*
 > Requires building with `--features iroh`.
 
 ```bash
@@ -68,56 +71,28 @@ wormhole-rs send iroh /path/to/file
 # Send folder
 wormhole-rs send iroh /path/to/folder --folder
 
-# With extra AES-256-GCM encryption layer
+# With extra AES-256-GCM encryption
 wormhole-rs send iroh /path/to/file --extra-encrypt
-
-# Custom relay server
-wormhole-rs send iroh --relay-url https://your-relay.example.com /path/to/file
 ```
 
-### Hybrid Mode (WebRTC + Nostr)
-
-Browser-compatible P2P transfers. Uses Nostr relays for signaling and falls back to relay transfer if P2P fails.
+#### 2. Hybrid Mode
+*Browser-compatible. Uses WebRTC + Nostr signaling.*
 > Requires building with `--features webrtc`.
 
 ```bash
-# Send via Hybrid mode
 wormhole-rs send hybrid /path/to/file
-
-# Force relay mode (skip WebRTC, go straight to Nostr relay transfer)
-wormhole-rs send hybrid /path/to/file --force-nostr-relay
 ```
 
-### Local Mode (LAN)
-
-Transfer files over the local network using mDNS discovery and TCP. No internet connection required.
-
-```bash
-# Send file locally
-wormhole-rs send-local /path/to/file
-
-# Send folder locally
-wormhole-rs send-local /path/to/folder --folder
-
-# Receive locally
-wormhole-rs receive-local
-# Or specify output directory
-wormhole-rs receive-local --output /path/to/downloads
-```
-
-### Tor Mode (Anonymous)
-
-Anonymous transfers via Tor hidden services.
+#### 3. Tor Mode
+*Anonymous transfers via Tor hidden services.*
 > Requires building with `--features onion`.
 
 ```bash
-# Send via Tor
 wormhole-rs send tor /path/to/file
 ```
 
-### Receiving
-
-The receiver command is the same for global transfers (Iroh, Hybrid, Tor). It auto-detects the protocol from the code.
+#### Receiving (Internet)
+The receiver auto-detects the protocol from the wormhole code.
 
 ```bash
 wormhole-rs receive
@@ -125,16 +100,35 @@ wormhole-rs receive
 wormhole-rs receive --code <WORMHOLE_CODE>
 ```
 
+---
+
+### Local LAN Transfers (`wormhole-rs send-local`)
+
+Use this mode for transfers on the same network (no internet required). Uses a **Passphrase** (not a code).
+
+```bash
+# Send locally
+wormhole-rs send-local /path/to/file
+
+# Send folder locally
+wormhole-rs send-local /path/to/folder --folder
+
+# Receive locally
+wormhole-rs receive-local
+```
+
 ## Security
 
-All modes provide end-to-end encryption. The wormhole code is the key exchange mechanism.
+All modes provide end-to-end encryption.
+- **Global Modes (Iroh, Hybrid, Tor)**: The **Wormhole Code** contains the key/address information.
+- **Local Mode**: Uses a short **Passphrase** for key derivation.
 
-| Mode | Transport Encryption | Application Encryption |
-|------|---------------------|------------------------|
-| iroh | QUIC/TLS 1.3 | Optional (`--extra-encrypt`) |
-| Hybrid | DTLS (WebRTC) / TLS (Relay) | Mandatory AES-256-GCM |
-| Local | None (TCP) | Mandatory AES-256-GCM (Passphrase) |
-| Tor | Tor circuits | Optional (`--extra-encrypt`) |
+| Mode | Type | Key Exchange | Transport Encryption |
+|------|------|--------------|---------------------|
+| iroh | Internet | Wormhole Code | QUIC/TLS 1.3 |
+| Hybrid | Internet | Wormhole Code | DTLS (WebRTC) / TLS (Relay) |
+| Tor | Internet | Wormhole Code | Tor circuits |
+| Local | LAN | **Passphrase** | None (TCP) |
 
 Relay servers (iroh, Nostr) never see decrypted content or encryption keys.
 
