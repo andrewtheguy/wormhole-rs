@@ -62,7 +62,7 @@ sequenceDiagram
     end
 ```
 
-### Nostr Mode
+### Nostr Mode (Standard)
 
 ```mermaid
 sequenceDiagram
@@ -96,6 +96,75 @@ sequenceDiagram
     Receiver->>Relays: 10. Send completion ACK (seq=-1)
     Relays->>Sender: Forward completion ACK
 ```
+
+### Nostr Mode with PIN (`--nostr-pin`)
+
+PIN mode allows sharing a short 8-character PIN instead of the full wormhole code. The wormhole code is encrypted and published to Nostr relays.
+
+```mermaid
+sequenceDiagram
+    participant Sender
+    participant Bridge as Bridge Relays
+    participant Receiver
+
+    Sender->>Sender: 1. Generate wormhole code (same as standard)
+    Sender->>Sender: 2. Generate 8-char PIN
+    Sender->>Sender: 3. Derive key from PIN (Argon2id)
+    Sender->>Sender: 4. Encrypt wormhole code with AES-256-GCM
+    Sender->>Bridge: 5. Publish PIN exchange event (kind 24243)
+    Note over Sender: Event contains: encrypted code, salt, PIN hint
+
+    Note over Sender,Receiver: Sender shares PIN out-of-band (voice, message, etc.)
+
+    Receiver->>Receiver: 6. Enter PIN
+    Receiver->>Receiver: 7. Compute PIN hint
+    Receiver->>Bridge: 8. Query events matching PIN hint
+    Receiver->>Receiver: 9. Derive key from PIN (Argon2id)
+    Receiver->>Receiver: 10. Decrypt wormhole code
+
+    Note over Sender,Receiver: Continue with standard Nostr transfer flow
+```
+
+**What Relays See vs. What They DON'T See:**
+
+| Data | Visible to Relays? | Notes |
+|------|-------------------|-------|
+| PIN | **NO** | Never transmitted; shared out-of-band |
+| Wormhole code | **NO** | Encrypted with PIN-derived key |
+| AES-256 file encryption key | **NO** | Inside encrypted wormhole code |
+| Argon2id salt | Yes | Required for key derivation; useless without PIN |
+| PIN hint (8 hex chars) | Yes | SHA256 prefix; 4 bytes of entropy; cannot reverse to PIN |
+| Encrypted file chunks | Yes | AES-256-GCM ciphertext; cannot decrypt without key |
+| Transfer metadata | Yes | Transfer ID, chunk count, timestamps |
+
+**PIN Exchange Event (kind 24243):**
+```json
+{
+  "kind": 24243,
+  "pubkey": "<sender_ephemeral_pubkey>",
+  "content": "<base64(nonce || AES-GCM(wormhole_code) || tag)>",
+  "tags": [
+    ["h", "<pin_hint>"],
+    ["s", "<base64(argon2_salt)>"],
+    ["t", "<transfer_id>"],
+    ["type", "pin_exchange"],
+    ["expiration", "<unix_timestamp>"]
+  ]
+}
+```
+
+**PIN Security Properties:**
+
+| Property | Value |
+|----------|-------|
+| PIN length | 8 characters |
+| Character set | 67 chars: `A-Z` (no I,O) + `a-z` (no i,l,o) + `2-9` + `!@#$%^&*+-=?` |
+| Entropy | ~49 bits (67^8 ≈ 4×10^14 combinations) |
+| KDF | Argon2id (64 MiB memory, 3 iterations, 4 lanes) |
+| Cipher | AES-256-GCM |
+| Event TTL | 1 hour (NIP-40 expiration) |
+
+**Brute-force resistance:** With Argon2id's 64 MiB memory cost, each PIN attempt takes ~0.5-1 second. Exhausting ~49 bits of entropy would take millions of years.
 
 ### Tor Mode
 
@@ -280,6 +349,16 @@ Nostr protocol implementation:
 - `generate_transfer_id()` - Random 16-byte hex ID
 - `get_best_relays()` - Fetch from nostr.watch API or use defaults
 - Constants: `NOSTR_CHUNK_SIZE = 16KB`, `DEFAULT_NOSTR_RELAYS`
+
+### `nostr_pin.rs` (Nostr PIN mode)
+PIN-based wormhole code exchange for Nostr:
+- `generate_pin()` - Generate random 8-character PIN from unambiguous charset
+- `compute_pin_hint()` - SHA256 prefix for event filtering
+- `derive_key_from_pin()` - Argon2id key derivation (64 MiB, 3 iterations)
+- `encrypt_wormhole_code()` / `decrypt_wormhole_code()` - AES-256-GCM
+- `create_pin_exchange_event()` - Build kind 24243 event
+- `parse_pin_exchange_event()` - Extract encrypted data and salt
+- Constants: `PIN_LENGTH = 8`, `PIN_EXCHANGE_KIND = 24243`
 
 ### `nostr_sender.rs` (Nostr mode)
 1. Validates file/folder size ≤ 512KB (for folders: tar archive size)

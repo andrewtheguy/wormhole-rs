@@ -19,6 +19,8 @@ A secure peer-to-peer file transfer tool with four transport modes:
 - 📊 **Progress display** - Real-time transfer progress for all modes
 - 💻 **Cross-platform** - Single binary with no dependencies, supports macOS, Linux, and Windows
 
+For detailed protocol flows, wire formats, and security model, see [ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
 ## Installation
 
 ### Quick Install (Linux & macOS)
@@ -159,7 +161,17 @@ wormhole-rs send /path/to/file --transport nostr
 wormhole-rs send /path/to/folder --folder --transport nostr
 ```
 
-By default, wormhole-rs uses the **NIP-65 Outbox model** which allows sender and receiver to use different relays.
+**PIN mode** - Share a short 8-character PIN instead of the full wormhole code:
+
+```bash
+# Sender: displays PIN like "AB#3K7*P"
+wormhole-rs send /path/to/file --transport nostr --nostr-pin
+
+# Receiver: prompts for PIN input
+wormhole-rs receive --nostr-pin
+```
+
+The PIN encrypts the wormhole code using Argon2id + AES-256-GCM before publishing to relays. Relays never see the PIN, wormhole code, or encryption keys. See [ARCHITECTURE.md](docs/ARCHITECTURE.md#nostr-mode-with-pin---nostr-pin) for security details.
 
 **Custom relays:**
 
