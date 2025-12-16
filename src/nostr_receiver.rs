@@ -18,7 +18,7 @@ use crate::folder::{
     extract_tar_archive, get_extraction_dir, print_skipped_entries, print_tar_extraction_info,
 };
 use crate::nostr_protocol::{
-    create_ack_event, get_transfer_id, is_chunk_event, parse_chunk_event,
+    create_ack_event, create_retry_event, get_transfer_id, is_chunk_event, parse_chunk_event,
 };
 use crate::transfer::format_bytes;
 use crate::wormhole::{WormholeToken, PROTOCOL_HYBRID};
@@ -28,6 +28,10 @@ const MIN_RELAYS_REQUIRED: usize = 2;
 const SUBSCRIPTION_SETUP_DELAY_SECS: u64 = 3;
 /// How often to resend ready ACK (ephemeral events may be missed due to timing)
 const READY_ACK_INTERVAL_SECS: u64 = 5;
+/// How long to wait with no activity before requesting retry (seconds)
+const STAGNATION_TIMEOUT_SECS: u64 = 8;
+/// Maximum number of missing chunks to request in a single retry
+const MAX_RETRY_BATCH_SIZE: usize = 50;
 
 /// Shared state for temp file cleanup on interrupt
 type TempFileCleanup = Arc<Mutex<Option<PathBuf>>>;
@@ -166,14 +170,15 @@ pub async fn receive_nostr_with_token(
     // Collect chunks
     let mut received_chunks: HashMap<u32, Vec<u8>> = HashMap::new();
     let mut total_chunks: Option<u32> = None;
-    let mut last_chunk_time = tokio::time::Instant::now();
+    let mut last_activity_time = tokio::time::Instant::now();
     let mut last_ack_time = tokio::time::Instant::now();
+    let mut last_retry_time = tokio::time::Instant::now();
     let mut first_chunk_received = false;
 
     println!("Receiving chunks...");
 
     loop {
-        if last_chunk_time.elapsed() > Duration::from_secs(CHUNK_RECEIVE_TIMEOUT_SECS) {
+        if last_activity_time.elapsed() > Duration::from_secs(CHUNK_RECEIVE_TIMEOUT_SECS) {
             if let Some(total) = total_chunks {
                 let missing: Vec<u32> = (0..total)
                     .filter(|seq| !received_chunks.contains_key(seq))
@@ -197,7 +202,33 @@ pub async fn receive_nostr_with_token(
             last_ack_time = tokio::time::Instant::now();
         }
 
-        match timeout(Duration::from_secs(5), notifications.recv()).await {
+        // Check for stagnation and request retry for missing chunks
+        if first_chunk_received
+            && last_activity_time.elapsed() > Duration::from_secs(STAGNATION_TIMEOUT_SECS)
+            && last_retry_time.elapsed() > Duration::from_secs(STAGNATION_TIMEOUT_SECS)
+        {
+            if let Some(total) = total_chunks {
+                if received_chunks.len() < total as usize {
+                    // Identify missing chunks (limit batch size)
+                    let missing: Vec<u32> = (0..total)
+                        .filter(|seq| !received_chunks.contains_key(seq))
+                        .take(MAX_RETRY_BATCH_SIZE)
+                        .collect();
+
+                    if !missing.is_empty() {
+                        println!("Requesting {} missing chunks...", missing.len());
+                        let retry_event =
+                            create_retry_event(&receiver_keys, &sender_pubkey, &transfer_id, &missing)?;
+                        if let Err(e) = client.send_event(&retry_event).await {
+                            eprintln!("Warning: Failed to send retry request: {}", e);
+                        }
+                        last_retry_time = tokio::time::Instant::now();
+                    }
+                }
+            }
+        }
+
+        match timeout(Duration::from_secs(2), notifications.recv()).await {
             Ok(Ok(RelayPoolNotification::Event { event, .. })) => {
                 if !is_chunk_event(&event) {
                     continue;
@@ -222,7 +253,7 @@ pub async fn receive_nostr_with_token(
                         }
 
                         received_chunks.insert(seq, encrypted_chunk);
-                        last_chunk_time = tokio::time::Instant::now();
+                        last_activity_time = tokio::time::Instant::now();
 
                         let progress = (received_chunks.len() as f64 / total as f64 * 100.0) as u32;
                         println!(

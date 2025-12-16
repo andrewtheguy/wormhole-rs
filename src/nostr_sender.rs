@@ -14,12 +14,13 @@ use tokio::time::{timeout, Duration};
 
 use crate::crypto::encrypt_chunk;
 use crate::nostr_protocol::{
-    create_chunk_event, get_transfer_id, is_ack_event, parse_ack_event, DEFAULT_NOSTR_RELAYS,
-    MAX_NOSTR_FILE_SIZE, NOSTR_CHUNK_SIZE,
+    create_chunk_event, get_transfer_id, is_ack_event, is_retry_event, parse_ack_event,
+    parse_retry_event, DEFAULT_NOSTR_RELAYS, MAX_NOSTR_FILE_SIZE, NOSTR_CHUNK_SIZE,
 };
 use crate::transfer::format_bytes;
 
-const COMPLETION_ACK_TIMEOUT_SECS: u64 = 60;
+/// Timeout for completion ACK (extended to handle retries)
+const COMPLETION_ACK_TIMEOUT_SECS: u64 = 60 * 60; // 1 hour
 const MIN_RELAYS_REQUIRED: usize = 2;
 const SUBSCRIPTION_SETUP_DELAY_SECS: u64 = 3;
 const CONCURRENT_CHUNKS: usize = 5;
@@ -241,21 +242,77 @@ pub async fn send_relay_fallback(
     let client = Arc::try_unwrap(client).unwrap_or_else(|arc| (*arc).clone());
     println!("All chunks sent successfully!");
 
-    // Wait for final completion ACK
+    // Wait for final completion ACK or handle retry requests
     println!("Waiting for receiver to confirm completion...");
     let final_ack_timeout = Duration::from_secs(COMPLETION_ACK_TIMEOUT_SECS);
     let final_ack_deadline = tokio::time::Instant::now() + final_ack_timeout;
     let mut final_ack_received = false;
 
     while tokio::time::Instant::now() < final_ack_deadline {
-        match timeout(Duration::from_secs(1), notifications.recv()).await {
+        match timeout(Duration::from_secs(2), notifications.recv()).await {
             Ok(Ok(RelayPoolNotification::Event { event, .. })) => {
+                // Check for completion ACK
                 if is_ack_event(&event) && get_transfer_id(&event).as_deref() == Some(&transfer_id)
                 {
                     if let Ok(ack_seq) = parse_ack_event(&event) {
                         if ack_seq == -1 {
                             final_ack_received = true;
                             break;
+                        }
+                    }
+                }
+
+                // Check for retry request
+                if is_retry_event(&event)
+                    && get_transfer_id(&event).as_deref() == Some(&transfer_id)
+                {
+                    if let Ok(missing_seqs) = parse_retry_event(&event) {
+                        println!(
+                            "Received retry request for {} chunks, resending...",
+                            missing_seqs.len()
+                        );
+
+                        // Resend missing chunks
+                        for seq in missing_seqs {
+                            if seq >= total_chunks {
+                                continue; // Invalid sequence number
+                            }
+
+                            let start = (seq as usize) * NOSTR_CHUNK_SIZE;
+                            let end = std::cmp::min(start + NOSTR_CHUNK_SIZE, all_data.len());
+                            let chunk_data = &all_data[start..end];
+
+                            match encrypt_chunk(&encryption_key, seq as u64, chunk_data) {
+                                Ok(encrypted_chunk) => {
+                                    match create_chunk_event(
+                                        &sender_keys,
+                                        &transfer_id,
+                                        seq,
+                                        total_chunks,
+                                        &encrypted_chunk,
+                                    ) {
+                                        Ok(chunk_event) => {
+                                            if let Err(e) = client.send_event(&chunk_event).await {
+                                                eprintln!(
+                                                    "Warning: Failed to resend chunk {}: {}",
+                                                    seq, e
+                                                );
+                                            } else {
+                                                println!("   Resent chunk {}", seq);
+                                            }
+                                        }
+                                        Err(e) => {
+                                            eprintln!(
+                                                "Warning: Failed to create chunk event {}: {}",
+                                                seq, e
+                                            );
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    eprintln!("Warning: Failed to encrypt chunk {}: {}", seq, e);
+                                }
+                            }
                         }
                     }
                 }

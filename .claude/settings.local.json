@@ -9,7 +9,8 @@
       "Bash(git mv:*)",
       "mcp__github__get_file_contents",
       "Bash(wc:*)",
-      "Bash(cat:*)"
+      "Bash(cat:*)",
+      "Bash(git show:*)"
     ]
   }
 }
