@@ -2,7 +2,9 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use std::io::{self, Write};
 use std::path::PathBuf;
-use wormhole_rs::{receiver_iroh, sender_iroh, wormhole};
+#[cfg(feature = "iroh")]
+use wormhole_rs::{receiver_iroh, sender_iroh};
+use wormhole_rs::wormhole;
 
 #[cfg(feature = "onion")]
 use wormhole_rs::{onion_receiver, onion_sender};
@@ -29,16 +31,33 @@ enum Commands {
         transport: SendTransport,
     },
 
-    /// Receive a file or folder (auto-detects transport from wormhole code)
-    Receive {
-        #[command(subcommand)]
-        transport: Option<ReceiveTransport>,
+    /// Receive a file or folder using a code
+    Receive,
+
+    /// Send via local network (mDNS discovery, passphrase encryption)
+    #[command(name = "send-local")]
+    SendLocal {
+        /// Path to file or folder
+        path: PathBuf,
+
+        /// Send a folder (creates tar archive)
+        #[arg(long)]
+        folder: bool,
+    },
+
+    /// Receive via local network (mDNS discovery)
+    #[command(name = "receive-local")]
+    ReceiveLocal {
+        /// Output directory (default: current directory)
+        #[arg(short, long)]
+        output: Option<PathBuf>,
     },
 }
 
 /// Send transport options
 #[derive(Subcommand)]
 enum SendTransport {
+    #[cfg(feature = "iroh")]
     /// Send via iroh peer-to-peer network (default)
     Iroh {
         /// Path to file or folder
@@ -47,7 +66,6 @@ enum SendTransport {
         /// Send a folder (creates tar archive)
         #[arg(long)]
         folder: bool,
-
         /// Add extra AES-256-GCM encryption layer
         #[arg(long)]
         extra_encrypt: bool,
@@ -94,28 +112,9 @@ enum SendTransport {
         #[arg(long)]
         force_nostr_relay: bool,
     },
-
-    /// Send via local network (mDNS discovery, passphrase encryption)
-    Mdns {
-        /// Path to file or folder
-        path: PathBuf,
-
-        /// Send a folder (creates tar archive)
-        #[arg(long)]
-        folder: bool,
-    },
 }
 
-/// Receive transport options (only for transports that don't use wormhole codes)
-#[derive(Subcommand)]
-enum ReceiveTransport {
-    /// Receive via local network (mDNS discovery)
-    Mdns {
-        /// Output directory (default: current directory)
-        #[arg(short, long)]
-        output: Option<PathBuf>,
-    },
-}
+
 
 /// Validate path exists and matches folder flag
 fn validate_path(path: &PathBuf, folder: bool) -> Result<()> {
@@ -156,6 +155,7 @@ async fn main() -> Result<()> {
 
     match cli.command {
         Commands::Send { transport } => match transport {
+            #[cfg(feature = "iroh")]
             SendTransport::Iroh {
                 path,
                 folder,
@@ -221,36 +221,31 @@ async fn main() -> Result<()> {
                     );
                 }
             }
-
-            SendTransport::Mdns { path, folder } => {
-                validate_path(&path, folder)?;
-                if folder {
-                    mdns_sender::send_folder_mdns(&path).await?;
-                } else {
-                    mdns_sender::send_file_mdns(&path).await?;
-                }
-            }
         },
 
-        Commands::Receive { transport } => {
-            match transport {
-                Some(ReceiveTransport::Mdns { output }) => {
-                    validate_output_dir(&output)?;
-                    return mdns_receiver::receive_mdns(output).await;
-                }
-
-                // No transport subcommand = auto-detect from wormhole code
-                None => {
-                    // Prompt for code
-                    print!("Enter wormhole code: ");
-                    io::stdout().flush()?;
-                    let mut input = String::new();
-                    io::stdin().read_line(&mut input)?;
-                    let code = input.trim().to_string();
-
-                    receive_with_code(&code, None, vec![]).await?;
-                }
+        Commands::SendLocal { path, folder } => {
+            validate_path(&path, folder)?;
+            if folder {
+                mdns_sender::send_folder_mdns(&path).await?;
+            } else {
+                mdns_sender::send_file_mdns(&path).await?;
             }
+        }
+
+        Commands::ReceiveLocal { output } => {
+            validate_output_dir(&output)?;
+            mdns_receiver::receive_mdns(output).await?;
+        }
+
+        Commands::Receive => {
+            // Prompt for code
+            print!("Enter wormhole code: ");
+            io::stdout().flush()?;
+            let mut input = String::new();
+            io::stdin().read_line(&mut input)?;
+            let code = input.trim().to_string();
+
+            receive_with_code(&code, None, vec![]).await?;
         }
     }
 
@@ -270,6 +265,7 @@ async fn receive_with_code(
     let token = wormhole::parse_code(code)?;
 
     match token.protocol.as_str() {
+        #[cfg(feature = "iroh")]
         wormhole::PROTOCOL_IROH => {
             receiver_iroh::receive(code, output, relay_url).await?;
         }
@@ -282,6 +278,14 @@ async fn receive_with_code(
             hybrid_receiver::receive_hybrid(code, output).await?;
         }
         proto => {
+            #[cfg(not(feature = "iroh"))]
+            if proto == wormhole::PROTOCOL_IROH {
+                anyhow::bail!(
+                    "This wormhole code uses Iroh transport, but Iroh support is disabled.\n\
+                     To enable Iroh support, rebuild with: cargo build --features iroh\n\
+                     Or run with: cargo run --features iroh -- receive"
+                );
+            }
             #[cfg(not(feature = "onion"))]
             if proto == wormhole::PROTOCOL_TOR {
                 anyhow::bail!(

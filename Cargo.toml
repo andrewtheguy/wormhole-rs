@@ -25,9 +25,10 @@ required-features = ["onion"]
 default = []
 onion = ["dep:arti-client", "dep:tor-hsservice", "dep:tor-cell", "dep:safelog", "dep:rusqlite"]
 webrtc = ["dep:webrtc", "dep:tokio-tungstenite", "dep:uuid", "dep:bytes"]
+iroh = ["dep:iroh"]
 
 [dependencies]
-iroh = { version = "0.95.1", features = ["discovery-local-network"] }
+iroh = { version = "0.95.1", features = ["discovery-local-network"], optional = true }
 tokio = { version = "1", features = ["full"] }
 clap = { version = "4", features = ["derive"] }
 aes-gcm = "0.10"

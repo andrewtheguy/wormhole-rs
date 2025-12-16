@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+#[cfg(feature = "iroh")]
 use iroh::{EndpointAddr, RelayUrl};
 
 /// Current token format version
@@ -26,6 +27,7 @@ pub struct MinimalAddr {
 }
 
 impl MinimalAddr {
+    #[cfg(feature = "iroh")]
     /// Create from a full EndpointAddr, stripping IP addresses
     pub fn from_endpoint_addr(addr: &EndpointAddr) -> Self {
         let relay = addr.relay_urls().next().map(|r| r.to_string());
@@ -34,6 +36,8 @@ impl MinimalAddr {
             relay,
         }
     }
+
+    #[cfg(feature = "iroh")]
 
     /// Convert back to EndpointAddr
     pub fn to_endpoint_addr(&self) -> Result<EndpointAddr> {
@@ -100,6 +104,7 @@ pub struct WormholeToken {
 /// * `addr` - The endpoint address to connect to
 /// * `extra_encrypt` - Whether to include an AES-256-GCM encryption key
 /// * `key` - The encryption key (required if extra_encrypt is true)
+#[cfg(feature = "iroh")]
 pub fn generate_code(
     addr: &EndpointAddr,
     extra_encrypt: bool,

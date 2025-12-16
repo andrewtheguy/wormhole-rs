@@ -1,8 +1,11 @@
 pub mod crypto;
 pub mod folder;
+#[cfg(feature = "iroh")]
 pub mod iroh_common;
 pub mod nostr_protocol;
+#[cfg(feature = "iroh")]
 pub mod receiver_iroh;
+#[cfg(feature = "iroh")]
 pub mod sender_iroh;
 pub mod transfer;
 pub mod wormhole;
