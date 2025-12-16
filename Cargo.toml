@@ -22,7 +22,7 @@ path = "examples/onion_receiver_test.rs"
 required-features = ["onion"]
 
 [features]
-default = []
+default = ["mdns"]
 onion = ["dep:arti-client", "dep:tor-hsservice", "dep:tor-cell", "dep:safelog", "dep:rusqlite"]
 webrtc = ["dep:webrtc", "dep:tokio-tungstenite", "dep:uuid", "dep:bytes"]
 mdns = ["dep:mdns-sd"]
@@ -61,6 +61,6 @@ tokio-tungstenite = { version = "0.21", features = ["native-tls"], optional = tr
 uuid = { version = "1", features = ["v4"], optional = true }
 bytes = { version = "1", optional = true }
 
-# mDNS - optional, behind feature gate
+# mDNS - enabled by default for local network transfers
 mdns-sd = { version = "0.15", optional = true }
 
