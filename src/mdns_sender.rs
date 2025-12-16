@@ -215,7 +215,7 @@ async fn transfer_data_internal(
     println!("Filename: {}", filename);
     println!("Size: {}", format_bytes(file_size));
     println!("\nWaiting for receiver to connect...");
-    println!("Receiver should run: wormhole-rs receive --transport mdns\n");
+    println!("Receiver should run: wormhole-rs receive mdns\n");
 
     // Accept connection (using tokio's TcpListener for async)
     // We need to convert std TcpListener to tokio TcpListener
