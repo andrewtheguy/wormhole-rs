@@ -14,6 +14,13 @@ pub mod onion_receiver;
 #[cfg(feature = "onion")]
 pub mod onion_sender;
 
+#[cfg(feature = "webrtc")]
+pub mod webrtc_common;
+#[cfg(feature = "webrtc")]
+pub mod webrtc_receiver;
+#[cfg(feature = "webrtc")]
+pub mod webrtc_sender;
+
 #[cfg(test)]
 mod crypto_tests;
 #[cfg(test)]

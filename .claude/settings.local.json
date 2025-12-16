@@ -6,7 +6,8 @@
       "Bash(cargo test:*)",
       "Bash(cargo build:*)",
       "Bash(cargo search:*)",
-      "Bash(git mv:*)"
+      "Bash(git mv:*)",
+      "mcp__github__get_file_contents"
     ]
   }
 }
