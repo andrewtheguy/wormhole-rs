@@ -268,16 +268,19 @@ pub async fn publish_wormhole_code_via_pin(
         let _ = client.add_relay(relay.to_string()).await;
     }
     client.connect().await;
-    
+
     // Publish event
-    client.send_event(&event).await.context("Failed to publish PIN exchange event")?;
-    
+    let send_result = client.send_event(&event).await;
+
     // Give it a moment to propagate
     tokio::time::sleep(Duration::from_millis(500)).await;
-    
-    // Disconnect
+
+    // Disconnect (always, regardless of send result)
     let _ = client.disconnect().await;
-    
+
+    // Handle send result
+    send_result.context("Failed to publish PIN exchange event")?;
+
     Ok(pin)
 }
 
@@ -308,11 +311,14 @@ pub async fn fetch_wormhole_code_via_pin(pin: &str) -> Result<String> {
         .custom_tag(SingleLetterTag::lowercase(Alphabet::H), pin_hint.clone())
         .since(Timestamp::now() - 3600)
         .limit(10);
-        
-    let events = client.fetch_events(filter, Duration::from_secs(10)).await
-        .context("Failed to fetch events")?;
-        
+
+    let events_res = client.fetch_events(filter, Duration::from_secs(10)).await;
+
+    // Disconnect (always, regardless of fetch result)
     let _ = client.disconnect().await;
+
+    // Handle fetch result
+    let events = events_res.context("Failed to fetch events")?;
     
     if events.is_empty() {
         anyhow::bail!("No PIN exchange event found. Check if sender is ready.");

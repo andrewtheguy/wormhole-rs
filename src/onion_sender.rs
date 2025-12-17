@@ -74,7 +74,6 @@ async fn transfer_data_tor_internal(
     let code = generate_tor_code(onion_addr_str.clone(), extra_encrypt, key.as_ref())?;
 
     println!("\nWormhole code:\n{}\n", code);
-    println!("\nWormhole code:\n{}\n", code);
     
     if use_pin {
         // Generate ephemeral keys for PIN exchange

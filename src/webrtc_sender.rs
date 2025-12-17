@@ -48,6 +48,34 @@ fn setup_cleanup_handler(cleanup_path: TempFileCleanup) {
     });
 }
 
+/// Display transfer code or PIN to the user with instructions
+async fn display_transfer_code(
+    use_pin: bool,
+    signaling_keys: &nostr_sdk::Keys,
+    code_str: &str,
+    transfer_id: &str,
+) -> Result<()> {
+    if use_pin {
+        let pin = crate::nostr_pin::publish_wormhole_code_via_pin(
+            signaling_keys,
+            code_str,
+            transfer_id,
+        )
+        .await?;
+
+        println!("\n🔢 PIN: {}\n", pin);
+        println!("On the receiving end, run:");
+        println!("  wormhole-rs receive --pin\n");
+        println!("Then enter the PIN above when prompted.\n");
+    } else {
+        println!("\n🔮 Wormhole code:\n{}\n", code_str);
+        println!("On the receiving end, run:");
+        println!("  wormhole-rs receive\n");
+        println!("Then enter the code above when prompted.\n");
+    }
+    Ok(())
+}
+
 /// Result of WebRTC connection attempt
 enum WebRtcResult {
     Success,
@@ -85,9 +113,9 @@ async fn try_webrtc_transfer(
     println!("Waiting for receiver to connect via Nostr signaling...");
     println!("(Press ENTER to force fallback to relay mode if connection hangs)");
 
-    // Spawn a thread to listen for stdin input (Enter key)
+    // Spawn a blocking task to listen for stdin input (Enter key)
     let (input_tx, mut input_rx) = tokio::sync::oneshot::channel();
-    std::thread::spawn(move || {
+    let stdin_task = tokio::task::spawn_blocking(move || {
         let mut input = String::new();
         if std::io::stdin().read_line(&mut input).is_ok() {
             let _ = input_tx.send(());
@@ -135,6 +163,7 @@ async fn try_webrtc_transfer(
                     }
                     Some(_) => continue,
                     None => {
+                        stdin_task.abort();
                         return Ok(WebRtcResult::Failed("Signaling channel closed".to_string()));
                     }
                 }
@@ -148,6 +177,9 @@ async fn try_webrtc_transfer(
             }
         }
     }
+
+    // Abort the stdin task since we no longer need it
+    stdin_task.abort();
 
     let remote_pubkey = match receiver_pubkey {
         Some(pk) => pk,
@@ -436,23 +468,7 @@ async fn transfer_data_webrtc_internal(
 
         let code_str = code.clone(); // Keep for PIN publishing if needed
 
-        if use_pin {
-            let pin = crate::nostr_pin::publish_wormhole_code_via_pin(
-                &signaling.keys,
-                &code_str,
-                &signaling.transfer_id(),
-            ).await?;
-
-            println!("\n🔢 PIN: {}\n", pin);
-            println!("On the receiving end, run:");
-            println!("  wormhole-rs receive --pin\n");
-            println!("Then enter the PIN above when prompted.\n");
-        } else {
-            println!("\n🔮 Wormhole code:\n{}\n", code_str);
-            println!("On the receiving end, run:");
-            println!("  wormhole-rs receive\n");
-            println!("Then enter the code above when prompted.\n");
-        }
+        display_transfer_code(use_pin, &signaling.keys, &code_str, &signaling.transfer_id()).await?;
 
         // Go directly to relay mode
         let result = crate::nostr_relay::send_relay_fallback(
@@ -491,23 +507,7 @@ async fn transfer_data_webrtc_internal(
 
     let code_str = code.clone();
 
-    if use_pin {
-        let pin = crate::nostr_pin::publish_wormhole_code_via_pin(
-            &signaling.keys,
-            &code_str,
-            &signaling.transfer_id(),
-        ).await?;
-
-        println!("\n🔢 PIN: {}\n", pin);
-        println!("On the receiving end, run:");
-        println!("  wormhole-rs receive --pin\n");
-        println!("Then enter the PIN above when prompted.\n");
-    } else {
-        println!("\n🔮 Wormhole code:\n{}\n", code_str);
-        println!("On the receiving end, run:");
-        println!("  wormhole-rs receive\n");
-        println!("Then enter the code above when prompted.\n");
-    }
+    display_transfer_code(use_pin, &signaling.keys, &code_str, &signaling.transfer_id()).await?;
 
     // Try WebRTC transfer
     match try_webrtc_transfer(

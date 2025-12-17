@@ -63,7 +63,6 @@ async fn transfer_data_internal(
     let code = generate_code(&addr, extra_encrypt, key.as_ref())?;
 
     println!("\n🔮 Wormhole code:\n{}\n", code);
-    println!("\n🔮 Wormhole code:\n{}\n", code);
 
     if use_pin {
         // Generate ephemeral keys for PIN exchange

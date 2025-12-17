@@ -262,22 +262,17 @@ async fn main() -> Result<()> {
 
         Commands::Receive { mut code, output, relay_url, pin } => {
             // Validate output directory if provided
-            if let Some(ref dir) = output {
-                if !dir.is_dir() {
-                    anyhow::bail!("Output directory does not exist: {}", dir.display());
-                }
-            }
+            validate_output_dir(&output)?;
 
             // Handle PIN mode if requested
             if pin {
-                use std::io::Write;
                 print!("Enter {}-digit PIN: ", wormhole_rs::nostr_pin::PIN_LENGTH);
                 std::io::stdout().flush()?;
                 let mut pin_input = String::new();
                 std::io::stdin().read_line(&mut pin_input)?;
                 let pin_str = pin_input.trim();
-                
-                println!("Searching for wormhole token via Nostr (PIN: {})...", pin_str);
+
+                println!("Searching for wormhole token via Nostr...");
                 
                 // Fetch encrypted token from Nostr
                 let token_str = wormhole_rs::nostr_pin::fetch_wormhole_code_via_pin(pin_str).await?;
