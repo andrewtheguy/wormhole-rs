@@ -1,9 +1,9 @@
-//! WebRTC transport sender: WebRTC with Nostr signaling + relay fallback
+//! WebRTC transport sender: WebRTC with Nostr signaling + tmpfiles.org fallback
 //!
 //! This module implements the webrtc transport which:
 //! 1. Uses Nostr for WebRTC signaling (replacing PeerJS)
 //! 2. Attempts direct P2P connection via STUN
-//! 3. Falls back to Nostr relay mode if WebRTC fails
+//! 3. Falls back to tmpfiles.org relay mode if WebRTC fails
 
 use anyhow::{Context, Result};
 use base64::Engine;

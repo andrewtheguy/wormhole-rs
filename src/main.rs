@@ -111,7 +111,7 @@ enum SendTransport {
     },
 
     #[cfg(feature = "webrtc")]
-    /// Send via WebRTC with Nostr signaling + relay fallback
+    /// Send via WebRTC with Nostr signaling + tmpfiles.org fallback
     #[command(name = "webrtc")]
     WebRtc {
         /// Path to file or folder
@@ -129,9 +129,9 @@ enum SendTransport {
         #[arg(long)]
         use_default_relays: bool,
 
-        /// Force Nostr relay mode (skip WebRTC)
+        /// Force relay mode (skip WebRTC, use tmpfiles.org)
         #[arg(long)]
-        force_nostr_relay: bool,
+        force_relay: bool,
     },
 }
 
@@ -211,7 +211,7 @@ async fn main() -> Result<()> {
                 folder,
                 nostr_relay,
                 use_default_relays,
-                force_nostr_relay,
+                force_relay,
             } => {
                 validate_path(&path, folder)?;
                 let custom_relays = if nostr_relay.is_empty() {
@@ -222,7 +222,7 @@ async fn main() -> Result<()> {
                 let result = if folder {
                     webrtc_sender::send_folder_webrtc(
                         &path,
-                        force_nostr_relay,
+                        force_relay,
                         custom_relays,
                         use_default_relays,
                         pin,
@@ -231,7 +231,7 @@ async fn main() -> Result<()> {
                 } else {
                     webrtc_sender::send_file_webrtc(
                         &path,
-                        force_nostr_relay,
+                        force_relay,
                         custom_relays,
                         use_default_relays,
                         pin,

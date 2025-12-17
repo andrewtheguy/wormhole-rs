@@ -219,7 +219,7 @@ pub async fn send_tmpfiles_fallback(
     // Upload to tmpfiles.org
     println!("Uploading to tmpfiles.org...");
     let download_url = tmpfiles::upload_bytes(&encrypted_data, "transfer.enc").await?;
-    println!("Upload complete!");
+    println!("Upload complete: {}", download_url);
 
     // Send download URL to receiver via Nostr
     println!("Sending download URL to receiver...");

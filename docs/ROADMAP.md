@@ -22,14 +22,14 @@ Ideas and feature requests for future consideration.
 
 
 ### Tor as Default Relay for WebRTC (will cause heavy dependency for WebRTC mode)
-**Goal:** Improve privacy and reliability for WebRTC fallback scenarios.
+**Goal:** Improve privacy and reliability for WebRTC fallback scenarios because Tor network should be more reliable and private than tmpfiles.org uploads.
 
-- **Current State:** 
-  - WebRTC uses Nostr for signaling.
-  - If direct P2P fails, it falls back to Nostr relays (store-and-forward) for data transfer.
+- **Current State:**
+  - WebRTC uses Nostr for signaling only.
+  - If direct P2P fails, it falls back to tmpfiles.org for data transfer (100MB limit, 60 min retention).
 - **Proposal:**
   - Promote **Tor Onion Services** to be the default fallback relay mechanism when direct WebRTC fails.
-  - Nostr data relaying should be demoted to a secondary, non-recommended option (or kept only for signaling).
+  - tmpfiles.org fallback should be demoted to a secondary option.
   - This leverages the existing Tor feature flag to provide a robust, anonymous relay path.
 
 

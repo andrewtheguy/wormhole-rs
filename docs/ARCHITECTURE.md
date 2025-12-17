@@ -66,25 +66,30 @@ sequenceDiagram
     Receiver->>Sender: 3. Send ACK
 ```
 
-**3. Fallback Path (Nostr Relay)**
+**3. Fallback Path (tmpfiles.org)**
 
-If WebRTC fails or `--force-nostr-relay` is used:
+If WebRTC fails or `--force-relay` is used:
 
 ```mermaid
 sequenceDiagram
     participant Sender
     participant Relays as Nostr Relays
+    participant TmpFiles as tmpfiles.org
     participant Receiver
 
     Note over Sender: WebRTC failed/skipped
-    
-    Sender->>Relays: 1. Publish Encrypted Chunks (kind 24242)
-    Note over Relays: Store & Forward
-    Relays->>Receiver: 2. Receive Chunks
-    
-    Receiver->>Receiver: Decrypt & Store
-    Receiver->>Relays: 3. Send "Transfer Complete" ACK
-    Relays->>Sender: 4. Receive ACK
+
+    Receiver->>Relays: 1. Send "Ready" signal
+    Relays->>Sender: 2. Receive Ready signal
+    Sender->>Sender: 3. Encrypt file (AES-256-GCM)
+    Sender->>TmpFiles: 4. Upload encrypted file
+    TmpFiles->>Sender: 5. Return download URL
+    Sender->>Relays: 6. Send download URL (kind 24242)
+    Relays->>Receiver: 7. Receive URL
+    Receiver->>TmpFiles: 8. Download encrypted file
+    Receiver->>Receiver: 9. Decrypt & Save
+    Receiver->>Relays: 10. Send "Complete" ACK
+    Relays->>Sender: 11. Receive ACK
 ```
 
 #### Tor Mode
@@ -164,7 +169,7 @@ sequenceDiagram
 ### WebRTC Mode (`wormhole-rs send webrtc`)
 - **Transport**: WebRTC Data Channels (SCTP/DTLS)
 - **Signaling**: Nostr Relays (JSON payloads)
-- **Fallback**: Nostr Relays (Store-and-forward)
+- **Fallback**: tmpfiles.org (100MB limit, 60 min retention)
 - **Encryption**: Mandatory AES-256-GCM for all application data (on top of DTLS).
 
 ### Local Mode (`wormhole-rs send-local`)

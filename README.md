@@ -4,7 +4,7 @@ A secure peer-to-peer file transfer tool with two main transport categories:
 
 **1. Internet Transfers** (Wormhole Code)
 - **iroh mode** - Direct P2P transfers using [iroh](https://github.com/n0-computer/iroh) with QUIC/TLS (automatic relay fallback)
-- **WebRTC mode** - WebRTC transfers with Nostr signaling and relay fallback - requires `webrtc` feature
+- **WebRTC mode** - WebRTC transfers with Nostr signaling and tmpfiles.org relay fallback - requires `webrtc` feature
 - **Tor mode** - Anonymous transfers via Tor hidden services (.onion addresses) - requires `onion` feature
 
 **2. Local Transfers** (Passphrase)
@@ -18,8 +18,8 @@ A secure peer-to-peer file transfer tool with two main transport categories:
     - **Local**: Private LAN transfers using mDNS
 - **File and folder transfers** - Send individual files or entire directories (automatically archived)
 - **Local discovery** - mDNS for same-network transfers
-- **NAT traversal** - STUN/TURN for WebRTC, relay fallback for Iroh/Nostr
-- **Manual Relay Fallback** - Force fallback to Nostr relay mode by pressing ENTER if WebRTC fails
+- **NAT traversal** - STUN/TURN for WebRTC, relay fallback for Iroh
+- **Manual Relay Fallback** - Force fallback to tmpfiles.org relay mode (`--force-relay`) if WebRTC fails
 - **PIN-based Transfers** - Use short 12-digit PINs instead of long wormhole codes for easier typing
 - **Cross-platform** - Single binary, supports macOS, Linux, and Windows
 
@@ -165,7 +165,7 @@ All modes provide end-to-end encryption.
 | Tor | Internet | Wormhole Code | Tor circuits |
 | Local | LAN | **Passphrase** | None (TCP) |
 
-Relay servers (iroh, Nostr) never see decrypted content or encryption keys.
+Relay servers (iroh, tmpfiles.org) never see decrypted content or encryption keys.
 
 For detailed security model, see [ARCHITECTURE.md](docs/ARCHITECTURE.md#security-model).
 
