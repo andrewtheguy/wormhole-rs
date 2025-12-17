@@ -8,8 +8,13 @@
 //! - Max file size: 100MB
 
 use anyhow::{Context, Result};
+use futures::StreamExt;
 use reqwest::multipart;
 use serde::Deserialize;
+use std::path::Path;
+use tokio::fs::File;
+use tokio::io::AsyncWriteExt;
+use tokio_util::io::ReaderStream;
 
 /// Maximum file size for tmpfiles.org (100MB)
 pub const MAX_TMPFILES_SIZE: u64 = 100 * 1024 * 1024;
@@ -34,21 +39,34 @@ pub fn convert_to_download_url(url: &str) -> String {
     url.replace("http://tmpfiles.org/", "https://tmpfiles.org/dl/")
 }
 
-/// Upload bytes to tmpfiles.org with a filename
+/// Upload a file to tmpfiles.org by streaming from disk
 ///
+/// This is more memory-efficient than upload_bytes for large files.
 /// Returns the download URL (already converted to /dl/ format)
-pub async fn upload_bytes(data: &[u8], filename: &str) -> Result<String> {
-    let client = reqwest::Client::new();
+pub async fn upload_file(path: &Path, filename: &str) -> Result<String> {
+    let file = File::open(path)
+        .await
+        .context("Failed to open file for upload")?;
 
-    // Create multipart form with file data
-    let part = multipart::Part::bytes(data.to_vec())
+    let file_size = file
+        .metadata()
+        .await
+        .context("Failed to get file metadata")?
+        .len();
+
+    // Create a stream from the file
+    let stream = ReaderStream::new(file);
+    let body = reqwest::Body::wrap_stream(stream);
+
+    // Create multipart form with streaming body
+    let part = multipart::Part::stream_with_length(body, file_size)
         .file_name(filename.to_string())
         .mime_str("application/octet-stream")
         .context("Failed to set MIME type")?;
 
     let form = multipart::Form::new().part("file", part);
 
-    // Upload to tmpfiles.org
+    let client = reqwest::Client::new();
     let response = client
         .post("https://tmpfiles.org/api/v1/upload")
         .multipart(form)
@@ -85,10 +103,11 @@ pub async fn upload_bytes(data: &[u8], filename: &str) -> Result<String> {
     Ok(download_url)
 }
 
-/// Download a file from tmpfiles.org
+/// Download a file from tmpfiles.org directly to disk
 ///
-/// The URL should be in /dl/ format (use convert_to_download_url if needed)
-pub async fn download_file(url: &str) -> Result<Vec<u8>> {
+/// This is more memory-efficient than download_file for large files.
+/// Returns the number of bytes downloaded.
+pub async fn download_to_file(url: &str, path: &Path) -> Result<u64> {
     let client = reqwest::Client::new();
 
     let response = client
@@ -108,12 +127,25 @@ pub async fn download_file(url: &str) -> Result<Vec<u8>> {
         anyhow::bail!("tmpfiles.org download failed with status {}", status);
     }
 
-    let data = response
-        .bytes()
+    // Stream response body to file
+    let mut file = File::create(path)
         .await
-        .context("Failed to read response body")?;
+        .context("Failed to create output file")?;
 
-    Ok(data.to_vec())
+    let mut stream = response.bytes_stream();
+    let mut total_bytes = 0u64;
+
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.context("Failed to read response chunk")?;
+        file.write_all(&chunk)
+            .await
+            .context("Failed to write to file")?;
+        total_bytes += chunk.len() as u64;
+    }
+
+    file.flush().await.context("Failed to flush file")?;
+
+    Ok(total_bytes)
 }
 
 #[cfg(test)]

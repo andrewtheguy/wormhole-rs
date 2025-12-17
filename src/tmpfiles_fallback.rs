@@ -203,7 +203,7 @@ pub async fn send_tmpfiles_fallback(
     let receiver_pubkey = receiver_pubkey
         .context("Timeout waiting for receiver to connect (5 minutes)")?;
 
-    // Read and encrypt entire file
+    // Read and encrypt entire file to temp file (reduces peak memory during upload)
     println!("Reading and encrypting file...");
     let mut file_data = Vec::with_capacity(file_size as usize);
     file.read_to_end(&mut file_data)
@@ -213,13 +213,24 @@ pub async fn send_tmpfiles_fallback(
     // Encrypt entire file as a single "chunk" with sequence 1
     let encrypted_data = encrypt_chunk(&encryption_key, 1, &file_data)
         .context("Failed to encrypt file")?;
+    drop(file_data); // Free plaintext memory
 
-    println!("Encrypted size: {}", format_bytes(encrypted_data.len() as u64));
+    let encrypted_size = encrypted_data.len() as u64;
+    println!("Encrypted size: {}", format_bytes(encrypted_size));
 
-    // Upload to tmpfiles.org
+    // Write encrypted data to temp file for streaming upload
+    let mut temp_file = NamedTempFile::new().context("Failed to create temp file")?;
+    temp_file
+        .write_all(&encrypted_data)
+        .context("Failed to write encrypted data to temp file")?;
+    temp_file.flush().context("Failed to flush temp file")?;
+    drop(encrypted_data); // Free ciphertext memory - now only temp file exists
+
+    // Stream upload from temp file (low memory usage)
     println!("Uploading to tmpfiles.org...");
-    let download_url = tmpfiles::upload_bytes(&encrypted_data, "transfer.enc").await?;
+    let download_url = tmpfiles::upload_file(temp_file.path(), "transfer.enc").await?;
     println!("Upload complete: {}", download_url);
+    // temp_file is automatically deleted when dropped
 
     // Send download URL to receiver via Nostr
     println!("Sending download URL to receiver...");
@@ -402,15 +413,23 @@ pub async fn receive_tmpfiles_with_token(
     let download_url = download_url
         .context("Timeout waiting for download URL from sender")?;
 
-    // Download from tmpfiles.org
+    // Download to temp file (streaming, low memory usage)
     println!("Downloading from tmpfiles.org...");
-    let encrypted_data = tmpfiles::download_file(&download_url).await?;
-    println!("Download complete: {}", format_bytes(encrypted_data.len() as u64));
+    let download_temp = NamedTempFile::new().context("Failed to create temp file for download")?;
+    let downloaded_bytes = tmpfiles::download_to_file(&download_url, download_temp.path()).await?;
+    println!("Download complete: {}", format_bytes(downloaded_bytes));
+
+    // Read encrypted data from temp file
+    let encrypted_data = tokio::fs::read(download_temp.path())
+        .await
+        .context("Failed to read downloaded file")?;
+    drop(download_temp); // Delete the download temp file
 
     // Decrypt file (encrypted as single "chunk" with sequence 1)
     println!("Decrypting...");
     let decrypted_data = decrypt_chunk(&encryption_key, 1, &encrypted_data)
         .context("Failed to decrypt file")?;
+    drop(encrypted_data); // Free ciphertext memory
 
     let data_size = decrypted_data.len() as u64;
     println!("Data size: {}", format_bytes(data_size));
