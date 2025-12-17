@@ -19,6 +19,8 @@ A secure peer-to-peer file transfer tool with two main transport categories:
 - **File and folder transfers** - Send individual files or entire directories (automatically archived)
 - **Local discovery** - mDNS for same-network transfers
 - **NAT traversal** - STUN/TURN for WebRTC, relay fallback for Iroh/Nostr
+- **Manual Relay Fallback** - Force fallback to Nostr relay mode by pressing ENTER if WebRTC fails
+- **PIN-based Transfers** - Use short 12-digit PINs instead of long wormhole codes for easier typing
 - **Cross-platform** - Single binary, supports macOS, Linux, and Windows
 
 For detailed protocol flows, wire formats, security model, and implementation details, see [ARCHITECTURE.md](docs/ARCHITECTURE.md).
@@ -92,7 +94,11 @@ wormhole-rs send iroh /path/to/file --extra-encrypt
 > Requires building with `--features webrtc`.
 
 ```bash
-wormhole-rs send hybrid /path/to/file
+# Standard send (displays wormhole code)
+wormhole-rs send webrtc /path/to/file
+
+# Send using a 12-digit PIN (Easier to type)
+wormhole-rs send --pin webrtc /path/to/file
 ```
 
 #### 3. Tor Mode
@@ -101,6 +107,9 @@ wormhole-rs send hybrid /path/to/file
 
 ```bash
 wormhole-rs send tor /path/to/file
+
+# Send using PIN
+wormhole-rs send --pin tor /path/to/file
 ```
 
 #### Receiving (Internet)
@@ -110,6 +119,9 @@ The receiver auto-detects the protocol from the wormhole code.
 wormhole-rs receive
 # Or with code directly
 wormhole-rs receive --code <WORMHOLE_CODE>
+
+# Receive using PIN
+wormhole-rs receive --pin
 ```
 
 ---

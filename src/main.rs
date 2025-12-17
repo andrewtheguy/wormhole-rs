@@ -112,6 +112,7 @@ enum SendTransport {
 
     #[cfg(feature = "webrtc")]
     /// Send via WebRTC with Nostr signaling + relay fallback
+    #[command(name = "webrtc")]
     WebRtc {
         /// Path to file or folder
         path: PathBuf,
