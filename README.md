@@ -25,6 +25,8 @@ A secure peer-to-peer file transfer tool with two main transport categories:
 
 For detailed protocol flows, wire formats, security model, and implementation details, see [ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
+For common scenarios (No Internet, Remote Terminal/No Paste), see [USE_CASES.md](docs/USE_CASES.md).
+
 ## Installation
 
 ### Quick Install (Linux & macOS)

@@ -38,3 +38,15 @@ Ideas and feature requests for future consideration.
 - **Feature:** Decouple Nostr dependencies completely.
 - **Benefit:** Users who only want to use Iroh or Tor (or Local mode) shouldn't be required to build/include the Nostr stack.
 - This aligns with the move to make Tor the primary relay for WebRTC, potentially allowing Nostr to be strictly optional.
+
+### Transfer Resumability
+**Domain:** Core / Transfer Logic
+- **Feature:** Ability to resume interrupted transfers (especially for large files) from where they left off.
+- **Benefit:** Prevents data loss and wasted bandwidth on unstable connections.
+- **Implementation:** Needs tracking of received chunks and a handshake to negotiate resume offset.
+
+### Support Custom Iroh DNS Server
+**Domain:** Iroh Mode
+- **Feature:** Allow configuring a custom Iroh DNS / Discovery server.
+- **Benefit:** Enables fully air-gapped or private P2P discovery without relying on global Iroh DNS servers, completing the self-hosted story.
+- **Current State:** Only custom Relay (DERP) servers are supported via `--relay-url`.
