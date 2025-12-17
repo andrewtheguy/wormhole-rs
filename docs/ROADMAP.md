@@ -22,11 +22,6 @@ Focus: Enhancing the usability and reliability of internet-based transfers (Iroh
 ### 2. Simpler fallback logic for WebRTC
 sender keep on waiting for ack from receiver rather than timeout, with an option to fallback to relay logic right away, if possible, use only one wormhole token for the fallback logic at the beginning rather than another separate one when fallback logic is triggered.
 
-### 3. remove unnecessary 
-        /// Disable NIP-65 Outbox model for Nostr (for compatibility with old receivers)
-        #[arg(long)]
-        no_outbox: bool,
-
 ---
 
 ## Backlog
