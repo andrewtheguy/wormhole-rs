@@ -19,16 +19,8 @@ Focus: Enhancing the usability and reliability of internet-based transfers (Iroh
 - **Reference:** implementation concept from [older prototype](https://github.com/andrewtheguy/wormhole-rs/blob/75574d073b2957977fb0a1f4d46493ff3c831b1c).
 - **Note:** This feature is optional. It will require functioning Nostr relays to exchange the token, even if the selected transport method (e.g., Iroh, Tor) itself doesn't require Nostr.
 
-### 2. Tor as Default Relay for WebRTC
-**Goal:** Improve privacy and reliability for WebRTC fallback scenarios.
-
-- **Current State:** 
-  - WebRTC uses Nostr for signaling.
-  - If direct P2P fails, it falls back to Nostr relays (store-and-forward) for data transfer.
-- **Proposal:**
-  - Promote **Tor Onion Services** to be the default fallback relay mechanism when direct WebRTC fails.
-  - Nostr data relaying should be demoted to a secondary, non-recommended option (or kept only for signaling).
-  - This leverages the existng Tor feature flag to provide a robust, anonymous relay path.
+### 2. Simpler fallback logic for WebRTC
+sender keep on waiting for ack from receiver rather than timeout, with an option to fallback to relay logic right away, if possible, use only one wormhole token for the fallback logic at the beginning rather than another separate one when fallback logic is triggered.
 
 ---
 
@@ -49,6 +41,19 @@ Ideas and feature requests for future consideration.
 **Domain:** Tor Mode
 - **Feature:** Enable `wormhole-rs send tor` to serve files via standard HTTP over the Onion network.
 - **Benefit:** Allows receivers to download files using just the **Tor Browser**, eliminating the need to install the `wormhole-rs` CLI on the receiving machine.
+
+
+### Tor as Default Relay for WebRTC (will cause heavy dependency for WebRTC mode)
+**Goal:** Improve privacy and reliability for WebRTC fallback scenarios.
+
+- **Current State:** 
+  - WebRTC uses Nostr for signaling.
+  - If direct P2P fails, it falls back to Nostr relays (store-and-forward) for data transfer.
+- **Proposal:**
+  - Promote **Tor Onion Services** to be the default fallback relay mechanism when direct WebRTC fails.
+  - Nostr data relaying should be demoted to a secondary, non-recommended option (or kept only for signaling).
+  - This leverages the existng Tor feature flag to provide a robust, anonymous relay path.
+
 
 ### Make Nostr an Opt-In Feature
 **Domain:** Core / Feature Flags
