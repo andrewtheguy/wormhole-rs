@@ -1,27 +1,5 @@
 # Project Roadmap
 
-This document outlines the planned improvements and feature requests for `wormhole-rs`.
-
-## Next Version: Non-Local Connection Improvements
-
-Focus: Enhancing the usability and reliability of internet-based transfers (Iroh, WebRTC, Tor).
-
-### 1. PIN-based Token Exchange via Nostr as an alternative input method for wormhole token
-**Goal:** Simplify the user experience by replacing long Wormhole Codes with short PINs for connection bootstrapping.
-
-- **Current State:** Users must share a long, serialized `WormholeToken` string.
-- **Proposal:** 
-  - Sender generates a short numerical PIN (e.g., "123-456").
-  - The full `WormholeToken` is published to a specific Nostr relay, encrypted or keyed by this PIN.
-  - Receiver enters the PIN.
-  - The client fetches the full token from Nostr and initiates the connection.
-- **Scope:** Applicable to all non-local connection types (Iroh, WebRTC, Tor).
-- **Reference:** implementation concept from [older prototype](https://github.com/andrewtheguy/wormhole-rs/blob/75574d073b2957977fb0a1f4d46493ff3c831b1c).
-- **Note:** This feature is optional. It will require functioning Nostr relays to exchange the token, even if the selected transport method (e.g., Iroh, Tor) itself doesn't require Nostr.
-
-### 2. Simpler fallback logic for WebRTC
-sender keep on waiting for ack from receiver rather than timeout, with an option to fallback to relay logic right away, if possible, use only one wormhole token for the fallback logic at the beginning rather than another separate one when fallback logic is triggered.
-
 ---
 
 ## Backlog

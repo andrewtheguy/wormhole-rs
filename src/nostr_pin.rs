@@ -1,7 +1,7 @@
 //! PIN-based wormhole code exchange for Nostr transport.
 //!
 //! This module provides functions for:
-//! - Generating random 8-character PINs from unambiguous characters
+//! - Generating random 12-character PINs from unambiguous characters
 //! - Deriving encryption keys from PINs using Argon2id
 //! - Creating and parsing PIN exchange events (kind 24243)
 //! - Encrypting/decrypting wormhole codes with PIN-derived keys
@@ -19,21 +19,8 @@ use sha2::{Digest, Sha256};
 use tokio::time::Duration;
 use crate::nostr_protocol::DEFAULT_NOSTR_RELAYS;
 
-/// PIN length (8 characters)
-pub const PIN_LENGTH: usize = 8;
-
-/// Character set for PIN generation (67 chars):
-/// - Uppercase: ABCDEFGHJKLMNPQRSTUVWXYZ (24, skip I/O)
-/// - Lowercase: abcdefghjkmnpqrstuvwxyz (23, skip i/l/o)
-/// - Numbers: 23456789 (8, skip 0/1)
-/// - Symbols: !@#$%^&*+-=? (12)
-pub const PIN_CHARSET: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789!@#$%^&*+-=?";
-
 /// Nostr event kind for PIN exchange (24243)
 pub const PIN_EXCHANGE_KIND: u16 = 24243;
-
-/// Length of PIN hint (hex chars)
-pub const PIN_HINT_LENGTH: usize = 8;
 
 /// Salt length for Argon2id
 pub const ARGON2_SALT_LEN: usize = 16;
@@ -46,21 +33,26 @@ const ARGON2_TIME_COST: u32 = 3;
 const ARGON2_MEMORY_COST: u32 = 65536; // 64 MiB
 const ARGON2_PARALLELISM: u32 = 4;
 
-/// PIN exchange event expiration (1 hour)
-const PIN_EVENT_EXPIRATION_SECS: u64 = 3600;
+/// Length of the PIN code in characters
+pub const PIN_LENGTH: usize = 12;
 
-/// Generate a random 8-character PIN from the unambiguous character set.
+/// Character set for PIN generation (alphanumeric + safe symbols)
+/// Removed similar characters (0/O, 1/I/l) to reduce ambiguity
+const PIN_CHARSET: &[u8] = b"23456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz$#@+";
+
+/// Generate a random 12-char PIN
 pub fn generate_pin() -> String {
     let mut rng = rand::thread_rng();
-    let charset_len = PIN_CHARSET.len();
-
     (0..PIN_LENGTH)
         .map(|_| {
-            let idx = rng.gen_range(0..charset_len);
+            let idx = rng.gen_range(0..PIN_CHARSET.len());
             PIN_CHARSET[idx] as char
         })
         .collect()
 }
+
+/// PIN exchange event expiration (1 hour)
+const PIN_EVENT_EXPIRATION_SECS: u64 = 3600;
 
 /// Compute PIN hint for event filtering (first 8 hex chars of SHA256).
 pub fn compute_pin_hint(pin: &str) -> String {
@@ -363,23 +355,23 @@ mod tests {
 
     #[test]
     fn test_pin_hint_consistency() {
-        let pin = "ABC12345";
+        let pin = "ABC123456789";
         let hint1 = compute_pin_hint(pin);
         let hint2 = compute_pin_hint(pin);
         assert_eq!(hint1, hint2);
-        assert_eq!(hint1.len(), PIN_HINT_LENGTH);
+        assert_eq!(hint1.len(), 8);
     }
 
     #[test]
     fn test_pin_hint_different_pins() {
-        let hint1 = compute_pin_hint("ABC12345");
-        let hint2 = compute_pin_hint("XYZ98765");
+        let hint1 = compute_pin_hint("ABC123456789");
+        let hint2 = compute_pin_hint("XYZ987654321");
         assert_ne!(hint1, hint2);
     }
 
     #[test]
     fn test_encrypt_decrypt_roundtrip() {
-        let pin = "Te$t1234";
+        let pin = "Te$t12345678";
         let salt = generate_salt();
         let wormhole_code = "eyJ2ZXJzaW9uIjoyLCJwcm90b2NvbCI6Im5vc3RyIn0";
 
@@ -391,8 +383,8 @@ mod tests {
 
     #[test]
     fn test_wrong_pin_fails() {
-        let pin = "Te$t1234";
-        let wrong_pin = "Wr0ng!23";
+        let pin = "Te$t12345678";
+        let wrong_pin = "Wr0ng!234567";
         let salt = generate_salt();
         let wormhole_code = "eyJ2ZXJzaW9uIjoyLCJwcm90b2NvbCI6Im5vc3RyIn0";
 
@@ -404,10 +396,10 @@ mod tests {
 
     #[test]
     fn test_wrong_salt_fails() {
-        let pin = "Te$t1234";
+        let pin = "Te$t12345678";
         let salt1 = generate_salt();
         let salt2 = generate_salt();
-        let wormhole_code = "eyJ2ZXJzaW9uIjoyLCJwcm90b2NvbCI6Im5vc3RyIn0";
+        let wormhole_code = "iroh-wormhole-code-123";
 
         let encrypted = encrypt_wormhole_code(wormhole_code, pin, &salt1).unwrap();
         let result = decrypt_wormhole_code(&encrypted, pin, &salt2);
@@ -417,7 +409,7 @@ mod tests {
 
     #[test]
     fn test_key_derivation_consistency() {
-        let pin = "Te$t1234";
+        let pin = "Te$t12345678";
         let salt = [1u8; ARGON2_SALT_LEN];
 
         let key1 = derive_key_from_pin(pin, &salt).unwrap();
