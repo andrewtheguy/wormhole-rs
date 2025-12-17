@@ -30,7 +30,7 @@ Ideas and feature requests for future consideration.
 - **Proposal:**
   - Promote **Tor Onion Services** to be the default fallback relay mechanism when direct WebRTC fails.
   - Nostr data relaying should be demoted to a secondary, non-recommended option (or kept only for signaling).
-  - This leverages the existng Tor feature flag to provide a robust, anonymous relay path.
+  - This leverages the existing Tor feature flag to provide a robust, anonymous relay path.
 
 
 ### Make Nostr an Opt-In Feature
