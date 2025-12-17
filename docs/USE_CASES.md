@@ -86,3 +86,23 @@ This guide describes common scenarios where `wormhole-rs` shines and which mode 
   ```bash
   wormhole-rs send iroh --relay-url http://my-private-relay.com:3340 /path/to/file
   ```
+
+---
+
+## 7. Planned / Future Scenarios (Roadmap)
+*These features are currently in development or planned. See [ROADMAP.md](ROADMAP.md) for details.*
+
+### A. Fully Air-gapped P2P Discovery
+**Scenario**: You want to use P2P discovery in a completely offline or private network (like a high-security corporate Intranet) without even reaching out to public DNS servers.
+- **Solution**: **Custom Iroh DNS Server**
+- **Benefit**: Allows `wormhole-rs` to discover peers globally within a private network using a self-hosted DNS/Discovery server.
+
+### B. Download without CLI (Tor Browser)
+**Scenario**: The receiver is on a restricted machine where they cannot install the CLI, but they have the Tor Browser.
+- **Solution**: **Browser-Accessible Tor Downloads**
+- **Benefit**: The sender creates an onion service that serves the file over HTTP. The receiver simply pastes the `.onion` link into Tor Browser to download.
+
+### C. VPN / Complex Subnet Transfers
+**Scenario**: You are connected via WireGuard or Tailscale, but mDNS auto-discovery doesn't work across the VPN interface.
+- **Solution**: **Manual IP/Port Entry** (Local Mode)
+- **Benefit**: Sender shares `IP:PORT` (e.g., `10.0.0.2:4000`) manually. Receiver connects directly, bypassing discovery issues.
