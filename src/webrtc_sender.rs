@@ -379,6 +379,7 @@ async fn transfer_data_webrtc_internal(
     force_relay: bool,
     custom_relays: Option<Vec<String>>,
     use_default_relays: bool,
+    use_pin: bool,
 ) -> Result<TransferResult> {
     // Generate encryption key (always required)
     let key = generate_key();
@@ -419,10 +420,25 @@ async fn transfer_data_webrtc_internal(
             },
         )?;
 
-        println!("\nWormhole code:\n{}\n", code);
-        println!("On the receiving end, run:");
-        println!("  wormhole-rs receive\n");
-        println!("Then enter the code above when prompted.\n");
+        let code_str = code.clone(); // Keep for PIN publishing if needed
+
+        if use_pin {
+            let pin = crate::nostr_pin::publish_wormhole_code_via_pin(
+                &signaling.keys,
+                &code_str,
+                &signaling.transfer_id(),
+            ).await?;
+
+            println!("\n🔢 PIN: {}\n", pin);
+            println!("On the receiving end, run:");
+            println!("  wormhole-rs receive --pin\n");
+            println!("Then enter the PIN above when prompted.\n");
+        } else {
+            println!("\n🔮 Wormhole code:\n{}\n", code_str);
+            println!("On the receiving end, run:");
+            println!("  wormhole-rs receive\n");
+            println!("Then enter the code above when prompted.\n");
+        }
 
         // Go directly to relay mode
         let result = crate::nostr_relay::send_relay_fallback(
@@ -459,10 +475,25 @@ async fn transfer_data_webrtc_internal(
         },
     )?;
 
-    println!("\nWormhole code:\n{}\n", code);
-    println!("On the receiving end, run:");
-    println!("  wormhole-rs receive\n");
-    println!("Then enter the code above when prompted.\n");
+    let code_str = code.clone();
+
+    if use_pin {
+        let pin = crate::nostr_pin::publish_wormhole_code_via_pin(
+            &signaling.keys,
+            &code_str,
+            &signaling.transfer_id(),
+        ).await?;
+
+        println!("\n🔢 PIN: {}\n", pin);
+        println!("On the receiving end, run:");
+        println!("  wormhole-rs receive --pin\n");
+        println!("Then enter the PIN above when prompted.\n");
+    } else {
+        println!("\n🔮 Wormhole code:\n{}\n", code_str);
+        println!("On the receiving end, run:");
+        println!("  wormhole-rs receive\n");
+        println!("Then enter the code above when prompted.\n");
+    }
 
     // Try WebRTC transfer
     match try_webrtc_transfer(
@@ -510,6 +541,7 @@ pub async fn send_file_webrtc(
     force_relay: bool,
     custom_relays: Option<Vec<String>>,
     use_default_relays: bool,
+    use_pin: bool,
 ) -> Result<TransferResult> {
     // Get file metadata
     let metadata = tokio::fs::metadata(file_path)
@@ -542,6 +574,7 @@ pub async fn send_file_webrtc(
         force_relay,
         custom_relays,
         use_default_relays,
+        use_pin,
     )
     .await
 }
@@ -552,6 +585,7 @@ pub async fn send_folder_webrtc(
     force_relay: bool,
     custom_relays: Option<Vec<String>>,
     use_default_relays: bool,
+    use_pin: bool,
 ) -> Result<TransferResult> {
     // Validate folder
     if !folder_path.is_dir() {
@@ -593,6 +627,7 @@ pub async fn send_folder_webrtc(
         force_relay,
         custom_relays,
         use_default_relays,
+        use_pin,
     )
     .await;
 

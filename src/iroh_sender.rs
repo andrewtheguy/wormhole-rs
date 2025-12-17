@@ -43,6 +43,7 @@ async fn transfer_data_internal(
     transfer_type: TransferType,
     extra_encrypt: bool,
     relay_urls: Vec<String>,
+    use_pin: bool,
 ) -> Result<()> {
     // Generate encryption key only if extra encryption is enabled
     let key = if extra_encrypt {
@@ -62,9 +63,27 @@ async fn transfer_data_internal(
     let code = generate_code(&addr, extra_encrypt, key.as_ref())?;
 
     println!("\n🔮 Wormhole code:\n{}\n", code);
-    println!("On the receiving end, run:");
-    println!("  wormhole-rs receive\n");
-    println!("Then enter the code above when prompted.\n");
+    println!("\n🔮 Wormhole code:\n{}\n", code);
+
+    if use_pin {
+        // Generate ephemeral keys for PIN exchange
+        let keys = nostr_sdk::Keys::generate();
+        let pin = crate::nostr_pin::publish_wormhole_code_via_pin(
+            &keys,
+            &code,
+            "iroh-transfer", // Transfer id not critical for iroh, just needs to be non-empty
+        ).await?;
+
+        println!("🔢 PIN: {}\n", pin);
+        println!("On the receiving end, run:");
+        println!("  wormhole-rs receive --pin\n");
+        println!("Then enter the PIN above when prompted.\n");
+    } else {
+        println!("On the receiving end, run:");
+        println!("  wormhole-rs receive\n");
+        println!("Then enter the code above when prompted.\n");
+    }
+
     println!("⏳ Waiting for receiver to connect...");
 
     // Wait for connection
@@ -165,7 +184,7 @@ async fn transfer_data_internal(
 }
 
 /// Send a file and return the wormhole code
-pub async fn send_file(file_path: &Path, extra_encrypt: bool, relay_urls: Vec<String>) -> Result<()> {
+pub async fn send_file(file_path: &Path, extra_encrypt: bool, relay_urls: Vec<String>, use_pin: bool) -> Result<()> {
     // Get file metadata
     let metadata = tokio::fs::metadata(file_path)
         .await
@@ -194,6 +213,7 @@ pub async fn send_file(file_path: &Path, extra_encrypt: bool, relay_urls: Vec<St
         TransferType::File,
         extra_encrypt,
         relay_urls,
+        use_pin,
     )
     .await
 }
@@ -204,7 +224,7 @@ pub async fn send_file(file_path: &Path, extra_encrypt: bool, relay_urls: Vec<St
 /// especially when sending from Unix to Windows or vice versa. Windows does not
 /// support Unix permission modes (rwx), so files may have different permissions
 /// after extraction on Windows.
-pub async fn send_folder(folder_path: &Path, extra_encrypt: bool, relay_urls: Vec<String>) -> Result<()> {
+pub async fn send_folder(folder_path: &Path, extra_encrypt: bool, relay_urls: Vec<String>, use_pin: bool) -> Result<()> {
     // Validate folder
     if !folder_path.is_dir() {
         anyhow::bail!("Not a directory: {}", folder_path.display());
@@ -248,6 +268,7 @@ pub async fn send_folder(folder_path: &Path, extra_encrypt: bool, relay_urls: Ve
         TransferType::Folder,
         extra_encrypt,
         relay_urls,
+        use_pin,
     )
     .await;
 

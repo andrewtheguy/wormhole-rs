@@ -26,6 +26,7 @@ async fn transfer_data_tor_internal(
     file_size: u64,
     transfer_type: TransferType,
     extra_encrypt: bool,
+    use_pin: bool,
 ) -> Result<()> {
     // Generate encryption key only if extra encryption is enabled
     let key = if extra_encrypt {
@@ -73,9 +74,27 @@ async fn transfer_data_tor_internal(
     let code = generate_tor_code(onion_addr_str.clone(), extra_encrypt, key.as_ref())?;
 
     println!("\nWormhole code:\n{}\n", code);
-    println!("On the receiving end, run:");
-    println!("  wormhole-rs receive\n");
-    println!("Then enter the code above when prompted.\n");
+    println!("\nWormhole code:\n{}\n", code);
+    
+    if use_pin {
+        // Generate ephemeral keys for PIN exchange
+        let keys = nostr_sdk::Keys::generate();
+        let pin = crate::nostr_pin::publish_wormhole_code_via_pin(
+            &keys,
+            &code,
+            "tor-transfer", // Transfer id not critical for tor bootstrap, just needs to be non-empty
+        ).await?;
+
+        println!("🔢 PIN: {}\n", pin);
+        println!("On the receiving end, run:");
+        println!("  wormhole-rs receive --pin\n");
+        println!("Then enter the PIN above when prompted.\n");
+    } else {
+        println!("On the receiving end, run:");
+        println!("  wormhole-rs receive\n");
+        println!("Then enter the code above when prompted.\n");
+    }
+
     println!("Waiting for receiver to connect via Tor...");
 
     // Convert RendRequest stream to StreamRequest stream
@@ -178,7 +197,7 @@ async fn transfer_data_tor_internal(
 }
 
 /// Send a file via Tor hidden service
-pub async fn send_file_tor(file_path: &Path, extra_encrypt: bool) -> Result<()> {
+pub async fn send_file_tor(file_path: &Path, extra_encrypt: bool, use_pin: bool) -> Result<()> {
     // Get file metadata
     let metadata = tokio::fs::metadata(file_path)
         .await
@@ -200,11 +219,11 @@ pub async fn send_file_tor(file_path: &Path, extra_encrypt: bool) -> Result<()> 
     let file = File::open(file_path).await.context("Failed to open file")?;
 
     // Transfer using common logic
-    transfer_data_tor_internal(file, filename, file_size, TransferType::File, extra_encrypt).await
+    transfer_data_tor_internal(file, filename, file_size, TransferType::File, extra_encrypt, use_pin).await
 }
 
 /// Send a folder via Tor hidden service (as tar archive)
-pub async fn send_folder_tor(folder_path: &Path, extra_encrypt: bool) -> Result<()> {
+pub async fn send_folder_tor(folder_path: &Path, extra_encrypt: bool, use_pin: bool) -> Result<()> {
     // Validate folder
     if !folder_path.is_dir() {
         anyhow::bail!("Not a directory: {}", folder_path.display());
@@ -237,5 +256,5 @@ pub async fn send_folder_tor(folder_path: &Path, extra_encrypt: bool) -> Result<
 
     // Transfer using common logic
     // Note: temp_tar is kept alive until this function returns, ensuring the file exists
-    transfer_data_tor_internal(file, tar_filename, file_size, TransferType::Folder, extra_encrypt).await
+    transfer_data_tor_internal(file, tar_filename, file_size, TransferType::Folder, extra_encrypt, use_pin).await
 }
