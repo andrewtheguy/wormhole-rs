@@ -39,6 +39,33 @@ Ideas and feature requests for future consideration.
 - **Benefit:** Users who only want to use Iroh or Tor (or Local mode) shouldn't be required to build/include the Nostr stack.
 - This aligns with the move to make Tor the primary relay for WebRTC, potentially allowing Nostr to be strictly optional.
 
+### Streaming Encrypt/Upload for tmpfiles.org Fallback
+**Domain:** WebRTC / tmpfiles.org Fallback
+- **Current State:**
+  - Sender encrypts file in 16KB chunks to a temp file, then streams upload from temp file.
+  - Requires knowing encrypted size upfront for HTTP Content-Length header.
+- **Potential Optimization:**
+  - If tmpfiles.org accepts chunked transfer encoding (no Content-Length required), we could stream encrypt directly to HTTP upload.
+  - Would eliminate temp file entirely: `Read → Encrypt → Stream Upload` in one pass.
+- **Investigation Needed:** Test if `multipart::Part::stream()` (without size) works with tmpfiles.org API.
+- **Benefit:** Eliminates disk I/O for temp file, reduces latency.
+
+### Investigate Alternative Temp File Upload Services
+**Domain:** WebRTC / Fallback Options
+- **Current State:** Using tmpfiles.org (100MB limit, 60 min retention).
+- **Alternatives to Investigate:**
+  - **temp.sh** - https://temp.sh/
+  - **termbin.com** - https://termbin.com/
+  - **uguu.se** - https://uguu.se/
+- **Evaluation Criteria:**
+  - Max file size limit
+  - Retention period
+  - API simplicity (curl-friendly)
+  - Reliability and uptime
+  - Support for streaming uploads (chunked transfer encoding)
+  - Geographic availability
+- **Potential Benefit:** Fallback redundancy, better limits, or improved reliability.
+
 ### Transfer Resumability
 **Domain:** Core / Transfer Logic
 - **Feature:** Ability to resume interrupted transfers (especially for large files) from where they left off.

@@ -23,7 +23,7 @@ use tokio::io::AsyncReadExt;
 use tokio::sync::Mutex;
 use tokio::time::{timeout, Duration};
 
-use crate::crypto::{decrypt_chunk, encrypt_chunk};
+use crate::crypto::{decrypt_chunk, encrypt_chunk, CHUNK_SIZE};
 use crate::folder::{
     extract_tar_archive, get_extraction_dir, print_skipped_entries, print_tar_extraction_info,
 };
@@ -33,7 +33,7 @@ use crate::nostr_protocol::{
     DEFAULT_NOSTR_RELAYS,
 };
 use crate::tmpfiles::{self, MAX_TMPFILES_SIZE};
-use crate::transfer::format_bytes;
+use crate::transfer::{format_bytes, num_chunks, FileHeader, TransferType};
 use crate::wormhole::{WormholeToken, PROTOCOL_WEBRTC};
 
 // --- Constants ---
@@ -105,9 +105,15 @@ async fn connect_to_relays(keys: Keys, relay_urls: &[String]) -> Result<(Client,
 /// This function uses existing credentials from the WebRTC signaling,
 /// so the receiver can use the same wormhole code that was already displayed.
 ///
+/// The file is encrypted using the same chunked format as other modes:
+/// - Header (chunk_num 0): length_prefix || encrypted(FileHeader)
+/// - Chunks (chunk_num 1+): length_prefix || encrypted(16KB chunk)
+///
 /// # Arguments
 /// * `file` - Open file handle to send
 /// * `file_size` - Size of the file in bytes
+/// * `filename` - Original filename
+/// * `transfer_type` - "file" or "folder"
 /// * `sender_keys` - Sender's Nostr keys (from WebRTC signaling)
 /// * `transfer_id` - Transfer ID (from WebRTC signaling)
 /// * `encryption_key` - AES-256-GCM key (from WebRTC signaling)
@@ -115,6 +121,8 @@ async fn connect_to_relays(keys: Keys, relay_urls: &[String]) -> Result<(Client,
 pub async fn send_tmpfiles_fallback(
     mut file: File,
     file_size: u64,
+    filename: &str,
+    transfer_type: TransferType,
     sender_keys: Keys,
     transfer_id: String,
     encryption_key: [u8; 32],
@@ -203,28 +211,72 @@ pub async fn send_tmpfiles_fallback(
     let receiver_pubkey = receiver_pubkey
         .context("Timeout waiting for receiver to connect (5 minutes)")?;
 
-    // Read and encrypt entire file to temp file (reduces peak memory during upload)
-    println!("Reading and encrypting file...");
-    let mut file_data = Vec::with_capacity(file_size as usize);
-    file.read_to_end(&mut file_data)
-        .await
-        .context("Failed to read file data")?;
-
-    // Encrypt entire file as a single "chunk" with sequence 1
-    let encrypted_data = encrypt_chunk(&encryption_key, 1, &file_data)
-        .context("Failed to encrypt file")?;
-    drop(file_data); // Free plaintext memory
-
-    let encrypted_size = encrypted_data.len() as u64;
-    println!("Encrypted size: {}", format_bytes(encrypted_size));
-
-    // Write encrypted data to temp file for streaming upload
+    // Create temp file for encrypted output (chunked format, same as other modes)
     let mut temp_file = NamedTempFile::new().context("Failed to create temp file")?;
+
+    // Write encrypted header (chunk_num 0)
+    println!("Encrypting file...");
+    let header = FileHeader::new(transfer_type, filename.to_string(), file_size);
+    let header_bytes = header.to_bytes();
+    let encrypted_header = encrypt_chunk(&encryption_key, 0, &header_bytes)
+        .context("Failed to encrypt header")?;
     temp_file
-        .write_all(&encrypted_data)
-        .context("Failed to write encrypted data to temp file")?;
+        .write_all(&(encrypted_header.len() as u32).to_be_bytes())
+        .context("Failed to write header length")?;
+    temp_file
+        .write_all(&encrypted_header)
+        .context("Failed to write encrypted header")?;
+
+    // Write encrypted chunks (chunk_num 1+)
+    let total_chunks = num_chunks(file_size);
+    let mut buffer = vec![0u8; CHUNK_SIZE];
+    let mut chunk_num = 1u64;
+    let mut bytes_encrypted = 0u64;
+
+    loop {
+        let bytes_read = file.read(&mut buffer).await.context("Failed to read file")?;
+        if bytes_read == 0 {
+            break;
+        }
+
+        let encrypted_chunk = encrypt_chunk(&encryption_key, chunk_num, &buffer[..bytes_read])
+            .context("Failed to encrypt chunk")?;
+
+        // Write length-prefixed encrypted chunk
+        temp_file
+            .write_all(&(encrypted_chunk.len() as u32).to_be_bytes())
+            .context("Failed to write chunk length")?;
+        temp_file
+            .write_all(&encrypted_chunk)
+            .context("Failed to write encrypted chunk")?;
+
+        chunk_num += 1;
+        bytes_encrypted += bytes_read as u64;
+
+        // Progress update
+        if chunk_num % 50 == 0 || bytes_encrypted == file_size {
+            let percent = if file_size == 0 {
+                100
+            } else {
+                (bytes_encrypted as f64 / file_size as f64 * 100.0) as u32
+            };
+            print!("\r   Encrypting: {}%", percent);
+            let _ = std::io::stdout().flush();
+        }
+    }
+    println!();
+
     temp_file.flush().context("Failed to flush temp file")?;
-    drop(encrypted_data); // Free ciphertext memory - now only temp file exists
+    let encrypted_size = temp_file
+        .as_file()
+        .metadata()
+        .context("Failed to get temp file size")?
+        .len();
+    println!(
+        "Encrypted {} chunks, total size: {}",
+        total_chunks,
+        format_bytes(encrypted_size)
+    );
 
     // Stream upload from temp file (low memory usage)
     println!("Uploading to tmpfiles.org...");
@@ -305,12 +357,13 @@ pub async fn receive_tmpfiles_with_token(
         .webrtc_relays
         .clone()
         .context("Missing relays in wormhole code")?;
-    let transfer_type = token
+    // transfer_type and filename are in the encrypted header, but we validate they exist in token
+    let _transfer_type = token
         .webrtc_transfer_type
         .clone()
         .context("Missing transfer type in wormhole code")?;
 
-    let filename = token
+    let _filename = token
         .webrtc_filename
         .clone()
         .unwrap_or_else(|| "downloaded_file".to_string());
@@ -419,23 +472,81 @@ pub async fn receive_tmpfiles_with_token(
     let downloaded_bytes = tmpfiles::download_to_file(&download_url, download_temp.path()).await?;
     println!("Download complete: {}", format_bytes(downloaded_bytes));
 
-    // Read encrypted data from temp file
-    let encrypted_data = tokio::fs::read(download_temp.path())
+    // Open downloaded file for reading (chunked format)
+    let mut encrypted_file = tokio::fs::File::open(download_temp.path())
         .await
-        .context("Failed to read downloaded file")?;
-    drop(download_temp); // Delete the download temp file
+        .context("Failed to open downloaded file")?;
 
-    // Decrypt file (encrypted as single "chunk" with sequence 1)
+    // Read and decrypt header (chunk_num 0)
     println!("Decrypting...");
-    let decrypted_data = decrypt_chunk(&encryption_key, 1, &encrypted_data)
-        .context("Failed to decrypt file")?;
-    drop(encrypted_data); // Free ciphertext memory
+    let mut len_buf = [0u8; 4];
+    encrypted_file
+        .read_exact(&mut len_buf)
+        .await
+        .context("Failed to read header length")?;
+    let header_len = u32::from_be_bytes(len_buf) as usize;
 
-    let data_size = decrypted_data.len() as u64;
-    println!("Data size: {}", format_bytes(data_size));
+    let mut encrypted_header = vec![0u8; header_len];
+    encrypted_file
+        .read_exact(&mut encrypted_header)
+        .await
+        .context("Failed to read encrypted header")?;
+
+    let decrypted_header = decrypt_chunk(&encryption_key, 0, &encrypted_header)
+        .context("Failed to decrypt header")?;
+    let header = FileHeader::from_bytes(&decrypted_header).context("Failed to parse header")?;
+
+    println!(
+        "File: {} ({})",
+        header.filename,
+        format_bytes(header.file_size)
+    );
+
+    // Read and decrypt chunks (chunk_num 1+)
+    let mut chunk_num = 1u64;
+    let mut bytes_decrypted = 0u64;
 
     // Handle file vs folder
-    if transfer_type == "folder" {
+    let is_folder = matches!(header.transfer_type, TransferType::Folder);
+
+    if is_folder {
+        // For folders, we need full data in memory for tar extraction
+        let mut decrypted_data = Vec::with_capacity(header.file_size as usize);
+
+        while bytes_decrypted < header.file_size {
+            // Read chunk length
+            if encrypted_file.read_exact(&mut len_buf).await.is_err() {
+                break;
+            }
+            let chunk_len = u32::from_be_bytes(len_buf) as usize;
+
+            // Read encrypted chunk
+            let mut encrypted_chunk = vec![0u8; chunk_len];
+            encrypted_file
+                .read_exact(&mut encrypted_chunk)
+                .await
+                .context("Failed to read chunk")?;
+
+            // Decrypt chunk
+            let decrypted_chunk = decrypt_chunk(&encryption_key, chunk_num, &encrypted_chunk)
+                .context("Failed to decrypt chunk")?;
+
+            bytes_decrypted += decrypted_chunk.len() as u64;
+            decrypted_data.extend_from_slice(&decrypted_chunk);
+            chunk_num += 1;
+
+            // Progress
+            if chunk_num % 50 == 0 || bytes_decrypted >= header.file_size {
+                let percent = (bytes_decrypted as f64 / header.file_size as f64 * 100.0) as u32;
+                print!("\r   Decrypting: {}%", percent);
+                let _ = std::io::stdout().flush();
+            }
+        }
+        println!();
+
+        drop(encrypted_file);
+        drop(download_temp);
+
         println!("Extracting folder archive...");
         print_tar_extraction_info();
 
@@ -450,10 +561,9 @@ pub async fn receive_tmpfiles_with_token(
         println!("\nFolder received successfully!");
         println!("Extracted to: {}", extract_dir.display());
     } else {
-        println!("Filename: {}", filename);
-
-        let output_dir = output_dir.unwrap_or_else(|| PathBuf::from("."));
-        let output_path = output_dir.join(&filename);
+        // For files, stream decrypt directly to output
+        let output_dir_path = output_dir.unwrap_or_else(|| PathBuf::from("."));
+        let output_path = output_dir_path.join(&header.filename);
 
         // Check if file already exists
         if output_path.exists() {
@@ -477,22 +587,56 @@ pub async fn receive_tmpfiles_with_token(
                 .context("Failed to remove existing file")?;
         }
 
-        let temp_file =
-            NamedTempFile::new_in(&output_dir).context("Failed to create temporary file")?;
-        let temp_path = temp_file.path().to_path_buf();
+        let output_temp =
+            NamedTempFile::new_in(&output_dir_path).context("Failed to create temporary file")?;
+        let temp_path = output_temp.path().to_path_buf();
 
         let cleanup_path: TempFileCleanup = Arc::new(Mutex::new(Some(temp_path)));
         setup_cleanup_handler(cleanup_path.clone());
 
-        let mut temp_file = temp_file;
-        temp_file
-            .write_all(&decrypted_data)
-            .context("Failed to write to file")?;
+        let mut output_temp = output_temp;
+
+        while bytes_decrypted < header.file_size {
+            // Read chunk length
+            if encrypted_file.read_exact(&mut len_buf).await.is_err() {
+                break;
+            }
+            let chunk_len = u32::from_be_bytes(len_buf) as usize;
+
+            // Read encrypted chunk
+            let mut encrypted_chunk = vec![0u8; chunk_len];
+            encrypted_file
+                .read_exact(&mut encrypted_chunk)
+                .await
+                .context("Failed to read chunk")?;
+
+            // Decrypt and write directly to output
+            let decrypted_chunk = decrypt_chunk(&encryption_key, chunk_num, &encrypted_chunk)
+                .context("Failed to decrypt chunk")?;
+
+            output_temp
+                .write_all(&decrypted_chunk)
+                .context("Failed to write to file")?;
+
+            bytes_decrypted += decrypted_chunk.len() as u64;
+            chunk_num += 1;
+
+            // Progress
+            if chunk_num % 50 == 0 || bytes_decrypted >= header.file_size {
+                let percent = (bytes_decrypted as f64 / header.file_size as f64 * 100.0) as u32;
+                print!("\r   Decrypting: {}%", percent);
+                let _ = std::io::stdout().flush();
+            }
+        }
+        println!();
+
+        drop(encrypted_file);
+        drop(download_temp);
 
         cleanup_path.lock().await.take();
 
-        temp_file.flush().context("Failed to flush file")?;
-        temp_file
+        output_temp.flush().context("Failed to flush file")?;
+        output_temp
             .persist(&output_path)
             .map_err(|e| anyhow::anyhow!("Failed to persist temp file: {}", e))?;
 

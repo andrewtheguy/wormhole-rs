@@ -474,6 +474,8 @@ async fn transfer_data_webrtc_internal(
         let result = crate::tmpfiles_fallback::send_tmpfiles_fallback(
             file,
             file_size,
+            &filename,
+            transfer_type,
             signaling.keys.clone(),
             signaling.transfer_id().to_string(),
             key,
@@ -538,6 +540,8 @@ async fn transfer_data_webrtc_internal(
     let result = crate::tmpfiles_fallback::send_tmpfiles_fallback(
         file,
         file_size,
+        &filename,
+        transfer_type,
         signaling.keys.clone(),
         signaling.transfer_id().to_string(),
         key,
