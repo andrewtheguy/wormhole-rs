@@ -94,8 +94,7 @@ async fn try_webrtc_transfer(
         }
     });
 
-    let mut receiver_pubkey = None;
-    let mut offer_received = false;
+    let receiver_pubkey;
 
     // Wait loop without timeout (unless user forces fallback)
     loop {
@@ -105,7 +104,7 @@ async fn try_webrtc_transfer(
                 match msg {
                     Some(SignalingMessage::Ready { sender_pubkey }) => {
                         println!("Receiver ready: {}", sender_pubkey.to_hex());
-                        receiver_pubkey = Some(sender_pubkey);
+                        // Note: We don't need to store receiver_pubkey here as we'll get it again with the Offer
                     }
                     Some(SignalingMessage::Offer { sender_pubkey, sdp }) => {
                         println!("Received offer from: {}", sender_pubkey.to_hex());
@@ -115,7 +114,6 @@ async fn try_webrtc_transfer(
                         let offer_sdp = RTCSessionDescription::offer(sdp.sdp)
                             .context("Failed to create offer SDP")?;
                         rtc_peer.set_remote_description(offer_sdp).await?;
-                        offer_received = true;
                         break;
                     }
                     Some(SignalingMessage::IceCandidate {
@@ -149,11 +147,6 @@ async fn try_webrtc_transfer(
                  return Ok(WebRtcResult::Failed("User forced fallback".to_string()));
             }
         }
-    }
-
-    if !offer_received {
-         // Should be covered by loop break or return
-         return Ok(WebRtcResult::Failed("Loop exited without offer".to_string()));
     }
 
     let remote_pubkey = match receiver_pubkey {
