@@ -43,8 +43,8 @@ This guide describes common scenarios where `wormhole-rs` shines and which mode 
 **Scenario**: You are on a corporate or university network that blocks UDP, non-standard ports, and direct P2P connections. Standard transfers hang or fail.
 
 **Solution**: **WebRTC Mode + Relay Fallback**
-- **Why**: WebRTC tries to punch through NATs. If direct connection fails (firewall blocks UDP), `wormhole-rs` can fall back to using Nostr relays to store-and-forward encrypted chunks (over standard HTTPS/WS).
-- **Manual Fallback**: If the connection hangs, the sender can press **ENTER** to force the relay mode immediately.
+- **Why**: WebRTC tries to punch through NATs. If direct connection fails (firewall blocks UDP), `wormhole-rs` can fall back to using tmpfiles.org to upload/download encrypted files (100MB limit, 60 min retention).
+- **Manual Fallback**: If the connection hangs, the sender can use `--force-relay` to skip WebRTC and use tmpfiles.org directly.
 - **Command**:
   ```bash
   wormhole-rs send --pin webrtc /path/to/file

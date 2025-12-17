@@ -12,7 +12,7 @@ pub const PROTOCOL_IROH: &str = "iroh";
 /// Protocol identifier for tor transport
 pub const PROTOCOL_TOR: &str = "tor";
 
-/// Protocol identifier for webrtc transport (WebRTC + Nostr signaling + relay fallback)
+/// Protocol identifier for webrtc transport (WebRTC + Nostr signaling + tmpfiles.org fallback)
 pub const PROTOCOL_WEBRTC: &str = "webrtc";
 
 /// Minimal address for serialization - only contains node ID and relay URL
@@ -173,7 +173,7 @@ pub fn generate_tor_code(
     Ok(URL_SAFE_NO_PAD.encode(&serialized))
 }
 
-/// Generate a wormhole code for webrtc transfer (WebRTC + Nostr signaling + relay fallback)
+/// Generate a wormhole code for webrtc transfer (WebRTC + Nostr signaling + tmpfiles.org fallback)
 /// Format: base64url(json(WormholeToken))
 ///
 /// # Arguments

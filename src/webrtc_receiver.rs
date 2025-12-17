@@ -1,9 +1,9 @@
-//! WebRTC transport receiver: WebRTC with Nostr signaling + relay fallback
+//! WebRTC transport receiver: WebRTC with Nostr signaling + tmpfiles.org fallback
 //!
 //! This module handles receiving files over webrtc transport:
 //! 1. Uses Nostr for WebRTC signaling (replacing PeerJS)
 //! 2. Attempts direct P2P connection via STUN
-//! 3. Falls back to Nostr relay mode if WebRTC fails
+//! 3. Falls back to tmpfiles.org relay mode if WebRTC fails
 
 use anyhow::{Context, Result};
 use base64::Engine;
@@ -414,14 +414,14 @@ pub async fn receive_webrtc(code: &str, output_dir: Option<PathBuf>) -> Result<(
         }
         WebRtcResult::Failed(reason) => {
             println!("\nWebRTC connection failed: {}", reason);
-            println!("Falling back to Nostr relay mode...\n");
+            println!("Falling back to tmpfiles.org...\n");
         }
     }
 
-    // Fallback to Nostr relay mode
+    // Fallback to tmpfiles.org
     signaling.disconnect().await;
 
-    crate::nostr_relay::receive_nostr_with_token(&token, output_dir).await
+    crate::tmpfiles_fallback::receive_tmpfiles_with_token(&token, output_dir).await
 }
 
 /// Internal implementation for receiving a file via WebRTC

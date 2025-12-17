@@ -324,8 +324,8 @@ impl NostrSignaling {
                     seq: seq.unwrap_or(0),
                 })
             }
-            // If we see a chunk event, it means the peer has switched to relay mode
-            crate::nostr_protocol::EVENT_TYPE_CHUNK => Some(SignalingMessage::RelayChunk),
+            // If we see a tmpfile URL event, it means the peer has switched to fallback mode
+            crate::nostr_protocol::EVENT_TYPE_TMPFILE_URL => Some(SignalingMessage::RelayChunk),
             _ => None,
         }
     }
