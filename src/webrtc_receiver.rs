@@ -109,44 +109,49 @@ async fn try_webrtc_receive(
     println!("Sent offer to sender");
 
     // Wait for answer with timeout
-    let answer_result = timeout(WEBRTC_CONNECTION_TIMEOUT, async {
-        loop {
-            match signal_rx.recv().await {
-                Some(SignalingMessage::Answer { sdp, .. }) => {
-                    println!("Received answer from sender");
-                    let answer_sdp = RTCSessionDescription::answer(sdp.sdp)
-                        .context("Failed to create answer SDP")?;
-                    rtc_peer.set_remote_description(answer_sdp).await?;
-                    return Ok::<(), anyhow::Error>(());
-                }
-                Some(SignalingMessage::IceCandidate { candidate, seq, .. }) => {
-                    // Handle early ICE candidates
-                    println!("Received early ICE candidate (seq: {})", seq);
-                    let candidate_init = RTCIceCandidateInit {
-                        candidate: candidate.candidate,
-                        sdp_mid: candidate.sdp_mid,
-                        sdp_mline_index: candidate.sdp_m_line_index,
-                        username_fragment: None,
-                    };
-                    let _ = rtc_peer.add_ice_candidate(candidate_init).await;
-                }
-                Some(_) => continue,
-                None => {
-                    return Err(anyhow::anyhow!("Signaling channel closed"));
+    // Wait for answer (indefinitely until success or fallback detected)
+    println!("Waiting for answer from sender...");
+    let answer_result: Result<()> = loop {
+        match signal_rx.recv().await {
+            Some(SignalingMessage::Answer { sdp, .. }) => {
+                println!("Received answer from sender");
+                let answer_sdp = RTCSessionDescription::answer(sdp.sdp)
+                    .context("Failed to create answer SDP");
+                
+                match answer_sdp {
+                    Ok(sdp) => {
+                         if let Err(e) = rtc_peer.set_remote_description(sdp).await {
+                             break Err(anyhow::anyhow!("Failed to set remote description: {}", e));
+                         }
+                         break Ok(());
+                    },
+                    Err(e) => break Err(e),
                 }
             }
+            Some(SignalingMessage::IceCandidate { candidate, seq, .. }) => {
+                // Handle early ICE candidates
+                println!("Received early ICE candidate (seq: {})", seq);
+                let candidate_init = RTCIceCandidateInit {
+                    candidate: candidate.candidate,
+                    sdp_mid: candidate.sdp_mid,
+                    sdp_mline_index: candidate.sdp_m_line_index,
+                    username_fragment: None,
+                };
+                let _ = rtc_peer.add_ice_candidate(candidate_init).await;
+            }
+            Some(SignalingMessage::RelayChunk) => {
+                println!("Sender switched to relay mode.");
+                signal_handle.abort();
+                return Ok(WebRtcResult::Failed("Relay fallback detected".to_string()));
+            }
+            Some(_) => continue,
+            None => {
+                break Err(anyhow::anyhow!("Signaling channel closed"));
+            }
         }
-    })
-    .await;
+    };
 
-    if answer_result.is_err() {
-        signal_handle.abort();
-        return Ok(WebRtcResult::Failed(
-            "Timeout waiting for answer from sender".to_string(),
-        ));
-    }
-
-    if let Err(e) = answer_result.unwrap() {
+    if let Err(e) = answer_result {
         signal_handle.abort();
         return Ok(WebRtcResult::Failed(format!(
             "Failed to receive answer: {}",

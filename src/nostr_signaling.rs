@@ -65,6 +65,8 @@ pub enum SignalingMessage {
         candidate: IceCandidatePayload,
         seq: u32,
     },
+    /// Notification that the peer has switched to relay mode
+    RelayChunk,
 }
 
 /// Nostr signaling client for WebRTC
@@ -322,6 +324,8 @@ impl NostrSignaling {
                     seq: seq.unwrap_or(0),
                 })
             }
+            // If we see a chunk event, it means the peer has switched to relay mode
+            crate::nostr_protocol::EVENT_TYPE_CHUNK => Some(SignalingMessage::RelayChunk),
             _ => None,
         }
     }
