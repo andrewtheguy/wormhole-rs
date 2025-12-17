@@ -414,14 +414,14 @@ pub async fn receive_webrtc(code: &str, output_dir: Option<PathBuf>) -> Result<(
         }
         WebRtcResult::Failed(reason) => {
             println!("\nWebRTC connection failed: {}", reason);
-            println!("Falling back to Nostr relay mode...\n");
+            println!("Falling back to tmpfiles.org...\n");
         }
     }
 
-    // Fallback to Nostr relay mode
+    // Fallback to tmpfiles.org
     signaling.disconnect().await;
 
-    crate::nostr_relay::receive_nostr_with_token(&token, output_dir).await
+    crate::tmpfiles_fallback::receive_tmpfiles_with_token(&token, output_dir).await
 }
 
 /// Internal implementation for receiving a file via WebRTC

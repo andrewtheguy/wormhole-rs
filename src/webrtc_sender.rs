@@ -20,9 +20,9 @@ use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 
 use crate::crypto::{encrypt_chunk, generate_key, CHUNK_SIZE};
 use crate::folder::{create_tar_archive, print_tar_creation_info};
-use crate::nostr_protocol::MAX_NOSTR_FILE_SIZE;
+use crate::tmpfiles::MAX_TMPFILES_SIZE;
 // Re-export TransferResult for public API
-pub use crate::nostr_relay::{send_relay_fallback, TransferResult};
+pub use crate::tmpfiles_fallback::{send_tmpfiles_fallback, TransferResult};
 
 use crate::nostr_signaling::{create_sender_signaling, NostrSignaling, SignalingMessage};
 use crate::transfer::{format_bytes, num_chunks, FileHeader, TransferType};
@@ -435,16 +435,16 @@ async fn transfer_data_webrtc_internal(
     // then immediately use relay mode
     if force_relay {
         // Check file size limit for relay mode BEFORE generating wormhole code
-        if file_size > MAX_NOSTR_FILE_SIZE {
+        if file_size > MAX_TMPFILES_SIZE {
             anyhow::bail!(
-                "File size ({}) exceeds Nostr relay limit ({}).\n\
+                "File size ({}) exceeds tmpfiles.org limit ({}).\n\
                  Remove --force-relay to use WebRTC for larger files.",
                 format_bytes(file_size),
-                format_bytes(MAX_NOSTR_FILE_SIZE)
+                format_bytes(MAX_TMPFILES_SIZE)
             );
         }
 
-        println!("Force relay mode enabled, using Nostr relay transport");
+        println!("Force relay mode enabled, using tmpfiles.org fallback");
 
         // Create signaling to get credentials
         println!("Connecting to Nostr relays for signaling...");
@@ -470,8 +470,8 @@ async fn transfer_data_webrtc_internal(
 
         display_transfer_code(use_pin, &signaling.keys, &code_str, &signaling.transfer_id()).await?;
 
-        // Go directly to relay mode
-        let result = crate::nostr_relay::send_relay_fallback(
+        // Go directly to tmpfiles.org fallback
+        let result = crate::tmpfiles_fallback::send_tmpfiles_fallback(
             file,
             file_size,
             signaling.keys.clone(),
@@ -527,15 +527,15 @@ async fn transfer_data_webrtc_internal(
         }
         WebRtcResult::Failed(reason) => {
             println!("\nWebRTC connection failed: {}", reason);
-            println!("Falling back to Nostr relay mode...\n");
+            println!("Falling back to tmpfiles.org...\n");
         }
     }
 
-    // Fallback to Nostr relay mode using existing credentials
+    // Fallback to tmpfiles.org using existing credentials
     // Reset file position
     file.rewind().await.context("Failed to reset file position")?;
 
-    let result = crate::nostr_relay::send_relay_fallback(
+    let result = crate::tmpfiles_fallback::send_tmpfiles_fallback(
         file,
         file_size,
         signaling.keys.clone(),
