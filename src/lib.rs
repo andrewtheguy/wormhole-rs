@@ -13,6 +13,7 @@ pub mod wormhole;
 // Internal modules for webrtc fallback (only needed with webrtc feature)
 #[cfg(feature = "webrtc")]
 pub(crate) mod nostr_relay;
+pub mod nostr_pin;
 
 
 #[cfg(feature = "onion")]

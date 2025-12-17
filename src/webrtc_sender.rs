@@ -48,6 +48,34 @@ fn setup_cleanup_handler(cleanup_path: TempFileCleanup) {
     });
 }
 
+/// Display transfer code or PIN to the user with instructions
+async fn display_transfer_code(
+    use_pin: bool,
+    signaling_keys: &nostr_sdk::Keys,
+    code_str: &str,
+    transfer_id: &str,
+) -> Result<()> {
+    if use_pin {
+        let pin = crate::nostr_pin::publish_wormhole_code_via_pin(
+            signaling_keys,
+            code_str,
+            transfer_id,
+        )
+        .await?;
+
+        println!("\n🔢 PIN: {}\n", pin);
+        println!("On the receiving end, run:");
+        println!("  wormhole-rs receive --pin\n");
+        println!("Then enter the PIN above when prompted.\n");
+    } else {
+        println!("\n🔮 Wormhole code:\n{}\n", code_str);
+        println!("On the receiving end, run:");
+        println!("  wormhole-rs receive\n");
+        println!("Then enter the code above when prompted.\n");
+    }
+    Ok(())
+}
+
 /// Result of WebRTC connection attempt
 enum WebRtcResult {
     Success,
@@ -81,59 +109,77 @@ async fn try_webrtc_transfer(
 
     // Wait for receiver's "ready" signal and offer
     println!("Waiting for receiver to connect via Nostr signaling...");
-    let mut receiver_pubkey = None;
+    // Wait for receiver's "ready" signal and offer
+    println!("Waiting for receiver to connect via Nostr signaling...");
+    println!("(Press ENTER to force fallback to relay mode if connection hangs)");
 
-    let offer_result = timeout(WEBRTC_CONNECTION_TIMEOUT, async {
-        loop {
-            match signal_rx.recv().await {
-                Some(SignalingMessage::Ready { sender_pubkey }) => {
-                    println!("Receiver ready: {}", sender_pubkey.to_hex());
-                    receiver_pubkey = Some(sender_pubkey);
-                }
-                Some(SignalingMessage::Offer { sender_pubkey, sdp }) => {
-                    println!("Received offer from: {}", sender_pubkey.to_hex());
-                    receiver_pubkey = Some(sender_pubkey);
+    // Spawn a blocking task to listen for stdin input (Enter key)
+    let (input_tx, mut input_rx) = tokio::sync::oneshot::channel();
+    let stdin_task = tokio::task::spawn_blocking(move || {
+        let mut input = String::new();
+        if std::io::stdin().read_line(&mut input).is_ok() {
+            let _ = input_tx.send(());
+        }
+    });
 
-                    // Set remote description
-                    let offer_sdp = RTCSessionDescription::offer(sdp.sdp)
-                        .context("Failed to create offer SDP")?;
-                    rtc_peer.set_remote_description(offer_sdp).await?;
+    let receiver_pubkey;
 
-                    return Ok::<_, anyhow::Error>(());
-                }
-                Some(SignalingMessage::IceCandidate {
-                    candidate, seq, ..
-                }) => {
-                    // Buffer early ICE candidates
-                    println!("Received early ICE candidate (seq: {})", seq);
-                    let candidate_init = RTCIceCandidateInit {
-                        candidate: candidate.candidate,
-                        sdp_mid: candidate.sdp_mid,
-                        sdp_mline_index: candidate.sdp_m_line_index,
-                        username_fragment: None,
-                    };
-                    let _ = rtc_peer.add_ice_candidate(candidate_init).await;
-                }
-                Some(_) => continue,
-                None => {
-                    return Err(anyhow::anyhow!("Signaling channel closed"));
+    // Wait loop without timeout (unless user forces fallback)
+    loop {
+        tokio::select! {
+            // Handle incoming signaling messages
+            msg = signal_rx.recv() => {
+                match msg {
+                    Some(SignalingMessage::Ready { sender_pubkey }) => {
+                        println!("Receiver ready: {}", sender_pubkey.to_hex());
+                        // Note: We don't need to store receiver_pubkey here as we'll get it again with the Offer
+                    }
+                    Some(SignalingMessage::Offer { sender_pubkey, sdp }) => {
+                        println!("Received offer from: {}", sender_pubkey.to_hex());
+                        receiver_pubkey = Some(sender_pubkey);
+
+                        // Set remote description
+                        let offer_sdp = RTCSessionDescription::offer(sdp.sdp)
+                            .context("Failed to create offer SDP")?;
+                        rtc_peer.set_remote_description(offer_sdp).await?;
+                        break;
+                    }
+                    Some(SignalingMessage::IceCandidate {
+                        candidate, seq, ..
+                    }) => {
+                        // Buffer early ICE candidates
+                        println!("Received early ICE candidate (seq: {})", seq);
+                        let candidate_init = RTCIceCandidateInit {
+                            candidate: candidate.candidate,
+                            sdp_mid: candidate.sdp_mid,
+                            sdp_mline_index: candidate.sdp_m_line_index,
+                            username_fragment: None,
+                        };
+                        let _ = rtc_peer.add_ice_candidate(candidate_init).await;
+                    }
+                    Some(SignalingMessage::RelayChunk) => {
+                        // Should not happen on sender side usually, but ignore
+                        continue;
+                    }
+                    Some(_) => continue,
+                    None => {
+                        stdin_task.abort();
+                        return Ok(WebRtcResult::Failed("Signaling channel closed".to_string()));
+                    }
                 }
             }
+
+            // Handle user input to force fallback
+            _ = &mut input_rx => {
+                 println!("\nUser forced fallback to relay mode.");
+                 signal_handle.abort();
+                 return Ok(WebRtcResult::Failed("User forced fallback".to_string()));
+            }
         }
-    })
-    .await;
-
-    if offer_result.is_err() {
-        signal_handle.abort();
-        return Ok(WebRtcResult::Failed(
-            "Timeout waiting for receiver offer".to_string(),
-        ));
     }
 
-    if let Err(e) = offer_result.unwrap() {
-        signal_handle.abort();
-        return Ok(WebRtcResult::Failed(format!("Failed to receive offer: {}", e)));
-    }
+    // Abort the stdin task since we no longer need it
+    stdin_task.abort();
 
     let remote_pubkey = match receiver_pubkey {
         Some(pk) => pk,
@@ -379,6 +425,7 @@ async fn transfer_data_webrtc_internal(
     force_relay: bool,
     custom_relays: Option<Vec<String>>,
     use_default_relays: bool,
+    use_pin: bool,
 ) -> Result<TransferResult> {
     // Generate encryption key (always required)
     let key = generate_key();
@@ -419,10 +466,9 @@ async fn transfer_data_webrtc_internal(
             },
         )?;
 
-        println!("\nWormhole code:\n{}\n", code);
-        println!("On the receiving end, run:");
-        println!("  wormhole-rs receive\n");
-        println!("Then enter the code above when prompted.\n");
+        let code_str = code.clone(); // Keep for PIN publishing if needed
+
+        display_transfer_code(use_pin, &signaling.keys, &code_str, &signaling.transfer_id()).await?;
 
         // Go directly to relay mode
         let result = crate::nostr_relay::send_relay_fallback(
@@ -459,10 +505,9 @@ async fn transfer_data_webrtc_internal(
         },
     )?;
 
-    println!("\nWormhole code:\n{}\n", code);
-    println!("On the receiving end, run:");
-    println!("  wormhole-rs receive\n");
-    println!("Then enter the code above when prompted.\n");
+    let code_str = code.clone();
+
+    display_transfer_code(use_pin, &signaling.keys, &code_str, &signaling.transfer_id()).await?;
 
     // Try WebRTC transfer
     match try_webrtc_transfer(
@@ -510,6 +555,7 @@ pub async fn send_file_webrtc(
     force_relay: bool,
     custom_relays: Option<Vec<String>>,
     use_default_relays: bool,
+    use_pin: bool,
 ) -> Result<TransferResult> {
     // Get file metadata
     let metadata = tokio::fs::metadata(file_path)
@@ -542,6 +588,7 @@ pub async fn send_file_webrtc(
         force_relay,
         custom_relays,
         use_default_relays,
+        use_pin,
     )
     .await
 }
@@ -552,6 +599,7 @@ pub async fn send_folder_webrtc(
     force_relay: bool,
     custom_relays: Option<Vec<String>>,
     use_default_relays: bool,
+    use_pin: bool,
 ) -> Result<TransferResult> {
     // Validate folder
     if !folder_path.is_dir() {
@@ -593,6 +641,7 @@ pub async fn send_folder_webrtc(
         force_relay,
         custom_relays,
         use_default_relays,
+        use_pin,
     )
     .await;
 

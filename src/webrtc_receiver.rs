@@ -109,15 +109,24 @@ async fn try_webrtc_receive(
     println!("Sent offer to sender");
 
     // Wait for answer with timeout
-    let answer_result = timeout(WEBRTC_CONNECTION_TIMEOUT, async {
+    println!("Waiting for answer from sender...");
+    let answer_result: Result<Option<WebRtcResult>> = timeout(WEBRTC_CONNECTION_TIMEOUT, async {
         loop {
             match signal_rx.recv().await {
                 Some(SignalingMessage::Answer { sdp, .. }) => {
                     println!("Received answer from sender");
                     let answer_sdp = RTCSessionDescription::answer(sdp.sdp)
-                        .context("Failed to create answer SDP")?;
-                    rtc_peer.set_remote_description(answer_sdp).await?;
-                    return Ok::<(), anyhow::Error>(());
+                        .context("Failed to create answer SDP");
+
+                    match answer_sdp {
+                        Ok(sdp) => {
+                             if let Err(e) = rtc_peer.set_remote_description(sdp).await {
+                                 break Err(anyhow::anyhow!("Failed to set remote description: {}", e));
+                             }
+                             break Ok(None);
+                        },
+                        Err(e) => break Err(e),
+                    }
                 }
                 Some(SignalingMessage::IceCandidate { candidate, seq, .. }) => {
                     // Handle early ICE candidates
@@ -130,28 +139,38 @@ async fn try_webrtc_receive(
                     };
                     let _ = rtc_peer.add_ice_candidate(candidate_init).await;
                 }
+                Some(SignalingMessage::RelayChunk) => {
+                    println!("Sender switched to relay mode.");
+                    break Ok(Some(WebRtcResult::Failed("Relay fallback detected".to_string())));
+                }
                 Some(_) => continue,
                 None => {
-                    return Err(anyhow::anyhow!("Signaling channel closed"));
+                    break Err(anyhow::anyhow!("Signaling channel closed"));
                 }
             }
         }
     })
-    .await;
+    .await
+    .map_err(|_| anyhow::anyhow!("Timeout waiting for answer"))
+    .and_then(|r| r);
 
-    if answer_result.is_err() {
-        signal_handle.abort();
-        return Ok(WebRtcResult::Failed(
-            "Timeout waiting for answer from sender".to_string(),
-        ));
-    }
-
-    if let Err(e) = answer_result.unwrap() {
-        signal_handle.abort();
-        return Ok(WebRtcResult::Failed(format!(
-            "Failed to receive answer: {}",
-            e
-        )));
+    // Handle the result
+    match answer_result {
+        Ok(Some(result)) => {
+            // Early return case (e.g., relay fallback)
+            signal_handle.abort();
+            return Ok(result);
+        }
+        Ok(None) => {
+            // Success case, continue
+        }
+        Err(e) => {
+            signal_handle.abort();
+            return Ok(WebRtcResult::Failed(format!(
+                "Failed to receive answer: {}",
+                e
+            )));
+        }
     }
 
     // Take ownership of receivers before wrapping rtc_peer in Arc

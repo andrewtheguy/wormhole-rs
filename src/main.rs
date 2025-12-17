@@ -29,10 +29,30 @@ enum Commands {
     Send {
         #[command(subcommand)]
         transport: SendTransport,
+
+        /// Use PIN-based code exchange for Nostr (prompts for PIN input)
+        #[arg(long)]
+        pin: bool,
     },
 
     /// Receive a file or folder using a code
-    Receive,
+    Receive {
+        /// Wormhole code from sender (will prompt if not provided)
+        #[arg(short, long)]
+        code: Option<String>,
+
+        /// Output directory (default: current directory)
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+
+        /// Custom relay server URLs (for iroh transport)
+        #[arg(long)]
+        relay_url: Vec<String>,
+
+        /// Use PIN-based code exchange for Nostr (prompts for PIN input)
+        #[arg(long)]
+        pin: bool,
+    },
 
     /// Send via local network (mDNS discovery, passphrase encryption)
     #[command(name = "send-local")]
@@ -70,7 +90,7 @@ enum SendTransport {
         #[arg(long)]
         extra_encrypt: bool,
 
-        /// Custom relay server URLs
+        /// Custom relay server URLs (for iroh transport)
         #[arg(long)]
         relay_url: Vec<String>,
     },
@@ -92,6 +112,7 @@ enum SendTransport {
 
     #[cfg(feature = "webrtc")]
     /// Send via WebRTC with Nostr signaling + relay fallback
+    #[command(name = "webrtc")]
     WebRtc {
         /// Path to file or folder
         path: PathBuf,
@@ -154,7 +175,7 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Send { transport } => match transport {
+        Commands::Send { transport, pin } => match transport {
             #[cfg(feature = "iroh")]
             SendTransport::Iroh {
                 path,
@@ -164,9 +185,9 @@ async fn main() -> Result<()> {
             } => {
                 validate_path(&path, folder)?;
                 if folder {
-                    iroh_sender::send_folder(&path, extra_encrypt, relay_url).await?;
+                    iroh_sender::send_folder(&path, extra_encrypt, relay_url, pin).await?;
                 } else {
-                    iroh_sender::send_file(&path, extra_encrypt, relay_url).await?;
+                    iroh_sender::send_file(&path, extra_encrypt, relay_url, pin).await?;
                 }
             }
 
@@ -178,9 +199,9 @@ async fn main() -> Result<()> {
             } => {
                 validate_path(&path, folder)?;
                 if folder {
-                    onion_sender::send_folder_tor(&path, extra_encrypt).await?;
+                    onion_sender::send_folder_tor(&path, extra_encrypt, pin).await?;
                 } else {
-                    onion_sender::send_file_tor(&path, extra_encrypt).await?;
+                    onion_sender::send_file_tor(&path, extra_encrypt, pin).await?;
                 }
             }
 
@@ -204,6 +225,7 @@ async fn main() -> Result<()> {
                         force_nostr_relay,
                         custom_relays,
                         use_default_relays,
+                        pin,
                     )
                     .await?
                 } else {
@@ -212,6 +234,7 @@ async fn main() -> Result<()> {
                         force_nostr_relay,
                         custom_relays,
                         use_default_relays,
+                        pin,
                     )
                     .await?
                 };
@@ -237,15 +260,39 @@ async fn main() -> Result<()> {
             mdns_receiver::receive_mdns(output).await?;
         }
 
-        Commands::Receive => {
-            // Prompt for code
-            print!("Enter wormhole code: ");
-            io::stdout().flush()?;
-            let mut input = String::new();
-            io::stdin().read_line(&mut input)?;
-            let code = input.trim().to_string();
+        Commands::Receive { mut code, output, relay_url, pin } => {
+            // Validate output directory if provided
+            validate_output_dir(&output)?;
 
-            receive_with_code(&code, None, vec![]).await?;
+            // Handle PIN mode if requested
+            if pin {
+                print!("Enter {}-digit PIN: ", wormhole_rs::nostr_pin::PIN_LENGTH);
+                std::io::stdout().flush()?;
+                let mut pin_input = String::new();
+                std::io::stdin().read_line(&mut pin_input)?;
+                let pin_str = pin_input.trim();
+
+                println!("Searching for wormhole token via Nostr...");
+                
+                // Fetch encrypted token from Nostr
+                let token_str = wormhole_rs::nostr_pin::fetch_wormhole_code_via_pin(pin_str).await?;
+                println!("Token found and decrypted!");
+                code = Some(token_str);
+            }
+
+            // Get code from argument or prompt
+            let code = match code {
+                Some(c) => c,
+                None => {
+                    print!("Enter wormhole code: ");
+                    io::stdout().flush()?;
+                    let mut input = String::new();
+                    io::stdin().read_line(&mut input)?;
+                    input.trim().to_string()
+                }
+            };
+
+            receive_with_code(&code, output, relay_url).await?;
         }
     }
 
