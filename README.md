@@ -23,9 +23,18 @@ A secure peer-to-peer file transfer tool with two main transport categories:
 - **PIN-based Transfers** - Use short 12-digit PINs instead of long wormhole codes for easier typing
 - **Cross-platform** - Single binary, supports macOS, Linux, and Windows
 
-For detailed protocol flows, wire formats, security model, and implementation details, see [ARCHITECTURE.md](docs/ARCHITECTURE.md).
+## Common Use Cases
 
-For common scenarios (No Internet, Remote Terminal/No Paste), see [USE_CASES.md](docs/USE_CASES.md).
+See [USE_CASES.md](docs/USE_CASES.md) for detailed scenarios including:
+- **No Internet** (Air-gapped / Local LAN)
+- **No Clipboard** (PIN Mode for easy typing)
+- **Restricted Networks** (Firewall/NAT traversal)
+- **Anonymity** (Tor Mode)
+- **Self-Hosted Infrastructure** (Zero third-party dependency)
+
+For detailed protocol flows, wire formats, see [ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+
 
 ## Installation
 

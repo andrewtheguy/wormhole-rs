@@ -7,7 +7,7 @@
 Ideas and feature requests for future consideration.
 
 ### Manual IP/Port Entry for Local Mode
-**Priority:** Low
+**Priority:** Low, because there are many other ways to transfer files locally.
 **Domain:** Local Connection
 - **Problem:** mDNS discovery often fails to discover routable IPs (e.g., VPN interfaces like WireGuard/Tailscale) or works poorly across subnets.
   - **Feature:** 
@@ -47,6 +47,7 @@ Ideas and feature requests for future consideration.
 
 ### Support Custom Iroh DNS Server
 **Domain:** Iroh Mode
+- **Priority:** Low, because Iroh's infrastructure is pretty reliable as of now.
 - **Feature:** Allow configuring a custom Iroh DNS / Discovery server.
 - **Benefit:** Enables fully air-gapped or private P2P discovery without relying on global Iroh DNS servers, completing the self-hosted story.
 - **Current State:** Only custom Relay (DERP) servers are supported via `--relay-url`.
