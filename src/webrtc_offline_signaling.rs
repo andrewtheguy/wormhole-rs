@@ -6,14 +6,14 @@
 
 use anyhow::{Context, Result};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-use flate2::read::GzDecoder;
-use flate2::write::GzEncoder;
-use flate2::Compression;
 use serde::{Deserialize, Serialize};
-use std::io::{BufRead, Read, Write};
+use std::io::{BufRead, Write};
 use webrtc::ice_transport::ice_candidate::RTCIceCandidate;
 
 use crate::nostr_signaling::IceCandidatePayload;
+
+/// Line width for wrapped output (safe for most terminals)
+const LINE_WIDTH: usize = 76;
 
 // ============================================================================
 // JSON Signaling Structures
@@ -67,51 +67,39 @@ pub fn ice_candidates_to_payloads(candidates: Vec<RTCIceCandidate>) -> Vec<IceCa
 // Display Functions
 // ============================================================================
 
-/// Compress and encode data for display
-fn compress_and_encode(data: &[u8]) -> Result<String> {
-    let mut encoder = GzEncoder::new(Vec::new(), Compression::best());
-    encoder
-        .write_all(data)
-        .context("Failed to compress data")?;
-    let compressed = encoder.finish().context("Failed to finish compression")?;
-    Ok(URL_SAFE_NO_PAD.encode(&compressed))
+/// Wrap a string to multiple lines of specified width
+fn wrap_lines(s: &str, width: usize) -> String {
+    s.as_bytes()
+        .chunks(width)
+        .map(|chunk| std::str::from_utf8(chunk).unwrap())
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
-/// Decode and decompress data from user input
-fn decode_and_decompress(encoded: &str) -> Result<Vec<u8>> {
-    let compressed = URL_SAFE_NO_PAD
-        .decode(encoded.trim())
-        .context("Failed to decode code")?;
-    let mut decoder = GzDecoder::new(&compressed[..]);
-    let mut decompressed = Vec::new();
-    decoder
-        .read_to_end(&mut decompressed)
-        .context("Failed to decompress data")?;
-    Ok(decompressed)
-}
-
-/// Display the offer as compressed base64url-encoded JSON for the user to copy
+/// Display the offer as base64url-encoded JSON with line wrapping for the user to copy
 pub fn display_offer_json(offer: &OfflineOffer) -> Result<()> {
     let json = serde_json::to_string(offer).context("Failed to serialize offer")?;
-    let encoded = compress_and_encode(json.as_bytes())?;
+    let encoded = URL_SAFE_NO_PAD.encode(json.as_bytes());
+    let wrapped = wrap_lines(&encoded, LINE_WIDTH);
 
     println!();
     println!("=== COPY THIS CODE AND SEND TO RECEIVER ===");
-    println!("{}", encoded);
+    println!("{}", wrapped);
     println!("============================================");
     println!();
 
     Ok(())
 }
 
-/// Display the answer as compressed base64url-encoded JSON for the user to copy
+/// Display the answer as base64url-encoded JSON with line wrapping for the user to copy
 pub fn display_answer_json(answer: &OfflineAnswer) -> Result<()> {
     let json = serde_json::to_string(answer).context("Failed to serialize answer")?;
-    let encoded = compress_and_encode(json.as_bytes())?;
+    let encoded = URL_SAFE_NO_PAD.encode(json.as_bytes());
+    let wrapped = wrap_lines(&encoded, LINE_WIDTH);
 
     println!();
     println!("=== COPY THIS CODE AND SEND TO SENDER ===");
-    println!("{}", encoded);
+    println!("{}", wrapped);
     println!("==========================================");
     println!();
 
@@ -122,37 +110,52 @@ pub fn display_answer_json(answer: &OfflineAnswer) -> Result<()> {
 // Input Functions
 // ============================================================================
 
-/// Read and parse compressed base64url-encoded offer from user input
+/// Read multi-line input until an empty line or the end marker
+fn read_multiline_input() -> Result<String> {
+    let stdin = std::io::stdin();
+    let mut lines = Vec::new();
+
+    for line in stdin.lock().lines() {
+        let line = line.context("Failed to read line")?;
+        let trimmed = line.trim();
+
+        // Stop on empty line or end marker
+        if trimmed.is_empty() || trimmed.starts_with("===") {
+            break;
+        }
+
+        lines.push(trimmed.to_string());
+    }
+
+    // Join all lines (removing any whitespace/newlines)
+    Ok(lines.join(""))
+}
+
+/// Read and parse base64url-encoded offer from user input (supports multi-line)
 pub fn read_offer_json() -> Result<OfflineOffer> {
-    print!("Paste sender's code: ");
+    println!("Paste sender's code (press Enter twice when done):");
     std::io::stdout().flush()?;
 
-    let mut input = String::new();
-    std::io::stdin()
-        .lock()
-        .read_line(&mut input)
-        .context("Failed to read input")?;
-
-    let decompressed = decode_and_decompress(&input)?;
-    let json = String::from_utf8(decompressed).context("Invalid UTF-8 in decoded data")?;
+    let encoded = read_multiline_input()?;
+    let decoded = URL_SAFE_NO_PAD
+        .decode(&encoded)
+        .context("Failed to decode code")?;
+    let json = String::from_utf8(decoded).context("Invalid UTF-8 in decoded data")?;
     let offer: OfflineOffer = serde_json::from_str(&json).context("Failed to parse offer")?;
 
     Ok(offer)
 }
 
-/// Read and parse compressed base64url-encoded answer from user input
+/// Read and parse base64url-encoded answer from user input (supports multi-line)
 pub fn read_answer_json() -> Result<OfflineAnswer> {
-    print!("Paste receiver's response code: ");
+    println!("Paste receiver's response code (press Enter twice when done):");
     std::io::stdout().flush()?;
 
-    let mut input = String::new();
-    std::io::stdin()
-        .lock()
-        .read_line(&mut input)
-        .context("Failed to read input")?;
-
-    let decompressed = decode_and_decompress(&input)?;
-    let json = String::from_utf8(decompressed).context("Invalid UTF-8 in decoded data")?;
+    let encoded = read_multiline_input()?;
+    let decoded = URL_SAFE_NO_PAD
+        .decode(&encoded)
+        .context("Failed to decode code")?;
+    let json = String::from_utf8(decoded).context("Invalid UTF-8 in decoded data")?;
     let answer: OfflineAnswer = serde_json::from_str(&json).context("Failed to parse answer")?;
 
     Ok(answer)

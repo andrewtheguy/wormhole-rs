@@ -47,9 +47,6 @@ futures = "0.3"
 argon2 = "0.5"
 sha2 = "0.10"
 
-# Compression for offline signaling
-flate2 = "1"
-
 # mDNS - enabled by default for local network transfers
 mdns-sd = "0.15"
 tokio-util = "0.7"

@@ -8798,7 +8798,6 @@ dependencies = [
  "base64 0.22.1",
  "bytes",
  "clap",
- "flate2",
  "futures",
  "hex",
  "iroh",
