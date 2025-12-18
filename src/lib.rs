@@ -35,10 +35,15 @@ pub mod webrtc_receiver;
 pub mod webrtc_common;
 #[cfg(feature = "webrtc")]
 pub mod nostr_signaling;
+#[cfg(feature = "webrtc")]
+pub mod webrtc_offline_signaling;
+#[cfg(feature = "webrtc")]
+pub mod webrtc_offline_sender;
+#[cfg(feature = "webrtc")]
+pub mod webrtc_offline_receiver;
 
 #[cfg(test)]
 mod crypto_tests;
-#[cfg(test)]
 #[cfg(test)]
 mod nostr_protocol_tests;
 
