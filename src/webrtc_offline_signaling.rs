@@ -133,7 +133,7 @@ fn read_multiline_input() -> Result<String> {
 
 /// Read and parse base64url-encoded offer from user input (supports multi-line)
 pub fn read_offer_json() -> Result<OfflineOffer> {
-    println!("Paste sender's code (press Enter twice when done):");
+    println!("Paste sender's code, then press Ctrl+D (or Enter twice):");
     std::io::stdout().flush()?;
 
     let encoded = read_multiline_input()?;
@@ -148,7 +148,7 @@ pub fn read_offer_json() -> Result<OfflineOffer> {
 
 /// Read and parse base64url-encoded answer from user input (supports multi-line)
 pub fn read_answer_json() -> Result<OfflineAnswer> {
-    println!("Paste receiver's response code (press Enter twice when done):");
+    println!("Paste receiver's response code, then press Ctrl+D (or Enter twice):");
     std::io::stdout().flush()?;
 
     let encoded = read_multiline_input()?;
