@@ -12,6 +12,9 @@ use wormhole_rs::{onion_receiver, onion_sender};
 #[cfg(feature = "webrtc")]
 use wormhole_rs::{webrtc_receiver, webrtc_sender::{self, TransferResult}};
 
+#[cfg(feature = "webrtc")]
+use wormhole_rs::{webrtc_offline_sender, webrtc_offline_receiver};
+
 use wormhole_rs::{mdns_receiver, mdns_sender};
 
 #[derive(Parser)]
@@ -54,9 +57,26 @@ enum Commands {
         pin: bool,
     },
 
-    /// Send via local network (mDNS discovery, passphrase encryption)
+    /// Send via local network
     #[command(name = "send-local")]
     SendLocal {
+        #[command(subcommand)]
+        transport: SendLocalTransport,
+    },
+
+    /// Receive via local network
+    #[command(name = "receive-local")]
+    ReceiveLocal {
+        #[command(subcommand)]
+        transport: ReceiveLocalTransport,
+    },
+}
+
+/// Local send transport options
+#[derive(Subcommand)]
+enum SendLocalTransport {
+    /// Send via mDNS discovery (passphrase encryption)
+    Mdns {
         /// Path to file or folder
         path: PathBuf,
 
@@ -65,9 +85,31 @@ enum Commands {
         folder: bool,
     },
 
-    /// Receive via local network (mDNS discovery)
-    #[command(name = "receive-local")]
-    ReceiveLocal {
+    #[cfg(feature = "webrtc")]
+    /// Send via WebRTC with offline signaling (copy/paste JSON, no servers)
+    Webrtc {
+        /// Path to file or folder
+        path: PathBuf,
+
+        /// Send a folder (creates tar archive)
+        #[arg(long)]
+        folder: bool,
+    },
+}
+
+/// Local receive transport options
+#[derive(Subcommand)]
+enum ReceiveLocalTransport {
+    /// Receive via mDNS discovery
+    Mdns {
+        /// Output directory (default: current directory)
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
+
+    #[cfg(feature = "webrtc")]
+    /// Receive via WebRTC with offline signaling (copy/paste JSON, no servers)
+    Webrtc {
         /// Output directory (default: current directory)
         #[arg(short, long)]
         output: Option<PathBuf>,
@@ -246,18 +288,36 @@ async fn main() -> Result<()> {
             }
         },
 
-        Commands::SendLocal { path, folder } => {
-            validate_path(&path, folder)?;
-            if folder {
-                mdns_sender::send_folder_mdns(&path).await?;
-            } else {
-                mdns_sender::send_file_mdns(&path).await?;
+        Commands::SendLocal { transport } => match transport {
+            SendLocalTransport::Mdns { path, folder } => {
+                validate_path(&path, folder)?;
+                if folder {
+                    mdns_sender::send_folder_mdns(&path).await?;
+                } else {
+                    mdns_sender::send_file_mdns(&path).await?;
+                }
             }
-        }
+            #[cfg(feature = "webrtc")]
+            SendLocalTransport::Webrtc { path, folder } => {
+                validate_path(&path, folder)?;
+                if folder {
+                    webrtc_offline_sender::send_folder_offline(&path).await?;
+                } else {
+                    webrtc_offline_sender::send_file_offline(&path).await?;
+                }
+            }
+        },
 
-        Commands::ReceiveLocal { output } => {
-            validate_output_dir(&output)?;
-            mdns_receiver::receive_mdns(output).await?;
+        Commands::ReceiveLocal { transport } => match transport {
+            ReceiveLocalTransport::Mdns { output } => {
+                validate_output_dir(&output)?;
+                mdns_receiver::receive_mdns(output).await?;
+            }
+            #[cfg(feature = "webrtc")]
+            ReceiveLocalTransport::Webrtc { output } => {
+                validate_output_dir(&output)?;
+                webrtc_offline_receiver::receive_file_offline(output).await?;
+            }
         }
 
         Commands::Receive { mut code, output, relay_url, pin } => {

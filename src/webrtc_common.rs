@@ -6,7 +6,9 @@
 
 use anyhow::{Context, Result};
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::mpsc;
+use tokio::sync::watch;
 use webrtc::api::interceptor_registry::register_default_interceptors;
 use webrtc::api::media_engine::MediaEngine;
 use webrtc::api::APIBuilder;
@@ -14,6 +16,7 @@ use webrtc::data_channel::data_channel_message::DataChannelMessage;
 use webrtc::data_channel::RTCDataChannel;
 use webrtc::ice_transport::ice_candidate::{RTCIceCandidate, RTCIceCandidateInit};
 use webrtc::ice_transport::ice_connection_state::RTCIceConnectionState;
+use webrtc::ice_transport::ice_gatherer_state::RTCIceGathererState;
 use webrtc::ice_transport::ice_server::RTCIceServer;
 use webrtc::interceptor::registry::Registry;
 use webrtc::peer_connection::configuration::RTCConfiguration;
@@ -38,10 +41,11 @@ pub struct WebRtcPeer {
     peer_connection: Arc<RTCPeerConnection>,
     ice_candidate_rx: Option<mpsc::Receiver<RTCIceCandidate>>,
     data_channel_rx: Option<mpsc::Receiver<Arc<RTCDataChannel>>>,
+    ice_gathering_rx: Option<watch::Receiver<RTCIceGathererState>>,
 }
 
 impl WebRtcPeer {
-    /// Create a new WebRTC peer connection
+    /// Create a new WebRTC peer connection with STUN server for NAT traversal
     pub async fn new() -> Result<Self> {
         let ice_servers = vec![
             // STUN server for NAT traversal discovery
@@ -50,7 +54,17 @@ impl WebRtcPeer {
                 ..Default::default()
             },
         ];
+        Self::new_with_config(ice_servers).await
+    }
 
+    /// Create a new WebRTC peer connection for offline/direct LAN use (no STUN servers)
+    pub async fn new_offline() -> Result<Self> {
+        // No ICE servers - only direct host candidates will be used
+        Self::new_with_config(vec![]).await
+    }
+
+    /// Internal helper to create peer connection with given ICE servers
+    async fn new_with_config(ice_servers: Vec<RTCIceServer>) -> Result<Self> {
         let config = RTCConfiguration {
             ice_servers,
             ..Default::default()
@@ -78,6 +92,7 @@ impl WebRtcPeer {
 
         let (ice_candidate_tx, ice_candidate_rx) = mpsc::channel(50);
         let (data_channel_tx, data_channel_rx) = mpsc::channel(1);
+        let (ice_gathering_tx, ice_gathering_rx) = watch::channel(RTCIceGathererState::New);
 
         // Set up ICE candidate handler
         let ice_tx = ice_candidate_tx.clone();
@@ -88,6 +103,12 @@ impl WebRtcPeer {
                     let _ = ice_tx.send(candidate).await;
                 }
             })
+        }));
+
+        // Set up ICE gathering state handler (for vanilla ICE / offline mode)
+        peer_connection.on_ice_gathering_state_change(Box::new(move |state| {
+            let _ = ice_gathering_tx.send(state);
+            Box::pin(async {})
         }));
 
         // Set up connection state handler
@@ -125,6 +146,7 @@ impl WebRtcPeer {
             peer_connection,
             ice_candidate_rx: Some(ice_candidate_rx),
             data_channel_rx: Some(data_channel_rx),
+            ice_gathering_rx: Some(ice_gathering_rx),
         })
     }
 
@@ -136,6 +158,66 @@ impl WebRtcPeer {
     /// Take ownership of the data channel receiver
     pub fn take_data_channel_rx(&mut self) -> Option<mpsc::Receiver<Arc<RTCDataChannel>>> {
         self.data_channel_rx.take()
+    }
+
+    /// Take ownership of the ICE gathering state receiver
+    pub fn take_ice_gathering_rx(&mut self) -> Option<watch::Receiver<RTCIceGathererState>> {
+        self.ice_gathering_rx.take()
+    }
+
+    /// Wait for ICE gathering to complete and collect all candidates.
+    /// This is used for "vanilla ICE" (non-trickle) signaling where we need
+    /// all candidates before generating the offer/answer JSON.
+    pub async fn gather_ice_candidates(
+        &mut self,
+        timeout: Duration,
+    ) -> Result<Vec<RTCIceCandidate>> {
+        let mut ice_rx = self
+            .ice_candidate_rx
+            .take()
+            .context("ICE candidate receiver already taken")?;
+        let mut gathering_rx = self
+            .ice_gathering_rx
+            .take()
+            .context("ICE gathering receiver already taken")?;
+
+        let mut candidates = Vec::new();
+
+        tokio::select! {
+            _ = tokio::time::sleep(timeout) => {
+                // Timeout reached, return what we have
+                println!("ICE gathering timeout, collected {} candidates", candidates.len());
+            }
+            _ = async {
+                loop {
+                    tokio::select! {
+                        candidate = ice_rx.recv() => {
+                            if let Some(candidate) = candidate {
+                                candidates.push(candidate);
+                            }
+                        }
+                        result = gathering_rx.changed() => {
+                            if result.is_ok() {
+                                let state = *gathering_rx.borrow();
+                                if state == RTCIceGathererState::Complete {
+                                    // Give a small delay to collect any remaining candidates
+                                    tokio::time::sleep(Duration::from_millis(100)).await;
+                                    // Drain any remaining candidates
+                                    while let Ok(candidate) = ice_rx.try_recv() {
+                                        candidates.push(candidate);
+                                    }
+                                    break;
+                                }
+                            } else {
+                                break;
+                            }
+                        }
+                    }
+                }
+            } => {}
+        }
+
+        Ok(candidates)
     }
 
     /// Create a data channel with the given label
