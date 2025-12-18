@@ -66,8 +66,9 @@ pub async fn receive_mdns(output_dir: Option<PathBuf>) -> Result<()> {
             break;
         }
 
-        // Stop early if we found at least one sender and haven't received updates for a while
-        if !services.is_empty() && browse_start.elapsed() > Duration::from_secs(5) {
+        // Stop early if we found at least one sender with routable addresses
+        let has_routable_service = services.values().any(|s| !s.addresses.is_empty());
+        if has_routable_service && browse_start.elapsed() > Duration::from_secs(5) {
             break;
         }
 
