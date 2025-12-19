@@ -15,6 +15,10 @@ use crate::nostr_signaling::IceCandidatePayload;
 /// Line width for wrapped output (safe for most terminals)
 const LINE_WIDTH: usize = 76;
 
+/// Magic trailer bytes appended before base64 encoding to trigger end-of-input detection
+/// Uses null bytes which cannot appear in valid JSON
+const END_MARKER: &[u8] = b"\x00END\x00";
+
 // ============================================================================
 // JSON Signaling Structures
 // ============================================================================
@@ -83,6 +87,7 @@ pub fn display_offer_json(offer: &OfflineOffer) -> Result<()> {
     let checksum = crc32fast::hash(json_bytes);
     let mut payload = json_bytes.to_vec();
     payload.extend_from_slice(&checksum.to_be_bytes());
+    payload.extend_from_slice(END_MARKER);
     let encoded = URL_SAFE_NO_PAD.encode(&payload);
     let wrapped = wrap_lines(&encoded, LINE_WIDTH);
 
@@ -110,6 +115,7 @@ pub fn display_answer_json(answer: &OfflineAnswer) -> Result<()> {
     let checksum = crc32fast::hash(json_bytes);
     let mut payload = json_bytes.to_vec();
     payload.extend_from_slice(&checksum.to_be_bytes());
+    payload.extend_from_slice(END_MARKER);
     let encoded = URL_SAFE_NO_PAD.encode(&payload);
     let wrapped = wrap_lines(&encoded, LINE_WIDTH);
 
@@ -131,7 +137,10 @@ pub fn display_answer_json(answer: &OfflineAnswer) -> Result<()> {
 // Input Functions
 // ============================================================================
 
-/// Read multi-line input until an empty line or the end marker
+/// Base64url encoding of END_MARKER for input detection
+const END_MARKER_B64: &str = "AEVORAA";
+
+/// Read multi-line input until an empty line or the end marker is detected
 fn read_multiline_input() -> Result<String> {
     let stdin = std::io::stdin();
     let mut lines = Vec::new();
@@ -140,12 +149,17 @@ fn read_multiline_input() -> Result<String> {
         let line = line.context("Failed to read line")?;
         let trimmed = line.trim();
 
-        // Stop on empty line or end marker
-        if trimmed.is_empty() || trimmed.starts_with("===") {
+        // Stop on empty line
+        if trimmed.is_empty() {
             break;
         }
 
         lines.push(trimmed.to_string());
+
+        // Stop immediately if this line contains the end marker (auto-detect EOF)
+        if trimmed.contains(END_MARKER_B64) {
+            break;
+        }
     }
 
     // Join all lines (removing any whitespace/newlines)
@@ -173,10 +187,18 @@ fn decode_with_checksum(prompt: &str) -> Result<String> {
             }
         };
 
-        if decoded.len() < 4 {
+        // Need at least CRC32 (4 bytes) + END_MARKER (5 bytes) + minimal JSON
+        if decoded.len() < 4 + END_MARKER.len() + 2 {
             eprintln!("Code too short. Please try again.\n");
             continue;
         }
+
+        // Strip end marker if present
+        let decoded = if decoded.ends_with(END_MARKER) {
+            &decoded[..decoded.len() - END_MARKER.len()]
+        } else {
+            &decoded[..]
+        };
 
         let (json_bytes, checksum_bytes) = decoded.split_at(decoded.len() - 4);
         let expected = u32::from_be_bytes(checksum_bytes.try_into().unwrap());
@@ -194,13 +216,13 @@ fn decode_with_checksum(prompt: &str) -> Result<String> {
 
 /// Read and parse base64url-encoded offer from user input with CRC32 validation
 pub fn read_offer_json() -> Result<OfflineOffer> {
-    let json = decode_with_checksum("=== RECEIVER STEP 1: Paste sender's code, then press Enter twice ===")?;
+    let json = decode_with_checksum("=== RECEIVER STEP 1: Paste sender's code ===")?;
     serde_json::from_str(&json).context("Failed to parse offer")
 }
 
 /// Read and parse base64url-encoded answer from user input with CRC32 validation
 pub fn read_answer_json() -> Result<OfflineAnswer> {
-    let json = decode_with_checksum("=== SENDER STEP 3: Paste receiver's response code, then press Enter twice ===")?;
+    let json = decode_with_checksum("=== SENDER STEP 3: Paste receiver's response code ===")?;
     serde_json::from_str(&json).context("Failed to parse answer")
 }
 
