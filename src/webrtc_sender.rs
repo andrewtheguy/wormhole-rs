@@ -144,61 +144,42 @@ async fn try_webrtc_transfer(
 
     // Wait for receiver's "ready" signal and offer
     println!("Waiting for receiver to connect via Nostr signaling...");
-    println!("(Press ENTER to force fallback to relay mode if connection hangs)");
-
-    // Use async stdin reading (can be cancelled unlike spawn_blocking)
-    let mut stdin_line = String::new();
-    let mut stdin_reader = tokio::io::BufReader::new(tokio::io::stdin());
 
     let receiver_pubkey;
 
     // Wait loop without timeout (unless user forces fallback)
     loop {
-        tokio::select! {
-            // Handle incoming signaling messages
-            msg = signal_rx.recv() => {
-                match msg {
-                    Some(SignalingMessage::Ready { sender_pubkey }) => {
-                        println!("Receiver ready: {}", sender_pubkey.to_hex());
-                        // Note: We don't need to store receiver_pubkey here as we'll get it again with the Offer
-                    }
-                    Some(SignalingMessage::Offer { sender_pubkey, sdp }) => {
-                        println!("Received offer from: {}", sender_pubkey.to_hex());
-                        receiver_pubkey = Some(sender_pubkey);
-
-                        // Set remote description
-                        let offer_sdp = RTCSessionDescription::offer(sdp.sdp)
-                            .context("Failed to create offer SDP")?;
-                        rtc_peer.set_remote_description(offer_sdp).await?;
-                        break;
-                    }
-                    Some(SignalingMessage::IceCandidate {
-                        candidate, seq, ..
-                    }) => {
-                        // Buffer early ICE candidates
-                        println!("Received early ICE candidate (seq: {})", seq);
-                        let candidate_init = RTCIceCandidateInit {
-                            candidate: candidate.candidate,
-                            sdp_mid: candidate.sdp_mid,
-                            sdp_mline_index: candidate.sdp_m_line_index,
-                            username_fragment: None,
-                        };
-                        let _ = rtc_peer.add_ice_candidate(candidate_init).await;
-                    }
-                    Some(_) => continue,
-                    None => {
-                        return Ok(WebRtcResult::Failed("Signaling channel closed".to_string()));
-                    }
-                }
+        match signal_rx.recv().await {
+            Some(SignalingMessage::Ready { sender_pubkey }) => {
+                println!("Receiver ready: {}", sender_pubkey.to_hex());
+                // Note: We don't need to store receiver_pubkey here as we'll get it again with the Offer
             }
+            Some(SignalingMessage::Offer { sender_pubkey, sdp }) => {
+                println!("Received offer from: {}", sender_pubkey.to_hex());
+                receiver_pubkey = Some(sender_pubkey);
 
-            // Handle user input to force fallback (async, can be cancelled)
-            result = stdin_reader.read_line(&mut stdin_line) => {
-                if result.is_ok() {
-                    println!("\nUser forced fallback to relay mode.");
-                    signal_handle.abort();
-                    return Ok(WebRtcResult::Failed("User forced fallback".to_string()));
-                }
+                // Set remote description
+                let offer_sdp = RTCSessionDescription::offer(sdp.sdp)
+                    .context("Failed to create offer SDP")?;
+                rtc_peer.set_remote_description(offer_sdp).await?;
+                break;
+            }
+            Some(SignalingMessage::IceCandidate {
+                candidate, seq, ..
+            }) => {
+                // Buffer early ICE candidates
+                println!("Received early ICE candidate (seq: {})", seq);
+                let candidate_init = RTCIceCandidateInit {
+                    candidate: candidate.candidate,
+                    sdp_mid: candidate.sdp_mid,
+                    sdp_mline_index: candidate.sdp_m_line_index,
+                    username_fragment: None,
+                };
+                let _ = rtc_peer.add_ice_candidate(candidate_init).await;
+            }
+            Some(_) => continue,
+            None => {
+                return Ok(WebRtcResult::Failed("Signaling channel closed".to_string()));
             }
         }
     }
