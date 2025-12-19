@@ -310,6 +310,58 @@ download_only() {
     print_info "Binary saved to: ${output_file}"
 }
 
+# Detect appropriate shell profile file
+detect_profile() {
+    local shell_name
+    shell_name=$(basename "$SHELL")
+
+    case "$shell_name" in
+        bash)
+            # Bash priority: .bash_profile > .bashrc > .profile
+            if [ -f "$HOME/.bash_profile" ]; then
+                echo "$HOME/.bash_profile"
+            elif [ -f "$HOME/.bashrc" ]; then
+                echo "$HOME/.bashrc"
+            elif [ -f "$HOME/.profile" ]; then
+                echo "$HOME/.profile"
+            fi
+            ;;
+        zsh)
+            # Zsh priority: .zshrc > .zprofile
+            if [ -f "$HOME/.zshrc" ]; then
+                echo "$HOME/.zshrc"
+            elif [ -f "$HOME/.zprofile" ]; then
+                echo "$HOME/.zprofile"
+            fi
+            ;;
+        *)
+            # Fallback to .profile
+            if [ -f "$HOME/.profile" ]; then
+                echo "$HOME/.profile"
+            fi
+            ;;
+    esac
+}
+
+# Check if sourcing profile would add .local/bin to PATH
+check_profile_has_local_bin() {
+    local profile="$1"
+    local target_dir="$2"
+
+    if [ -z "$profile" ] || [ ! -f "$profile" ]; then
+        return 1
+    fi
+
+    # Source the profile in a subshell and check if target_dir is in PATH
+    local new_path
+    new_path=$(HOME="$HOME" SHELL="$SHELL" bash -c "source '$profile' 2>/dev/null; echo \"\$PATH\"" 2>/dev/null)
+
+    if [[ ":$new_path:" == *":$target_dir:"* ]]; then
+        return 0
+    fi
+    return 1
+}
+
 # Download binary to temporary location, test it, and install
 download_and_install() {
     local temp_dir=$(mktemp -d)
@@ -350,11 +402,28 @@ download_and_install() {
 
     print_info "Binary installed successfully to ${final_path}"
 
-    # Add to PATH if not already there
+    # Check PATH and suggest how to fix if needed
     if [[ ":$PATH:" != *":$target_dir:"* ]]; then
-        print_warn "${target_dir} is not in your PATH"
-        print_warn "Add the following line to your shell profile (.bashrc, .zshrc, etc.):"
-        print_warn "export PATH=\"\$HOME/.local/bin:\$PATH\""
+        local profile
+        profile=$(detect_profile)
+
+        if check_profile_has_local_bin "$profile" "$target_dir"; then
+            # Profile already has .local/bin configured, just needs reload
+            print_warn "${target_dir} is not in your current PATH, but is configured in your profile."
+            print_warn "To use wormhole-rs now, reload your profile:"
+            echo ""
+            echo "    source $profile"
+            echo ""
+            print_warn "Or start a new terminal session."
+        else
+            # Profile doesn't have .local/bin, need to add it
+            print_warn "${target_dir} is not in your PATH"
+            print_warn "Add the following line to your shell profile (.bashrc, .zshrc, etc.):"
+            echo ""
+            echo "    export PATH=\"\$HOME/.local/bin:\$PATH\""
+            echo ""
+            print_warn "Then reload your profile or start a new terminal session."
+        fi
     fi
 }
 
