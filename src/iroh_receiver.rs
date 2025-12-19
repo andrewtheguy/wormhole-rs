@@ -91,7 +91,11 @@ pub async fn receive(code: &str, output_dir: Option<PathBuf>, relay_urls: Vec<St
     let conn = endpoint
         .connect(addr, ALPN)
         .await
-        .context("Failed to connect to sender")?;
+        .map_err(|e| anyhow::anyhow!(
+            "Failed to connect to sender: {}\n\n\
+             If relay connection fails, try Tor mode: wormhole-rs send tor <file>",
+            e
+        ))?;
 
     // Print connection info
     let remote_id = conn.remote_id();
