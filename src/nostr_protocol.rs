@@ -322,8 +322,7 @@ pub async fn get_best_relays() -> Vec<String> {
     }
 }
 
-/// Event type tag values for tmpfiles fallback signaling
-pub const EVENT_TYPE_TMPFILE_URL: &str = "tmpfile-url";
+/// Event type tag values for signaling
 pub const EVENT_TYPE_READY: &str = "ready";
 pub const EVENT_TYPE_COMPLETION: &str = "completion";
 
@@ -396,59 +395,6 @@ pub fn create_ready_event(
 /// Check if event is a ready event
 pub fn is_ready_event(event: &Event) -> bool {
     get_event_type(event).as_deref() == Some(EVENT_TYPE_READY)
-}
-
-/// Create a tmpfile URL event (sender sends download URL to receiver)
-///
-/// # Arguments
-/// * `keys` - Sender's keys for signing
-/// * `receiver_pubkey` - Receiver's public key
-/// * `transfer_id` - Unique transfer session ID
-/// * `download_url` - tmpfiles.org download URL
-pub fn create_tmpfile_url_event(
-    keys: &Keys,
-    receiver_pubkey: &PublicKey,
-    transfer_id: &str,
-    download_url: &str,
-) -> Result<Event> {
-    let event = EventBuilder::new(nostr_file_transfer_kind(), download_url)
-        .tags(vec![
-            Tag::public_key(*receiver_pubkey),
-            Tag::custom(
-                TagKind::Custom(TAG_TRANSFER_ID.into()),
-                vec![transfer_id.to_string()],
-            ),
-            Tag::custom(
-                TagKind::Custom(TAG_TYPE.into()),
-                vec![EVENT_TYPE_TMPFILE_URL.to_string()],
-            ),
-        ])
-        .sign_with_keys(keys)
-        .context("Failed to sign tmpfile URL event")?;
-
-    Ok(event)
-}
-
-/// Parse a tmpfile URL event and extract the download URL
-pub fn parse_tmpfile_url_event(event: &Event) -> Result<String> {
-    if event.kind != nostr_file_transfer_kind() {
-        anyhow::bail!("Invalid event kind: expected {}", nostr_file_transfer_kind());
-    }
-
-    if !is_tmpfile_url_event(event) {
-        anyhow::bail!("Event is not a tmpfile URL event");
-    }
-
-    if event.content.is_empty() {
-        anyhow::bail!("Empty download URL in tmpfile URL event");
-    }
-
-    Ok(event.content.clone())
-}
-
-/// Check if event is a tmpfile URL event
-pub fn is_tmpfile_url_event(event: &Event) -> bool {
-    get_event_type(event).as_deref() == Some(EVENT_TYPE_TMPFILE_URL)
 }
 
 /// Create a completion event (receiver confirms download complete)

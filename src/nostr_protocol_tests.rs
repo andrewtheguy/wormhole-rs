@@ -34,39 +34,7 @@ mod tests {
         assert_eq!(event.kind, nostr_file_transfer_kind());
         assert_eq!(event.pubkey, receiver_keys.public_key());
         assert!(is_ready_event(&event));
-        assert!(!is_tmpfile_url_event(&event));
         assert!(!is_completion_event(&event));
-
-        // Verify transfer ID
-        assert_eq!(get_transfer_id(&event).unwrap(), transfer_id);
-    }
-
-    #[test]
-    fn test_tmpfile_url_event_creation_and_parsing() {
-        let sender_keys = Keys::generate();
-        let receiver_keys = Keys::generate();
-        let transfer_id = generate_transfer_id();
-        let download_url = "https://tmpfiles.org/dl/12345/test.dat";
-
-        // Create tmpfile URL event
-        let event = create_tmpfile_url_event(
-            &sender_keys,
-            &receiver_keys.public_key(),
-            &transfer_id,
-            download_url,
-        )
-        .unwrap();
-
-        // Verify event properties
-        assert_eq!(event.kind, nostr_file_transfer_kind());
-        assert_eq!(event.pubkey, sender_keys.public_key());
-        assert!(is_tmpfile_url_event(&event));
-        assert!(!is_ready_event(&event));
-        assert!(!is_completion_event(&event));
-
-        // Parse and verify
-        let parsed_url = parse_tmpfile_url_event(&event).unwrap();
-        assert_eq!(parsed_url, download_url);
 
         // Verify transfer ID
         assert_eq!(get_transfer_id(&event).unwrap(), transfer_id);
@@ -88,7 +56,6 @@ mod tests {
         assert_eq!(event.pubkey, receiver_keys.public_key());
         assert!(is_completion_event(&event));
         assert!(!is_ready_event(&event));
-        assert!(!is_tmpfile_url_event(&event));
 
         // Verify transfer ID
         assert_eq!(get_transfer_id(&event).unwrap(), transfer_id);

@@ -8,8 +8,8 @@ wormhole-rs supports two main categories of transport:
 
 1. **Internet Transfers** (using `wormhole-rs send`):
     - **iroh mode** - Direct P2P transfers using iroh's QUIC/TLS stack (automatic relay fallback)
-    - **WebRTC Mode**: WebRTC with Nostr signaling by default, optional copy/paste manual signaling (`--manual-signaling`), and tmpfiles.org relay fallback when P2P fails or `--force-relay` is set
-    - **Tor Mode**: For anonymity (uses `arti` to create hidden services)
+    - **WebRTC Mode**: WebRTC with Nostr signaling by default, optional copy/paste manual signaling (`--manual-signaling`)
+    - **Tor Mode**: For anonymity and relay when direct P2P fails (uses `arti` to create hidden services)
 2. **Local Transfers** (using `wormhole-rs send-local`):
     - **mDNS Mode**: LAN-only transfers using mDNS discovery + TCP with SPAKE2 key exchange driven by a 12-character PIN
 
@@ -79,39 +79,13 @@ sequenceDiagram
     Receiver->>Sender: 3. Send ACK
 ```
 
-**3. Fallback Path (tmpfiles.org)**
-
-If WebRTC fails or `--force-relay` is used:
-
-```mermaid
-sequenceDiagram
-    participant Sender
-    participant Relays as Nostr Relays
-    participant TmpFiles as tmpfiles.org
-    participant Receiver
-
-    Note over Sender: WebRTC failed/skipped
-
-    Receiver->>Relays: 1. Send "Ready" signal
-    Relays->>Sender: 2. Receive Ready signal
-    Sender->>Sender: 3. Encrypt file (AES-256-GCM)
-    Sender->>TmpFiles: 4. Upload encrypted file
-    TmpFiles->>Sender: 5. Return download URL
-    Sender->>Relays: 6. Send download URL (kind 24242)
-    Relays->>Receiver: 7. Receive URL
-    Receiver->>TmpFiles: 8. Download encrypted file
-    Receiver->>Receiver: 9. Decrypt & Save
-    Receiver->>Relays: 10. Send "Complete" ACK
-    Relays->>Sender: 11. Receive ACK
-```
-
 #### Manual Signaling (Copy/Paste, Offline-Friendly)
 
 Used when relays are blocked or unavailable (`--manual-signaling`). Signaling blobs are base64url-encoded JSON with CRC32 checksums; they expire under the same TTL checks as wormhole codes.
 
 1. Sender gathers ICE candidates (STUN only) and prints an offer blob containing SDP, ICE candidates, filename/size/type, and a hex AES-256-GCM key.
 2. Receiver pastes the blob, validates checksum/TTL, sets the remote description, and returns an answer blob with SDP + ICE.
-3. Sender pastes the answer, completes WebRTC setup, and transfers over the encrypted data channel. Fallback to tmpfiles.org remains available if `--force-relay` is provided.
+3. Sender pastes the answer, completes WebRTC setup, and transfers over the encrypted data channel.
 
 #### Tor Mode
 
@@ -188,8 +162,7 @@ sequenceDiagram
 ### WebRTC Mode (`wormhole-rs send webrtc`)
 - **Transport**: WebRTC Data Channels (SCTP/DTLS)
 - **Signaling**: Nostr Relays (JSON payloads) by default; copy/paste manual signaling available with `--manual-signaling`
-- **Fallback**: tmpfiles.org (100MB limit, 60 min retention)
-- **NAT traversal**: STUN (no built-in TURN); fallback relay path available via tmpfiles.org
+- **NAT traversal**: STUN (no built-in TURN); if direct P2P fails, use Tor mode for relay
 - **Encryption**: Mandatory AES-256-GCM for all application data (on top of DTLS).
 
 ### Local Mode (`wormhole-rs send-local`)

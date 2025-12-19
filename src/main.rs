@@ -10,7 +10,7 @@ use wormhole_rs::wormhole;
 use wormhole_rs::{onion_receiver, onion_sender};
 
 #[cfg(feature = "webrtc")]
-use wormhole_rs::{webrtc_receiver, webrtc_sender::{self, TransferResult}, webrtc_offline_receiver};
+use wormhole_rs::{webrtc_receiver, webrtc_sender, webrtc_offline_receiver};
 
 
 use wormhole_rs::{mdns_receiver, mdns_sender};
@@ -118,7 +118,7 @@ enum SendTransport {
     },
 
     #[cfg(feature = "webrtc")]
-    /// Send via WebRTC with Nostr signaling + tmpfiles.org fallback
+    /// Send via WebRTC with Nostr signaling
     #[command(name = "webrtc")]
     WebRtc {
         /// Path to file or folder
@@ -135,10 +135,6 @@ enum SendTransport {
         /// Use default hardcoded Nostr relays instead of fetching from nostr.watch
         #[arg(long)]
         use_default_relays: bool,
-
-        /// Force relay mode (skip WebRTC, use tmpfiles.org)
-        #[arg(long)]
-        force_relay: bool,
 
         /// Use manual copy/paste signaling instead of Nostr relays
         #[arg(long)]
@@ -222,7 +218,6 @@ async fn main() -> Result<()> {
                 folder,
                 nostr_relay,
                 use_default_relays,
-                force_relay,
                 manual_signaling,
             } => {
                 validate_path(&path, folder)?;
@@ -231,31 +226,24 @@ async fn main() -> Result<()> {
                 } else {
                     Some(nostr_relay)
                 };
-                let result = if folder {
+                if folder {
                     webrtc_sender::send_folder_webrtc(
                         &path,
-                        force_relay,
                         custom_relays,
                         use_default_relays,
                         pin,
                         manual_signaling,
                     )
-                    .await?
+                    .await?;
                 } else {
                     webrtc_sender::send_file_webrtc(
                         &path,
-                        force_relay,
                         custom_relays,
                         use_default_relays,
                         pin,
                         manual_signaling,
                     )
-                    .await?
-                };
-                if result == TransferResult::Unconfirmed {
-                    eprintln!(
-                        "Note: Transfer may have succeeded but receiver confirmation was not received."
-                    );
+                    .await?;
                 }
             }
         },

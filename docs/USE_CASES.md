@@ -54,12 +54,18 @@ This guide describes common scenarios where `wormhole-rs` shines and which mode 
 ## 3. Strict Firewalls / Restricted Networks
 **Scenario**: You are on a corporate or university network that blocks UDP, non-standard ports, and direct P2P connections. Standard transfers hang or fail.
 
-**Solution**: **WebRTC Mode + Relay Fallback**
-- **Why**: WebRTC tries to punch through NATs. If direct connection fails (firewall blocks UDP), `wormhole-rs` can fall back to using tmpfiles.org to upload/download encrypted files (100MB limit, 60 min retention).
-- **Manual Fallback**: If the connection hangs, the sender can use `--force-relay` to skip WebRTC and use tmpfiles.org directly.
+**Solution A**: **WebRTC Mode** (try first)
+- **Why**: WebRTC tries to punch through NATs using STUN. Works in many restricted environments.
 - **Command**:
   ```bash
   wormhole-rs send --pin webrtc /path/to/file
+  ```
+
+**Solution B**: **Tor Mode** (if WebRTC fails)
+- **Why**: If direct P2P connection fails completely, Tor mode provides a reliable relay path through the Tor network with better privacy than any third-party relay.
+- **Command**:
+  ```bash
+  wormhole-rs send --pin tor /path/to/file
   ```
 
 ---
