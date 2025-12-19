@@ -87,14 +87,17 @@ pub fn display_offer_json(offer: &OfflineOffer) -> Result<()> {
     let wrapped = wrap_lines(&encoded, LINE_WIDTH);
 
     println!();
-    println!("Ask the receiver to run:");
+    println!("=== SENDER STEP 1: Ask the receiver to run ===");
     println!("  wormhole-rs receive --manual-signaling");
     println!();
-    println!("Then copy the code between the markers and send to receiver:");
-    println!();
+    println!("=== SENDER STEP 2: Press Enter to show response code and then copy it to send to receiver ===");
+    std::io::stdout().flush()?;
+    let _ = std::io::stdin().read_line(&mut String::new());
     println!("--- START CODE ---");
     println!("{}", wrapped);
     println!("--- END CODE ---");
+    println!();
+    println!("Copy the code above and send to receiver, then wait for their response code for STEP 3...");
     println!();
 
     Ok(())
@@ -111,11 +114,14 @@ pub fn display_answer_json(answer: &OfflineAnswer) -> Result<()> {
     let wrapped = wrap_lines(&encoded, LINE_WIDTH);
 
     println!();
-    println!("Copy the code between the markers and send to sender:");
-    println!();
+    println!("=== RECEIVER STEP 2: Press Enter to show response code and then copy it to send to sender ===");
+    std::io::stdout().flush()?;
+    let _ = std::io::stdin().read_line(&mut String::new());
     println!("--- START CODE ---");
     println!("{}", wrapped);
     println!("--- END CODE ---");
+    println!();
+    println!("Copy the code above and send to sender, after sending the code above, wait for connection...");
     println!();
 
     Ok(())
@@ -188,13 +194,13 @@ fn decode_with_checksum(prompt: &str) -> Result<String> {
 
 /// Read and parse base64url-encoded offer from user input with CRC32 validation
 pub fn read_offer_json() -> Result<OfflineOffer> {
-    let json = decode_with_checksum("Paste sender's code, then press Enter twice:")?;
+    let json = decode_with_checksum("=== RECEIVER STEP 1: Paste sender's code, then press Enter twice ===")?;
     serde_json::from_str(&json).context("Failed to parse offer")
 }
 
 /// Read and parse base64url-encoded answer from user input with CRC32 validation
 pub fn read_answer_json() -> Result<OfflineAnswer> {
-    let json = decode_with_checksum("Paste receiver's response code, then press Enter twice:")?;
+    let json = decode_with_checksum("=== SENDER STEP 3: Paste receiver's response code, then press Enter twice ===")?;
     serde_json::from_str(&json).context("Failed to parse answer")
 }
 
