@@ -1,14 +1,14 @@
 use anyhow::{Context, Result};
-use iroh::Watcher;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use iroh::Watcher;
 use tokio::fs::File;
 use tokio::io::AsyncReadExt;
 use tokio::sync::Mutex;
 
 use crate::crypto::{generate_key, CHUNK_SIZE};
-use crate::iroh_common::{create_sender_endpoint, wait_for_direct_connection, DirectConnectionResult};
+use crate::iroh_common::{create_sender_endpoint};
 use crate::transfer::{
     format_bytes, num_chunks, prepare_file_for_send, prepare_folder_for_send, send_chunk,
     send_encrypted_chunk, send_encrypted_header, send_header, FileHeader, TransferType,
@@ -54,7 +54,7 @@ async fn transfer_data_internal(
     };
 
     // Create iroh endpoint
-    let (endpoint, using_custom_relay) = create_sender_endpoint(relay_urls).await?;
+    let endpoint = create_sender_endpoint(relay_urls).await?;
 
     // Get our address
     let addr = endpoint.addr();
@@ -104,21 +104,7 @@ async fn transfer_data_internal(
     println!("✅ Receiver connected!");
     println!("   📡 Remote ID: {}", remote_id);
 
-    // When using default public relay (not custom), reject relay-only connections
-    // The default relay is rate-limited and not suitable for data transfer
-    if !using_custom_relay {
-        if wait_for_direct_connection(&endpoint, remote_id).await == DirectConnectionResult::StillRelay {
-            conn.close(1u32.into(), b"relay connections not allowed with default relay");
-            anyhow::bail!(
-                "Connection rejected: relay-only connection not allowed with default public relay.\n\n\
-                 The default relay is rate-limited. Try one of these alternatives:\n  \
-                 - Use Tor mode: wormhole-rs send tor <file>\n  \
-                 - Use a custom relay: wormhole-rs send iroh --relay-url <url> <file>"
-            );
-        }
-    }
-
-    // Print actual connection type (Direct, Relay, Mixed, None)
+    // Get connection type (Direct, Relay, Mixed, None)
     if let Some(mut conn_type_watcher) = endpoint.conn_type(remote_id) {
         let conn_type = conn_type_watcher.get();
         println!("   🔗 Connection: {:?}", conn_type);

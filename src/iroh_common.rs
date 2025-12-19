@@ -3,65 +3,12 @@
 use anyhow::{Context, Result};
 use iroh::{
     discovery::{dns::DnsDiscovery, mdns::MdnsDiscovery, pkarr::PkarrPublisher},
-    endpoint::{ConnectionType, RelayMode},
-    Endpoint, EndpointId, RelayMap, RelayUrl, Watcher,
+    endpoint::RelayMode,
+    Endpoint, RelayMap, RelayUrl,
 };
-use std::time::Duration;
 
 /// Application-Layer Protocol Negotiation identifier for wormhole transfers.
 pub const ALPN: &[u8] = b"wormhole-transfer/1";
-
-/// Timeout for waiting for direct connection (hole-punching)
-pub const DIRECT_WAIT_TIMEOUT: Duration = Duration::from_secs(5);
-
-/// Result of waiting for direct connection
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DirectConnectionResult {
-    /// Direct P2P connection was established
-    Direct,
-    /// Connection is still using relay (hole-punching failed or timed out)
-    StillRelay,
-}
-
-/// Wait for connection type to stabilize.
-/// Gives time for hole-punching to establish direct connection.
-/// Uses async notifications from the Watcher to react immediately to changes.
-pub async fn wait_for_direct_connection(
-    endpoint: &Endpoint,
-    remote_id: EndpointId,
-) -> DirectConnectionResult {
-    let Some(mut watcher) = endpoint.conn_type(remote_id) else {
-        return DirectConnectionResult::StillRelay; // Unknown = treat as non-direct
-    };
-
-    // Check initial state - if already direct, accept immediately
-    if matches!(watcher.get(), ConnectionType::Direct(_)) {
-        return DirectConnectionResult::Direct;
-    }
-
-    // Wait for connection type updates with timeout
-    let result = tokio::time::timeout(DIRECT_WAIT_TIMEOUT, async {
-        loop {
-            match watcher.updated().await {
-                Ok(ConnectionType::Direct(_)) => {
-                    return DirectConnectionResult::Direct;
-                }
-                Ok(_) => {
-                    // Still Relay or Mixed, continue waiting for next update
-                }
-                Err(_) => {
-                    return DirectConnectionResult::StillRelay;
-                }
-            }
-        }
-    })
-    .await;
-
-    match result {
-        Ok(conn_result) => conn_result,
-        Err(_timeout) => DirectConnectionResult::StillRelay,
-    }
-}
 
 /// Parse relay URL strings into a RelayMode.
 ///
@@ -86,10 +33,7 @@ pub fn parse_relay_mode(relay_urls: Vec<String>) -> Result<RelayMode> {
 /// Sets up N0 DNS discovery, pkarr publishing, and local mDNS discovery.
 /// The endpoint is configured with ALPN for wormhole transfers.
 /// Multiple relay URLs provide automatic failover based on latency.
-///
-/// Returns (Endpoint, using_custom_relay) where using_custom_relay indicates
-/// whether custom relay servers are being used (vs default public relays).
-pub async fn create_sender_endpoint(relay_urls: Vec<String>) -> Result<(Endpoint, bool)> {
+pub async fn create_sender_endpoint(relay_urls: Vec<String>) -> Result<Endpoint> {
     let relay_mode = parse_relay_mode(relay_urls.clone())?;
     let using_custom_relay = !matches!(relay_mode, RelayMode::Default);
     if using_custom_relay {
@@ -112,7 +56,7 @@ pub async fn create_sender_endpoint(relay_urls: Vec<String>) -> Result<(Endpoint
     // Wait for endpoint to be online (connected to relay)
     endpoint.online().await;
 
-    Ok((endpoint, using_custom_relay))
+    Ok(endpoint)
 }
 
 /// Create an iroh endpoint configured for receiving (connects to sender).
@@ -120,10 +64,7 @@ pub async fn create_sender_endpoint(relay_urls: Vec<String>) -> Result<(Endpoint
 /// Sets up N0 DNS discovery, pkarr publishing, and local mDNS discovery.
 /// Does not set ALPN as the receiver specifies it when connecting.
 /// Multiple relay URLs provide automatic failover based on latency.
-///
-/// Returns (Endpoint, using_custom_relay) where using_custom_relay indicates
-/// whether custom relay servers are being used (vs default public relays).
-pub async fn create_receiver_endpoint(relay_urls: Vec<String>) -> Result<(Endpoint, bool)> {
+pub async fn create_receiver_endpoint(relay_urls: Vec<String>) -> Result<Endpoint> {
     let relay_mode = parse_relay_mode(relay_urls.clone())?;
     let using_custom_relay = !matches!(relay_mode, RelayMode::Default);
     if using_custom_relay {
@@ -142,5 +83,5 @@ pub async fn create_receiver_endpoint(relay_urls: Vec<String>) -> Result<(Endpoi
         .await
         .context("Failed to create endpoint")?;
 
-    Ok((endpoint, using_custom_relay))
+    Ok(endpoint)
 }
