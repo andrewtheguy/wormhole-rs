@@ -65,8 +65,6 @@ pub enum SignalingMessage {
         candidate: IceCandidatePayload,
         seq: u32,
     },
-    /// Notification that the peer has switched to relay mode
-    RelayChunk,
 }
 
 /// Nostr signaling client for WebRTC
@@ -324,8 +322,6 @@ impl NostrSignaling {
                     seq: seq.unwrap_or(0),
                 })
             }
-            // If we see a tmpfile URL event, it means the peer has switched to fallback mode
-            crate::nostr_protocol::EVENT_TYPE_TMPFILE_URL => Some(SignalingMessage::RelayChunk),
             _ => None,
         }
     }

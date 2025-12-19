@@ -11,10 +11,9 @@ use tor_cell::relaycell::msg::Connected;
 use tor_hsservice::{config::OnionServiceConfigBuilder, handle_rend_requests};
 
 use crate::crypto::{generate_key, CHUNK_SIZE};
-use crate::folder::{create_tar_archive, print_tar_creation_info};
 use crate::transfer::{
-    format_bytes, num_chunks, send_chunk, send_encrypted_chunk, send_encrypted_header,
-    send_header, FileHeader, TransferType,
+    format_bytes, num_chunks, prepare_file_for_send, prepare_folder_for_send, send_chunk,
+    send_encrypted_chunk, send_encrypted_header, send_header, FileHeader, TransferType,
 };
 use crate::wormhole::generate_tor_code;
 
@@ -197,63 +196,37 @@ async fn transfer_data_tor_internal(
 
 /// Send a file via Tor hidden service
 pub async fn send_file_tor(file_path: &Path, extra_encrypt: bool, use_pin: bool) -> Result<()> {
-    // Get file metadata
-    let metadata = tokio::fs::metadata(file_path)
-        .await
-        .context("Failed to read file metadata")?;
-    let file_size = metadata.len();
-    let filename = file_path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .context("Invalid filename")?
-        .to_string();
+    let prepared = match prepare_file_for_send(file_path).await? {
+        Some(p) => p,
+        None => return Ok(()),
+    };
 
-    println!(
-        "Preparing to send: {} ({})",
-        filename,
-        format_bytes(file_size)
-    );
-
-    // Open file
-    let file = File::open(file_path).await.context("Failed to open file")?;
-
-    // Transfer using common logic
-    transfer_data_tor_internal(file, filename, file_size, TransferType::File, extra_encrypt, use_pin).await
+    transfer_data_tor_internal(
+        prepared.file,
+        prepared.filename,
+        prepared.file_size,
+        TransferType::File,
+        extra_encrypt,
+        use_pin,
+    )
+    .await
 }
 
 /// Send a folder via Tor hidden service (as tar archive)
 pub async fn send_folder_tor(folder_path: &Path, extra_encrypt: bool, use_pin: bool) -> Result<()> {
-    // Validate folder
-    if !folder_path.is_dir() {
-        anyhow::bail!("Not a directory: {}", folder_path.display());
-    }
+    let prepared = match prepare_folder_for_send(folder_path).await? {
+        Some(p) => p,
+        None => return Ok(()),
+    };
 
-    let folder_name = folder_path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .context("Invalid folder name")?;
-
-    println!("Creating tar archive of: {}", folder_name);
-    print_tar_creation_info();
-
-    // Create tar archive using shared folder logic
-    let tar_archive = create_tar_archive(folder_path)?;
-    let temp_tar = tar_archive.temp_file;
-    let tar_filename = tar_archive.filename;
-    let file_size = tar_archive.file_size;
-
-    println!(
-        "Archive created: {} ({})",
-        tar_filename,
-        format_bytes(file_size)
-    );
-
-    // Open tar file
-    let file = File::open(temp_tar.path())
-        .await
-        .context("Failed to open tar file")?;
-
-    // Transfer using common logic
-    // Note: temp_tar is kept alive until this function returns, ensuring the file exists
-    transfer_data_tor_internal(file, tar_filename, file_size, TransferType::Folder, extra_encrypt, use_pin).await
+    // Note: prepared.temp_file is kept alive until this function returns, ensuring the file exists
+    transfer_data_tor_internal(
+        prepared.file,
+        prepared.filename,
+        prepared.file_size,
+        TransferType::Folder,
+        extra_encrypt,
+        use_pin,
+    )
+    .await
 }

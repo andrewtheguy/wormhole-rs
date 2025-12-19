@@ -1,9 +1,9 @@
-//! WebRTC transport receiver: WebRTC with Nostr signaling + tmpfiles.org fallback
+//! WebRTC transport receiver: WebRTC with Nostr signaling
 //!
 //! This module handles receiving files over webrtc transport:
-//! 1. Uses Nostr for WebRTC signaling (replacing PeerJS)
+//! 1. Uses Nostr for WebRTC signaling
 //! 2. Attempts direct P2P connection via STUN
-//! 3. Falls back to tmpfiles.org relay mode if WebRTC fails
+//! 3. Manual signaling fallback via copy/paste
 
 use anyhow::{Context, Result};
 use base64::Engine;
@@ -138,10 +138,6 @@ async fn try_webrtc_receive(
                         username_fragment: None,
                     };
                     let _ = rtc_peer.add_ice_candidate(candidate_init).await;
-                }
-                Some(SignalingMessage::RelayChunk) => {
-                    println!("Sender switched to relay mode.");
-                    break Ok(Some(WebRtcResult::Failed("Relay fallback detected".to_string())));
                 }
                 Some(_) => continue,
                 None => {
@@ -416,18 +412,19 @@ pub async fn receive_webrtc(code: &str, output_dir: Option<PathBuf>) -> Result<(
         WebRtcResult::Success => {
             signaling.disconnect().await;
             println!("Connection closed.");
-            return Ok(());
+            Ok(())
         }
         WebRtcResult::Failed(reason) => {
-            println!("\nWebRTC connection failed: {}", reason);
-            println!("Falling back to tmpfiles.org...\n");
+            signaling.disconnect().await;
+            anyhow::bail!(
+                "WebRTC connection failed: {}\n\n\
+                 If direct P2P connection is not possible, ask the sender to try:\n  \
+                 - Tor mode: wormhole-rs send tor <file>\n  \
+                 - Manual signaling: wormhole-rs send webrtc --manual-signaling <file>",
+                reason
+            );
         }
     }
-
-    // Fallback to tmpfiles.org
-    signaling.disconnect().await;
-
-    crate::tmpfiles_fallback::receive_tmpfiles_with_token(&token, output_dir).await
 }
 
 /// Internal implementation for receiving a file via WebRTC

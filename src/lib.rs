@@ -10,12 +10,6 @@ pub mod iroh_receiver;
 pub mod iroh_sender;
 pub mod transfer;
 pub mod wormhole;
-
-// Internal modules for webrtc fallback (only needed with webrtc feature)
-#[cfg(feature = "webrtc")]
-pub(crate) mod tmpfiles;
-#[cfg(feature = "webrtc")]
-pub(crate) mod tmpfiles_fallback;
 pub mod nostr_pin;
 
 

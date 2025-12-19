@@ -1,9 +1,9 @@
-//! WebRTC transport sender: WebRTC with Nostr signaling + tmpfiles.org fallback
+//! WebRTC transport sender: WebRTC with Nostr signaling
 //!
 //! This module implements the webrtc transport which:
-//! 1. Uses Nostr for WebRTC signaling (replacing PeerJS)
+//! 1. Uses Nostr for WebRTC signaling
 //! 2. Attempts direct P2P connection via STUN
-//! 3. Falls back to tmpfiles.org relay mode if WebRTC fails
+//! 3. Manual signaling fallback via copy/paste
 
 use anyhow::{Context, Result};
 use base64::Engine;
@@ -12,20 +12,18 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::fs::File;
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncSeekExt};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt};
 use tokio::sync::{mpsc, Mutex};
 use tokio::time::{timeout, Duration};
 use webrtc::ice_transport::ice_candidate::RTCIceCandidateInit;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 
 use crate::crypto::{encrypt_chunk, generate_key, CHUNK_SIZE};
-use crate::folder::{create_tar_archive, print_tar_creation_info};
-use crate::tmpfiles::MAX_TMPFILES_SIZE;
-// Re-export TransferResult for public API
-pub use crate::tmpfiles_fallback::{send_tmpfiles_fallback, TransferResult};
-
 use crate::nostr_signaling::{create_sender_signaling, NostrSignaling, SignalingMessage};
-use crate::transfer::{format_bytes, num_chunks, FileHeader, TransferType};
+use crate::transfer::{
+    format_bytes, num_chunks, prepare_file_for_send, prepare_folder_for_send, FileHeader,
+    TransferType,
+};
 use crate::webrtc_common::{setup_data_channel_handlers, WebRtcPeer};
 use crate::wormhole::generate_webrtc_code;
 
@@ -62,7 +60,7 @@ fn is_signaling_error(err: &anyhow::Error) -> bool {
 async fn handle_signaling_error_with_fallback<F, Fut>(
     error: anyhow::Error,
     fallback_fn: F,
-) -> Result<TransferResult>
+) -> Result<()>
 where
     F: FnOnce() -> Fut,
     Fut: std::future::Future<Output = Result<()>>,
@@ -78,7 +76,7 @@ where
         reader.read_line(&mut line).await?;
 
         // Fall back to manual signaling
-        fallback_fn().await.map(|_| TransferResult::Confirmed)
+        fallback_fn().await
     } else {
         // Non-signaling error, propagate it
         Err(error)
@@ -186,10 +184,6 @@ async fn try_webrtc_transfer(
                             username_fragment: None,
                         };
                         let _ = rtc_peer.add_ice_candidate(candidate_init).await;
-                    }
-                    Some(SignalingMessage::RelayChunk) => {
-                        // Should not happen on sender side usually, but ignore
-                        continue;
                     }
                     Some(_) => continue,
                     None => {
@@ -456,70 +450,13 @@ async fn transfer_data_webrtc_internal(
     filename: String,
     file_size: u64,
     transfer_type: TransferType,
-    force_relay: bool,
     custom_relays: Option<Vec<String>>,
     use_default_relays: bool,
     use_pin: bool,
-) -> Result<TransferResult> {
+) -> Result<()> {
     // Generate encryption key (always required)
     let key = generate_key();
     println!("Encryption enabled for transfer");
-
-    // If force relay mode, we need to set up signaling just for credentials
-    // then immediately use relay mode
-    if force_relay {
-        // Check file size limit for relay mode BEFORE generating wormhole code
-        if file_size > MAX_TMPFILES_SIZE {
-            anyhow::bail!(
-                "File size ({}) exceeds tmpfiles.org limit ({}).\n\
-                 Remove --force-relay to use WebRTC for larger files.",
-                format_bytes(file_size),
-                format_bytes(MAX_TMPFILES_SIZE)
-            );
-        }
-
-        println!("Force relay mode enabled, using tmpfiles.org fallback");
-
-        // Create signaling to get credentials
-        println!("Connecting to Nostr relays for signaling...");
-        let signaling = create_sender_signaling(custom_relays.clone(), use_default_relays).await?;
-
-        println!("Sender pubkey: {}", signaling.public_key().to_hex());
-        println!("Transfer ID: {}", signaling.transfer_id());
-
-        // Generate wormhole code
-        let code = generate_webrtc_code(
-            &key,
-            signaling.public_key().to_hex(),
-            signaling.transfer_id().to_string(),
-            Some(signaling.relay_urls().to_vec()),
-            filename.clone(),
-            match transfer_type {
-                TransferType::File => "file",
-                TransferType::Folder => "folder",
-            },
-        )?;
-
-        let code_str = code.clone(); // Keep for PIN publishing if needed
-
-        display_transfer_code(use_pin, &signaling.keys, &code_str, &signaling.transfer_id()).await?;
-
-        // Go directly to tmpfiles.org fallback
-        let result = crate::tmpfiles_fallback::send_tmpfiles_fallback(
-            file,
-            file_size,
-            &filename,
-            transfer_type,
-            signaling.keys.clone(),
-            signaling.transfer_id().to_string(),
-            key,
-            signaling.relay_urls().to_vec(),
-        )
-        .await;
-
-        signaling.disconnect().await;
-        return result;
-    }
 
     // Create Nostr signaling client
     println!("Connecting to Nostr relays for signaling...");
@@ -559,61 +496,45 @@ async fn transfer_data_webrtc_internal(
         WebRtcResult::Success => {
             signaling.disconnect().await;
             println!("Connection closed.");
-            return Ok(TransferResult::Confirmed);
+            Ok(())
         }
         WebRtcResult::Failed(reason) => {
-            println!("\nWebRTC connection failed: {}", reason);
-            println!("Falling back to tmpfiles.org...\n");
+            signaling.disconnect().await;
+            anyhow::bail!(
+                "WebRTC connection failed: {}\n\n\
+                 If direct P2P connection is not possible, try one of these alternatives:\n  \
+                 - Use Tor mode: wormhole-rs send tor <file>\n  \
+                 - Use manual signaling: wormhole-rs send webrtc --manual-signaling <file>\n  \
+                 - Use local mode (same LAN): wormhole-rs send-local <file>",
+                reason
+            );
         }
     }
-
-    // Fallback to tmpfiles.org using existing credentials
-    // Reset file position
-    file.rewind().await.context("Failed to reset file position")?;
-
-    let result = crate::tmpfiles_fallback::send_tmpfiles_fallback(
-        file,
-        file_size,
-        &filename,
-        transfer_type,
-        signaling.keys.clone(),
-        signaling.transfer_id().to_string(),
-        key,
-        signaling.relay_urls().to_vec(),
-    )
-    .await;
-
-    signaling.disconnect().await;
-    result
 }
 
-/// Send a file via webrtc transport (WebRTC + Nostr fallback)
+/// Send a file via webrtc transport
 pub async fn send_file_webrtc(
     file_path: &Path,
-    force_relay: bool,
     custom_relays: Option<Vec<String>>,
     use_default_relays: bool,
     use_pin: bool,
     manual_signaling: bool,
-) -> Result<TransferResult> {
+) -> Result<()> {
     // If manual signaling mode, use offline sender directly
     if manual_signaling {
-        return crate::webrtc_offline_sender::send_file_offline(file_path)
-            .await
-            .map(|_| TransferResult::Confirmed);
+        return crate::webrtc_offline_sender::send_file_offline(file_path).await;
     }
 
     // Try normal Nostr signaling path
     match send_file_webrtc_internal(
         file_path,
-        force_relay,
         custom_relays,
         use_default_relays,
         use_pin,
     )
     .await
     {
-        Ok(result) => Ok(result),
+        Ok(()) => Ok(()),
         Err(e) => {
             let path = file_path.to_path_buf();
             handle_signaling_error_with_fallback(e, || async move {
@@ -627,40 +548,20 @@ pub async fn send_file_webrtc(
 /// Internal function for normal Nostr signaling path
 async fn send_file_webrtc_internal(
     file_path: &Path,
-    force_relay: bool,
     custom_relays: Option<Vec<String>>,
     use_default_relays: bool,
     use_pin: bool,
-) -> Result<TransferResult> {
-    // Get file metadata
-    let metadata = tokio::fs::metadata(file_path)
-        .await
-        .context("Failed to read file metadata")?;
-    let file_size = metadata.len();
-    let filename = file_path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .context("Invalid filename")?
-        .to_string();
+) -> Result<()> {
+    let prepared = match prepare_file_for_send(file_path).await? {
+        Some(p) => p,
+        None => return Ok(()),
+    };
 
-    println!(
-        "Preparing to send: {} ({})",
-        filename,
-        format_bytes(file_size)
-    );
-
-    // Open file
-    let file = File::open(file_path)
-        .await
-        .context("Failed to open file")?;
-
-    // Transfer using webrtc transport
     transfer_data_webrtc_internal(
-        file,
-        filename,
-        file_size,
+        prepared.file,
+        prepared.filename,
+        prepared.file_size,
         TransferType::File,
-        force_relay,
         custom_relays,
         use_default_relays,
         use_pin,
@@ -671,30 +572,26 @@ async fn send_file_webrtc_internal(
 /// Send a folder as a tar archive via webrtc transport
 pub async fn send_folder_webrtc(
     folder_path: &Path,
-    force_relay: bool,
     custom_relays: Option<Vec<String>>,
     use_default_relays: bool,
     use_pin: bool,
     manual_signaling: bool,
-) -> Result<TransferResult> {
+) -> Result<()> {
     // If manual signaling mode, use offline sender directly
     if manual_signaling {
-        return crate::webrtc_offline_sender::send_folder_offline(folder_path)
-            .await
-            .map(|_| TransferResult::Confirmed);
+        return crate::webrtc_offline_sender::send_folder_offline(folder_path).await;
     }
 
     // Try normal Nostr signaling path
     match send_folder_webrtc_internal(
         folder_path,
-        force_relay,
         custom_relays,
         use_default_relays,
         use_pin,
     )
     .await
     {
-        Ok(result) => Ok(result),
+        Ok(()) => Ok(()),
         Err(e) => {
             let path = folder_path.to_path_buf();
             handle_signaling_error_with_fallback(e, || async move {
@@ -708,49 +605,25 @@ pub async fn send_folder_webrtc(
 /// Internal function for normal Nostr signaling path (folder)
 async fn send_folder_webrtc_internal(
     folder_path: &Path,
-    force_relay: bool,
     custom_relays: Option<Vec<String>>,
     use_default_relays: bool,
     use_pin: bool,
-) -> Result<TransferResult> {
-    // Validate folder
-    if !folder_path.is_dir() {
-        anyhow::bail!("Not a directory: {}", folder_path.display());
-    }
-
-    let folder_name = folder_path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .context("Invalid folder name")?;
-
-    println!("Creating tar archive of: {}", folder_name);
-    print_tar_creation_info();
-
-    // Create tar archive using shared folder logic
-    let tar_archive = create_tar_archive(folder_path)?;
-    let temp_tar = tar_archive.temp_file;
-    let tar_filename = tar_archive.filename;
-    let file_size = tar_archive.file_size;
+) -> Result<()> {
+    let prepared = match prepare_folder_for_send(folder_path).await? {
+        Some(p) => p,
+        None => return Ok(()),
+    };
 
     // Set up cleanup handler for Ctrl+C
-    let temp_path = temp_tar.path().to_path_buf();
+    let temp_path = prepared.temp_file.path().to_path_buf();
     let cleanup_path: TempFileCleanup = Arc::new(Mutex::new(Some(temp_path)));
     setup_cleanup_handler(cleanup_path.clone());
 
-    println!("Archive created: {} ({})", tar_filename, format_bytes(file_size));
-
-    // Open tar file
-    let file = File::open(temp_tar.path())
-        .await
-        .context("Failed to open tar file")?;
-
-    // Transfer using webrtc transport
     let result = transfer_data_webrtc_internal(
-        file,
-        tar_filename,
-        file_size,
+        prepared.file,
+        prepared.filename,
+        prepared.file_size,
         TransferType::Folder,
-        force_relay,
         custom_relays,
         use_default_relays,
         use_pin,

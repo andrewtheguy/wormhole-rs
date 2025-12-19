@@ -18,8 +18,10 @@ use webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 
 use crate::crypto::{encrypt_chunk, generate_key, CHUNK_SIZE};
-use crate::folder::{create_tar_archive, print_tar_creation_info};
-use crate::transfer::{format_bytes, num_chunks, FileHeader, TransferType};
+use crate::transfer::{
+    format_bytes, num_chunks, prepare_file_for_send, prepare_folder_for_send, FileHeader,
+    TransferType,
+};
 use crate::webrtc_common::{setup_data_channel_handlers, WebRtcPeer};
 use crate::webrtc_offline_signaling::{
     display_offer_json, ice_candidates_to_payloads, read_answer_json, OfflineAnswer, OfflineOffer,
@@ -50,58 +52,45 @@ fn setup_cleanup_handler(cleanup_path: TempFileCleanup) {
 
 /// Send a file via offline WebRTC (copy/paste JSON signaling)
 pub async fn send_file_offline(file_path: &Path) -> Result<()> {
-    let filename = file_path
-        .file_name()
-        .context("Invalid file path")?
-        .to_string_lossy()
-        .to_string();
+    let prepared = match prepare_file_for_send(file_path).await? {
+        Some(p) => p,
+        None => return Ok(()),
+    };
 
-    let metadata = tokio::fs::metadata(file_path)
-        .await
-        .context("Failed to read file metadata")?;
-    let file_size = metadata.len();
-
-    let file = File::open(file_path).await.context("Failed to open file")?;
-
-    println!("Sending: {} ({})", filename, format_bytes(file_size));
-
-    transfer_offline_internal(file, filename, file_size, TransferType::File, None).await
+    transfer_offline_internal(
+        prepared.file,
+        prepared.filename,
+        prepared.file_size,
+        TransferType::File,
+        None,
+    )
+    .await
 }
 
 /// Send a folder via offline WebRTC (copy/paste JSON signaling)
 pub async fn send_folder_offline(folder_path: &Path) -> Result<()> {
-    let folder_name = folder_path
-        .file_name()
-        .context("Invalid folder path")?
-        .to_string_lossy()
-        .to_string();
-
-    // Create tar archive
-    println!("Creating archive of folder: {}", folder_name);
-    let archive = create_tar_archive(folder_path)?;
-    print_tar_creation_info();
-
-    let tar_path = archive.temp_file.path().to_path_buf();
-    let tar_size = archive.file_size;
-    let filename = archive.filename.clone();
+    let prepared = match prepare_folder_for_send(folder_path).await? {
+        Some(p) => p,
+        None => return Ok(()),
+    };
 
     // Set up cleanup handler
-    let cleanup_path: TempFileCleanup = Arc::new(Mutex::new(Some(tar_path.clone())));
+    let temp_path = prepared.temp_file.path().to_path_buf();
+    let cleanup_path: TempFileCleanup = Arc::new(Mutex::new(Some(temp_path.clone())));
     setup_cleanup_handler(cleanup_path.clone());
 
-    let file = File::open(&tar_path)
-        .await
-        .context("Failed to open tar archive")?;
-
-    println!("Sending: {} ({})", filename, format_bytes(tar_size));
-
-    let result =
-        transfer_offline_internal(file, filename, tar_size, TransferType::Folder, Some(&tar_path))
-            .await;
+    let result = transfer_offline_internal(
+        prepared.file,
+        prepared.filename,
+        prepared.file_size,
+        TransferType::Folder,
+        Some(&temp_path),
+    )
+    .await;
 
     // Clean up temp file
     cleanup_path.lock().await.take();
-    let _ = tokio::fs::remove_file(&tar_path).await;
+    let _ = tokio::fs::remove_file(&temp_path).await;
 
     result
 }

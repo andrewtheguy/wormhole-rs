@@ -4,8 +4,8 @@ A secure peer-to-peer file transfer tool with two main transport categories:
 
 **1. Internet Transfers** (Wormhole Code)
 - **iroh mode** - Direct P2P transfers using [iroh](https://github.com/n0-computer/iroh) with QUIC/TLS (automatic relay fallback)
-- **WebRTC mode** - WebRTC transfers with Nostr signaling (or copy/paste `--manual-signaling`) and tmpfiles.org relay fallback - requires `webrtc` feature
-- **Tor mode** - Anonymous transfers via Tor hidden services (.onion addresses) - requires `onion` feature
+- **WebRTC mode** - WebRTC transfers with Nostr signaling (or copy/paste `--manual-signaling`) - requires `webrtc` feature
+- **Tor mode** - Anonymous transfers via Tor hidden services (.onion addresses), also serves as relay when P2P fails - requires `onion` feature
 
 **2. Local Transfers** (PIN + SPAKE2)
 - **Local mode** - LAN transfers using mDNS discovery, SPAKE2 key exchange from a 12-character PIN, and TCP transport (no internet required)
@@ -18,8 +18,7 @@ A secure peer-to-peer file transfer tool with two main transport categories:
     - **Local**: Private LAN transfers using mDNS
 - **File and folder transfers** - Send individual files or entire directories (automatically archived)
 - **Local discovery** - mDNS for same-network transfers
-- **NAT traversal** - STUN for WebRTC (no built-in TURN); relay fallback for Iroh; tmpfiles.org fallback for WebRTC when P2P fails
-- **Manual Relay Fallback** - Force fallback to tmpfiles.org relay mode (`--force-relay`) if WebRTC fails
+- **NAT traversal** - STUN for WebRTC; relay fallback for Iroh; use Tor mode as relay when direct P2P fails
 - **PIN-based Transfers** - Use short 12-character PINs (with checksum) instead of long wormhole codes for easier typing
 - **Cross-platform** - Single binary, supports macOS, Linux, and Windows
 
@@ -171,7 +170,7 @@ All modes provide end-to-end encryption.
 | Tor | Internet | Wormhole Code | Tor circuits |
 | Local | LAN | SPAKE2 (PIN + transfer_id) | AES-256-GCM over TCP |
 
-Relay servers (iroh, tmpfiles.org) never see decrypted content or encryption keys.
+Relay servers (iroh, Tor) never see decrypted content or encryption keys.
 
 For detailed security model, see [ARCHITECTURE.md](docs/ARCHITECTURE.md#security-model).
 
