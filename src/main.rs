@@ -85,7 +85,7 @@ enum Commands {
 #[derive(Subcommand)]
 enum SendTransport {
     #[cfg(feature = "iroh")]
-    /// Send via iroh peer-to-peer network (default)
+    /// Send via iroh peer-to-peer network
     Iroh {
         /// Path to file or folder
         path: PathBuf,
@@ -118,7 +118,7 @@ enum SendTransport {
     },
 
     #[cfg(feature = "webrtc")]
-    /// Send via WebRTC with Nostr signaling
+    /// Send via WebRTC with Nostr signaling (recommended)
     #[command(name = "webrtc")]
     WebRtc {
         /// Path to file or folder

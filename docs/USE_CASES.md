@@ -82,12 +82,15 @@ This guide describes common scenarios where `wormhole-rs` shines and which mode 
 
 ---
 
-## 5. Large File Transfer (Maximum Efficiency)
-**Scenario**: Transferring a massive dataset (GBs) over the internet where speed is critical.
+## 5. Large File Transfer
+**Scenario**: Transferring a massive dataset (GBs) over the internet.
 
-**Solution**: **Iroh Mode** (Default)
-- **Why**: Uses `iroh` (QUIC), which is optimized for high throughput and congestion control. It utilizes multiple streams and handles packet loss efficiently, making it the fastest option for large files.
-- **Command**:
+**Solution**: **WebRTC Mode** (Recommended) or **Iroh Mode**
+- **WebRTC**: The recommended mode works well for large files over stable connections.
+  ```bash
+  wormhole-rs send webrtc /path/to/large-video.mp4
+  ```
+- **Iroh**: Alternative using QUIC, optimized for high throughput and congestion control.
   ```bash
   wormhole-rs send iroh /path/to/large-video.mp4
   ```
