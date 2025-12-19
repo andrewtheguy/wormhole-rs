@@ -310,41 +310,8 @@ download_only() {
     print_info "Binary saved to: ${output_file}"
 }
 
-# Detect appropriate shell profile file
-detect_profile() {
-    local shell_name
-    shell_name=$(basename "$SHELL")
-
-    case "$shell_name" in
-        bash)
-            # Bash priority: .bash_profile > .bashrc > .profile
-            if [ -f "$HOME/.bash_profile" ]; then
-                echo "$HOME/.bash_profile"
-            elif [ -f "$HOME/.bashrc" ]; then
-                echo "$HOME/.bashrc"
-            elif [ -f "$HOME/.profile" ]; then
-                echo "$HOME/.profile"
-            fi
-            ;;
-        zsh)
-            # Zsh priority: .zshrc > .zprofile
-            if [ -f "$HOME/.zshrc" ]; then
-                echo "$HOME/.zshrc"
-            elif [ -f "$HOME/.zprofile" ]; then
-                echo "$HOME/.zprofile"
-            fi
-            ;;
-        *)
-            # Fallback to .profile
-            if [ -f "$HOME/.profile" ]; then
-                echo "$HOME/.profile"
-            fi
-            ;;
-    esac
-}
-
-# Check if sourcing profile would add .local/bin to PATH
-check_profile_has_local_bin() {
+# Check if sourcing a profile would add target_dir to PATH
+check_profile_has_path() {
     local profile="$1"
     local target_dir="$2"
 
@@ -359,6 +326,38 @@ check_profile_has_local_bin() {
     if [[ ":$new_path:" == *":$target_dir:"* ]]; then
         return 0
     fi
+    return 1
+}
+
+# Find a profile file that has .local/bin configured
+find_profile_with_local_bin() {
+    local target_dir="$1"
+    local shell_name
+    shell_name=$(basename "$SHELL")
+
+    # List of profile files to check (order matters - check login profiles first)
+    local profiles=()
+
+    case "$shell_name" in
+        bash)
+            profiles=("$HOME/.bash_profile" "$HOME/.profile" "$HOME/.bashrc")
+            ;;
+        zsh)
+            profiles=("$HOME/.zprofile" "$HOME/.zshrc")
+            ;;
+        *)
+            profiles=("$HOME/.profile")
+            ;;
+    esac
+
+    # Find first profile that has .local/bin configured
+    for profile in "${profiles[@]}"; do
+        if check_profile_has_path "$profile" "$target_dir"; then
+            echo "$profile"
+            return 0
+        fi
+    done
+
     return 1
 }
 
@@ -405,9 +404,9 @@ download_and_install() {
     # Check PATH and suggest how to fix if needed
     if [[ ":$PATH:" != *":$target_dir:"* ]]; then
         local profile
-        profile=$(detect_profile)
+        profile=$(find_profile_with_local_bin "$target_dir")
 
-        if check_profile_has_local_bin "$profile" "$target_dir"; then
+        if [ -n "$profile" ]; then
             # Profile already has .local/bin configured, just needs reload
             print_warn "${target_dir} is not in your current PATH, but is configured in your profile."
             print_warn "To use wormhole-rs now, reload your profile:"
