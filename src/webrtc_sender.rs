@@ -48,6 +48,43 @@ fn setup_cleanup_handler(cleanup_path: TempFileCleanup) {
     });
 }
 
+/// Check if an error is a signaling-related error (vs file/transfer error)
+fn is_signaling_error(err: &anyhow::Error) -> bool {
+    let err_msg = err.to_string().to_lowercase();
+    err_msg.contains("relay")
+        || err_msg.contains("nostr")
+        || err_msg.contains("signaling")
+        || err_msg.contains("connection")
+        || err_msg.contains("timeout")
+}
+
+/// Handle signaling error with fallback to manual mode
+async fn handle_signaling_error_with_fallback<F, Fut>(
+    error: anyhow::Error,
+    fallback_fn: F,
+) -> Result<TransferResult>
+where
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = Result<()>>,
+{
+    if is_signaling_error(&error) {
+        eprintln!("\nNostr signaling failed: {}", error);
+        eprintln!("Press Enter to use manual signaling (copy/paste), or Ctrl+C to abort...");
+
+        // Wait for Enter
+        let stdin = tokio::io::stdin();
+        let mut reader = tokio::io::BufReader::new(stdin);
+        let mut line = String::new();
+        reader.read_line(&mut line).await?;
+
+        // Fall back to manual signaling
+        fallback_fn().await.map(|_| TransferResult::Confirmed)
+    } else {
+        // Non-signaling error, propagate it
+        Err(error)
+    }
+}
+
 /// Display transfer code or PIN to the user with instructions
 async fn display_transfer_code(
     use_pin: bool,
@@ -557,6 +594,43 @@ pub async fn send_file_webrtc(
     custom_relays: Option<Vec<String>>,
     use_default_relays: bool,
     use_pin: bool,
+    manual_signaling: bool,
+) -> Result<TransferResult> {
+    // If manual signaling mode, use offline sender directly
+    if manual_signaling {
+        return crate::webrtc_offline_sender::send_file_offline(file_path)
+            .await
+            .map(|_| TransferResult::Confirmed);
+    }
+
+    // Try normal Nostr signaling path
+    match send_file_webrtc_internal(
+        file_path,
+        force_relay,
+        custom_relays,
+        use_default_relays,
+        use_pin,
+    )
+    .await
+    {
+        Ok(result) => Ok(result),
+        Err(e) => {
+            let path = file_path.to_path_buf();
+            handle_signaling_error_with_fallback(e, || async move {
+                crate::webrtc_offline_sender::send_file_offline(&path).await
+            })
+            .await
+        }
+    }
+}
+
+/// Internal function for normal Nostr signaling path
+async fn send_file_webrtc_internal(
+    file_path: &Path,
+    force_relay: bool,
+    custom_relays: Option<Vec<String>>,
+    use_default_relays: bool,
+    use_pin: bool,
 ) -> Result<TransferResult> {
     // Get file metadata
     let metadata = tokio::fs::metadata(file_path)
@@ -596,6 +670,43 @@ pub async fn send_file_webrtc(
 
 /// Send a folder as a tar archive via webrtc transport
 pub async fn send_folder_webrtc(
+    folder_path: &Path,
+    force_relay: bool,
+    custom_relays: Option<Vec<String>>,
+    use_default_relays: bool,
+    use_pin: bool,
+    manual_signaling: bool,
+) -> Result<TransferResult> {
+    // If manual signaling mode, use offline sender directly
+    if manual_signaling {
+        return crate::webrtc_offline_sender::send_folder_offline(folder_path)
+            .await
+            .map(|_| TransferResult::Confirmed);
+    }
+
+    // Try normal Nostr signaling path
+    match send_folder_webrtc_internal(
+        folder_path,
+        force_relay,
+        custom_relays,
+        use_default_relays,
+        use_pin,
+    )
+    .await
+    {
+        Ok(result) => Ok(result),
+        Err(e) => {
+            let path = folder_path.to_path_buf();
+            handle_signaling_error_with_fallback(e, || async move {
+                crate::webrtc_offline_sender::send_folder_offline(&path).await
+            })
+            .await
+        }
+    }
+}
+
+/// Internal function for normal Nostr signaling path (folder)
+async fn send_folder_webrtc_internal(
     folder_path: &Path,
     force_relay: bool,
     custom_relays: Option<Vec<String>>,

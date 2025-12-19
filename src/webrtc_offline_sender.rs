@@ -1,7 +1,7 @@
-//! Offline WebRTC sender - Direct LAN transfer without any servers
+//! Manual signaling WebRTC sender - Direct transfer with copy/paste signaling
 //!
 //! This module implements WebRTC file transfer using copy/paste JSON signaling.
-//! No STUN servers, no Nostr relays, no internet connection required.
+//! Uses STUN servers for NAT traversal but no Nostr relays for signaling.
 
 use anyhow::{Context, Result};
 use bytes::Bytes;
@@ -28,8 +28,8 @@ use crate::webrtc_offline_signaling::{
 /// Timeout for ICE gathering
 const ICE_GATHERING_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// Timeout for WebRTC connection
-const CONNECTION_TIMEOUT: Duration = Duration::from_secs(60);
+/// Timeout for WebRTC connection (3 minutes to allow time for copy/paste signaling)
+const CONNECTION_TIMEOUT: Duration = Duration::from_secs(180);
 
 /// Shared state for temp file cleanup on interrupt
 type TempFileCleanup = Arc<Mutex<Option<PathBuf>>>;
@@ -119,8 +119,8 @@ async fn transfer_offline_internal(
 
     println!("\nPreparing WebRTC offline transfer...");
 
-    // Create WebRTC peer in offline mode (no STUN servers)
-    let mut rtc_peer = WebRtcPeer::new_offline().await?;
+    // Create WebRTC peer with STUN for NAT traversal
+    let mut rtc_peer = WebRtcPeer::new().await?;
 
     // Create data channel
     let data_channel = rtc_peer.create_data_channel("file-transfer").await?;
@@ -141,7 +141,7 @@ async fn transfer_offline_internal(
     println!("Collected {} ICE candidates", candidates.len());
 
     if candidates.is_empty() {
-        anyhow::bail!("No ICE candidates gathered. Make sure you're on the same network as the receiver.");
+        anyhow::bail!("No ICE candidates gathered. Check your network connection.");
     }
 
     // Create and display offer JSON
@@ -206,7 +206,7 @@ async fn transfer_offline_internal(
             let state = rtc_peer_arc.connection_state();
             anyhow::bail!(
                 "Connection timeout. State: {:?}. \
-                 Make sure you're on the same network as the receiver.",
+                 NAT traversal may have failed.",
                 state
             );
         }

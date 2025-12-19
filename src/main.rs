@@ -10,10 +10,8 @@ use wormhole_rs::wormhole;
 use wormhole_rs::{onion_receiver, onion_sender};
 
 #[cfg(feature = "webrtc")]
-use wormhole_rs::{webrtc_receiver, webrtc_sender::{self, TransferResult}};
+use wormhole_rs::{webrtc_receiver, webrtc_sender::{self, TransferResult}, webrtc_offline_receiver};
 
-#[cfg(feature = "webrtc")]
-use wormhole_rs::{webrtc_offline_sender, webrtc_offline_receiver};
 
 use wormhole_rs::{mdns_receiver, mdns_sender};
 
@@ -55,66 +53,33 @@ enum Commands {
         /// Use PIN-based code exchange for Nostr (prompts for PIN input)
         #[arg(long)]
         pin: bool,
+
+        /// Use manual copy/paste signaling instead of Nostr relays (WebRTC)
+        #[cfg(feature = "webrtc")]
+        #[arg(long)]
+        manual_signaling: bool,
     },
 
-    /// Send via local network
+    /// Send via local network (mDNS discovery)
     #[command(name = "send-local")]
     SendLocal {
-        #[command(subcommand)]
-        transport: SendLocalTransport,
+        /// Path to file or folder
+        path: PathBuf,
+
+        /// Send a folder (creates tar archive)
+        #[arg(long)]
+        folder: bool,
     },
 
-    /// Receive via local network
+    /// Receive via local network (mDNS discovery)
     #[command(name = "receive-local")]
     ReceiveLocal {
-        #[command(subcommand)]
-        transport: ReceiveLocalTransport,
-    },
-}
-
-/// Local send transport options
-#[derive(Subcommand)]
-enum SendLocalTransport {
-    /// Send via mDNS discovery (passphrase encryption)
-    Mdns {
-        /// Path to file or folder
-        path: PathBuf,
-
-        /// Send a folder (creates tar archive)
-        #[arg(long)]
-        folder: bool,
-    },
-
-    #[cfg(feature = "webrtc")]
-    /// Send via WebRTC with offline signaling (copy/paste JSON, no servers)
-    Webrtc {
-        /// Path to file or folder
-        path: PathBuf,
-
-        /// Send a folder (creates tar archive)
-        #[arg(long)]
-        folder: bool,
-    },
-}
-
-/// Local receive transport options
-#[derive(Subcommand)]
-enum ReceiveLocalTransport {
-    /// Receive via mDNS discovery
-    Mdns {
-        /// Output directory (default: current directory)
-        #[arg(short, long)]
-        output: Option<PathBuf>,
-    },
-
-    #[cfg(feature = "webrtc")]
-    /// Receive via WebRTC with offline signaling (copy/paste JSON, no servers)
-    Webrtc {
         /// Output directory (default: current directory)
         #[arg(short, long)]
         output: Option<PathBuf>,
     },
 }
+
 
 /// Send transport options
 #[derive(Subcommand)]
@@ -174,6 +139,10 @@ enum SendTransport {
         /// Force relay mode (skip WebRTC, use tmpfiles.org)
         #[arg(long)]
         force_relay: bool,
+
+        /// Use manual copy/paste signaling instead of Nostr relays
+        #[arg(long)]
+        manual_signaling: bool,
     },
 }
 
@@ -254,6 +223,7 @@ async fn main() -> Result<()> {
                 nostr_relay,
                 use_default_relays,
                 force_relay,
+                manual_signaling,
             } => {
                 validate_path(&path, folder)?;
                 let custom_relays = if nostr_relay.is_empty() {
@@ -268,6 +238,7 @@ async fn main() -> Result<()> {
                         custom_relays,
                         use_default_relays,
                         pin,
+                        manual_signaling,
                     )
                     .await?
                 } else {
@@ -277,6 +248,7 @@ async fn main() -> Result<()> {
                         custom_relays,
                         use_default_relays,
                         pin,
+                        manual_signaling,
                     )
                     .await?
                 };
@@ -288,38 +260,59 @@ async fn main() -> Result<()> {
             }
         },
 
-        Commands::SendLocal { transport } => match transport {
-            SendLocalTransport::Mdns { path, folder } => {
-                validate_path(&path, folder)?;
-                if folder {
-                    mdns_sender::send_folder_mdns(&path).await?;
-                } else {
-                    mdns_sender::send_file_mdns(&path).await?;
-                }
-            }
-            #[cfg(feature = "webrtc")]
-            SendLocalTransport::Webrtc { path, folder } => {
-                validate_path(&path, folder)?;
-                if folder {
-                    webrtc_offline_sender::send_folder_offline(&path).await?;
-                } else {
-                    webrtc_offline_sender::send_file_offline(&path).await?;
-                }
-            }
-        },
-
-        Commands::ReceiveLocal { transport } => match transport {
-            ReceiveLocalTransport::Mdns { output } => {
-                validate_output_dir(&output)?;
-                mdns_receiver::receive_mdns(output).await?;
-            }
-            #[cfg(feature = "webrtc")]
-            ReceiveLocalTransport::Webrtc { output } => {
-                validate_output_dir(&output)?;
-                webrtc_offline_receiver::receive_file_offline(output).await?;
+        Commands::SendLocal { path, folder } => {
+            validate_path(&path, folder)?;
+            if folder {
+                mdns_sender::send_folder_mdns(&path).await?;
+            } else {
+                mdns_sender::send_file_mdns(&path).await?;
             }
         }
 
+        Commands::ReceiveLocal { output } => {
+            validate_output_dir(&output)?;
+            mdns_receiver::receive_mdns(output).await?;
+        }
+
+        #[cfg(feature = "webrtc")]
+        Commands::Receive { mut code, output, relay_url, pin, manual_signaling } => {
+            // Validate output directory if provided
+            validate_output_dir(&output)?;
+
+            // Handle manual signaling mode (WebRTC with copy/paste)
+            if manual_signaling {
+                webrtc_offline_receiver::receive_file_offline(output).await?;
+                return Ok(());
+            }
+
+            // Handle PIN mode if requested
+            if pin {
+                let pin_str = wormhole_rs::pin::prompt_pin()?;
+
+                println!("Searching for wormhole token via Nostr...");
+
+                // Fetch encrypted token from Nostr
+                let token_str = wormhole_rs::nostr_pin::fetch_wormhole_code_via_pin(&pin_str).await?;
+                println!("Token found and decrypted!");
+                code = Some(token_str);
+            }
+
+            // Get code from argument or prompt
+            let code = match code {
+                Some(c) => c,
+                None => {
+                    print!("Enter wormhole code: ");
+                    io::stdout().flush()?;
+                    let mut input = String::new();
+                    io::stdin().read_line(&mut input)?;
+                    input.trim().to_string()
+                }
+            };
+
+            receive_with_code(&code, output, relay_url).await?;
+        }
+
+        #[cfg(not(feature = "webrtc"))]
         Commands::Receive { mut code, output, relay_url, pin } => {
             // Validate output directory if provided
             validate_output_dir(&output)?;
