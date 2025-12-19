@@ -132,7 +132,7 @@ enum SendTransport {
         #[arg(long = "nostr-relay")]
         nostr_relay: Vec<String>,
 
-        /// Use default hardcoded Nostr relays instead of fetching from nostr.watch
+        /// Use default hardcoded Nostr relays instead of running relay discovery
         #[arg(long)]
         use_default_relays: bool,
 

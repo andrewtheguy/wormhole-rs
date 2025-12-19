@@ -174,7 +174,7 @@ pub async fn receive_mdns(output_dir: Option<PathBuf>) -> Result<()> {
 
     if services.is_empty() {
         println!("\nNo wormhole senders found on the network.");
-        println!("Make sure the sender is running: wormhole-rs send mdns <file>");
+        println!("Make sure the sender is running: wormhole-rs send-local <path>");
         return Ok(());
     }
 
