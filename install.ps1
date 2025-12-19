@@ -3,7 +3,7 @@
 # Wormhole-rs installer for Windows
 # Downloads latest binary from: https://github.com/andrewtheguy/wormhole-rs/releases
 #
-# Usage: .\install.ps1 [RELEASE_TAG] [-Admin]
+# Usage: .\install.ps1 [RELEASE_TAG] [-Admin] [-PreRelease]
 # Or set $env:RELEASE_TAG environment variable
 
 param(
@@ -12,6 +12,9 @@ param(
     
     [Parameter()]
     [switch]$Admin,
+    
+    [Parameter()]
+    [switch]$PreRelease,
     
     [Parameter()]
     [switch]$DownloadOnly
@@ -38,30 +41,48 @@ function Print-Error {
     Write-Host "[ERROR] $Message" -ForegroundColor Red
 }
 
-# Fetch the latest release tag matching yyyymmddhhmmss pattern from GitHub
-function Get-LatestRelease {
-    $apiUrl = "https://api.github.com/repos/$REPO_OWNER/$REPO_NAME/tags"
+# Fetch the latest stable release tag (non-prerelease)
+function Get-LatestReleaseTag {
+    $apiUrl = "https://api.github.com/repos/$REPO_OWNER/$REPO_NAME/releases/latest"
     
     try {
-        $tags = Invoke-RestMethod -Uri $apiUrl -Method Get
+        $release = Invoke-RestMethod -Uri $apiUrl -Method Get
     }
     catch {
-        Print-Error "Failed to fetch tags from GitHub: $_"
+        Print-Error "Failed to fetch latest release from GitHub: $_"
         exit 1
     }
 
-    # Extract tag names matching yyyymmddhhmmss pattern (14 digits) and get the latest one
-    # Tags are returned in reverse chronological order, so first match is latest
-    $latestTag = $tags | 
-        Where-Object { $_.name -match '^\d{14}$' } | 
-        Select-Object -First 1 -ExpandProperty name
-
-    if (-not $latestTag) {
-        Print-Error "Could not find any release tags matching yyyymmddhhmmss pattern"
+    if (-not $release.tag_name) {
+        Print-Error "Could not find a latest release on GitHub"
         exit 1
     }
 
-    return $latestTag
+    return $release.tag_name
+}
+
+# Fetch the latest prerelease tag
+function Get-LatestPrereleaseTag {
+    $apiUrl = "https://api.github.com/repos/$REPO_OWNER/$REPO_NAME/releases?per_page=30"
+
+    try {
+        $releases = Invoke-RestMethod -Uri $apiUrl -Method Get
+    }
+    catch {
+        Print-Error "Failed to fetch releases from GitHub: $_"
+        exit 1
+    }
+
+    $latestPrerelease = $releases |
+        Where-Object { $_.prerelease -eq $true } |
+        Select-Object -First 1 -ExpandProperty tag_name
+
+    if (-not $latestPrerelease) {
+        Print-Error "Could not find any prerelease on GitHub"
+        exit 1
+    }
+
+    return $latestPrerelease
 }
 
 # Fetch full release info (including asset checksums) from GitHub API
@@ -325,6 +346,7 @@ Download and install wormhole-rs binary
 
 Options:
   -DownloadOnly  Download binary to current directory without installing
+    -PreRelease    Use latest prerelease instead of latest stable release
   -Admin         Allow installation with administrator privileges (not recommended)
   -h, --help     Show this help message
 
@@ -337,6 +359,7 @@ Environment variables:
 Examples:
   .\install.ps1                              # Install latest release
   .\install.ps1 20251210172710               # Install specific release
+    .\install.ps1 -PreRelease                  # Install latest prerelease
   .\install.ps1 -DownloadOnly                # Download latest to current directory
   .\install.ps1 -DownloadOnly 20251210172710 # Download specific release
   .\install.ps1 -Admin                       # Allow admin installation (not recommended)
@@ -447,8 +470,14 @@ function Main {
         $tag = $env:RELEASE_TAG
     }
     if (-not $tag) {
-        Print-Info "Fetching latest release tag from GitHub..."
-        $tag = Get-LatestRelease
+        if ($PreRelease) {
+            Print-Info "Fetching latest prerelease tag from GitHub..."
+            $tag = Get-LatestPrereleaseTag
+        }
+        else {
+            Print-Info "Fetching latest release tag from GitHub..."
+            $tag = Get-LatestReleaseTag
+        }
     }
 
     if (-not $DownloadOnly) {

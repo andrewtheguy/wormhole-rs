@@ -3,7 +3,7 @@
 # Wormhole-rs installer for Linux and Mac
 # Downloads latest binary from: https://github.com/andrewtheguy/wormhole-rs/releases
 #
-# Usage: ./install.sh [RELEASE_TAG]
+# Usage: ./install.sh [RELEASE_TAG] [--prerelease]
 # Or set RELEASE_TAG environment variable
 
 set -e
@@ -11,8 +11,9 @@ set -e
 REPO_OWNER="andrewtheguy"
 REPO_NAME="wormhole-rs"
 DOWNLOAD_ONLY=false
+PREFER_PRERELEASE=false
 
-# Color output (defined early for use in get_latest_release)
+# Color output (defined early for use in release tag helpers)
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -31,31 +32,58 @@ print_error() {
     echo -e "${RED}[ERROR]${NC} $1"
 }
 
-# Fetch the latest release tag matching yyyymmddhhmmss pattern from GitHub
-get_latest_release() {
-    local api_url="https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/tags"
-    local tags_json
+# Fetch the latest stable release tag (non-prerelease)
+get_latest_release_tag() {
+    local api_url="https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/latest"
+    local release_json
 
     if command -v curl >/dev/null 2>&1; then
-        tags_json=$(curl -s "$api_url")
+        release_json=$(curl -s "$api_url")
     elif command -v wget >/dev/null 2>&1; then
-        tags_json=$(wget -qO- "$api_url")
+        release_json=$(wget -qO- "$api_url")
     else
         print_error "Neither curl nor wget is available. Please install one of them."
         exit 1
     fi
 
-    # Extract tag names matching yyyymmddhhmmss pattern (14 digits) and get the latest one
-    # Tags are returned in reverse chronological order, so first match is latest
-    local latest_tag
-    latest_tag=$(echo "$tags_json" | grep -o '"name": *"[0-9]\{14\}"' | head -1 | grep -o '[0-9]\{14\}')
+    local tag
+    tag=$(echo "$release_json" | grep -m1 '"tag_name"' | sed -E 's/.*"tag_name": *"([^"]+)".*/\1/')
 
-    if [ -z "$latest_tag" ]; then
-        print_error "Could not find any release tags matching yyyymmddhhmmss pattern"
+    if [ -z "$tag" ]; then
+        print_error "Could not find a latest release on GitHub"
         exit 1
     fi
 
-    echo "$latest_tag"
+    echo "$tag"
+}
+
+# Fetch the latest prerelease tag
+get_latest_prerelease_tag() {
+    local api_url="https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases?per_page=30"
+    local releases_json
+
+    if command -v curl >/dev/null 2>&1; then
+        releases_json=$(curl -s "$api_url")
+    elif command -v wget >/dev/null 2>&1; then
+        releases_json=$(wget -qO- "$api_url")
+    else
+        print_error "Neither curl nor wget is available. Please install one of them."
+        exit 1
+    fi
+
+    # Capture the first prerelease entry and return its tag_name
+    local tag
+    tag=$(echo "$releases_json" | awk '
+        /"tag_name"/ {gsub(/[,\"]/, "", $2); tag=$2}
+        /"prerelease": *true/ {if(tag!=""){print tag; exit}}
+    ')
+
+    if [ -z "$tag" ]; then
+        print_error "Could not find any prerelease on GitHub"
+        exit 1
+    fi
+
+    echo "$tag"
 }
 
 # Fetch full release info (including asset checksums) from GitHub API
@@ -132,6 +160,10 @@ parse_args() {
                 DOWNLOAD_ONLY=true
                 shift
                 ;;
+            --prerelease)
+                PREFER_PRERELEASE=true
+                shift
+                ;;
             --help|-h)
                 show_usage
                 exit 0
@@ -149,8 +181,13 @@ parse_args() {
         if [ -n "${RELEASE_TAG_ENV:-}" ]; then
             RELEASE_TAG="$RELEASE_TAG_ENV"
         else
-            print_info "Fetching latest release tag from GitHub..."
-            RELEASE_TAG=$(get_latest_release)
+            if [ "$PREFER_PRERELEASE" = true ]; then
+                print_info "Fetching latest prerelease tag from GitHub..."
+                RELEASE_TAG=$(get_latest_prerelease_tag)
+            else
+                print_info "Fetching latest release tag from GitHub..."
+                RELEASE_TAG=$(get_latest_release_tag)
+            fi
         fi
     fi
 }
@@ -329,6 +366,7 @@ show_usage() {
     echo ""
     echo "Options:"
     echo "  --download-only  Download binary to current directory without installing"
+    echo "  --prerelease     Use latest prerelease instead of latest stable release"
     echo "  -h, --help       Show this help message"
     echo ""
     echo "Arguments:"
@@ -337,6 +375,7 @@ show_usage() {
     echo "Examples:"
     echo "  $0                              # Install latest release"
     echo "  $0 20251210172710               # Install specific release"
+    echo "  $0 --prerelease                 # Install latest prerelease"
     echo "  $0 --download-only              # Download latest to current directory"
     echo "  $0 --download-only 20251210172710  # Download specific release"
     echo ""
