@@ -89,20 +89,33 @@ This guide describes common scenarios where `wormhole-rs` shines and which mode 
 
 ---
 
-## 7. Planned / Future Scenarios (Roadmap)
-*These features are currently in development or planned. See [ROADMAP.md](ROADMAP.md) for details.*
+## 7. No Nostr Relays Available (Manual Signaling)
+**Scenario**: You want to use WebRTC for P2P transfer but cannot access Nostr relays (blocked network, air-gapped with internet for STUN only, or privacy concerns about relay metadata).
 
-### A. Fully Air-gapped P2P Discovery
-**Scenario**: You want to use P2P discovery in a completely offline or private network (like a high-security corporate Intranet) without even reaching out to public DNS servers.
-- **Solution**: **Custom Iroh DNS Server**
-- **Benefit**: Allows `wormhole-rs` to discover peers globally within a private network using a self-hosted DNS/Discovery server.
+**Solution**: **Manual Signaling Mode** (`--manual-signaling`)
+- **Why**: Bypasses Nostr relays entirely. You manually copy/paste signaling data between sender and receiver via any out-of-band channel (chat, email, paper).
+- **Features**:
+  - Step-by-step instructions guide both parties
+  - CRC32 checksum validates copy/paste integrity
+  - Magic trailer enables automatic end-of-input detection
+  - 30-minute TTL prevents stale session attacks
+- **Command**:
+  ```bash
+  # Sender
+  wormhole-rs send webrtc --manual-signaling /path/to/file
 
-### B. Download without CLI (Tor Browser)
-**Scenario**: The receiver is on a restricted machine where they cannot install the CLI, but they have the Tor Browser.
-- **Solution**: **Browser-Accessible Tor Downloads**
-- **Benefit**: The sender creates an onion service that serves the file over HTTP. The receiver simply pastes the `.onion` link into Tor Browser to download.
+  # Receiver
+  wormhole-rs receive --manual-signaling
+  ```
+- **Experience**:
+  1. Sender generates offer code (base64) and displays it with clear START/END markers
+  2. Sender shares the code via any channel (Signal, email, read aloud, etc.)
+  3. Receiver pastes the code and generates a response code
+  4. Receiver shares the response back to sender
+  5. WebRTC connection establishes directly between peers
 
-### C. VPN / Complex Subnet Transfers
-**Scenario**: You are connected via WireGuard or Tailscale, but mDNS auto-discovery doesn't work across the VPN interface.
-- **Solution**: **Manual IP/Port Entry** (Local Mode)
-- **Benefit**: Sender shares `IP:PORT` (e.g., `10.0.0.2:4000`) manually. Receiver connects directly, bypassing discovery issues.
+---
+
+## 8. Planned / Future Scenarios
+
+See [ROADMAP.md](ROADMAP.md) for planned features and development priorities.
