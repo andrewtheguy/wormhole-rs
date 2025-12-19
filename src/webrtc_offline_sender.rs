@@ -8,6 +8,7 @@ use bytes::Bytes;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::fs::File;
 use tokio::io::AsyncReadExt;
 use tokio::sync::{mpsc, Mutex};
@@ -145,6 +146,10 @@ async fn transfer_offline_internal(
     }
 
     // Create and display offer JSON
+    let created_at = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
     let offline_offer = OfflineOffer {
         sdp: offer.sdp,
         ice_candidates: ice_candidates_to_payloads(candidates),
@@ -157,6 +162,7 @@ async fn transfer_offline_internal(
             },
             encryption_key: hex::encode(key),
         },
+        created_at,
     };
 
     display_offer_json(&offline_offer)?;

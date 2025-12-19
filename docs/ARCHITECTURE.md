@@ -215,4 +215,21 @@ When `-pin` is used, the wormhole code itself is encrypted and stored on Nostr.
 - **Anonymity**: Sender/Receiver IPs hidden.
 - **Encryption**: End-to-end via Tor.
 
+### TTL (Time-To-Live) Validation
+
+All wormhole codes and signaling offers include a creation timestamp and are validated against a TTL to prevent replay attacks and stale session establishment.
+
+**Implementation:**
+- **Token Version**: v3+ tokens include a `created_at` Unix timestamp
+- **TTL Duration**: 30 minutes (`CODE_TTL_SECS = 1800`)
+- **Clock Skew**: Allows up to 60 seconds into the future to handle minor clock drift
+
+**Validation Points:**
+1. **Wormhole Codes** (iroh/tor/webrtc via Nostr): Validated in `parse_code()` before connection
+2. **Manual Signaling Offers**: Validated in `read_offer_json()` before WebRTC handshake
+
+**Error Messages:**
+- Expired codes: "Token expired: code is X minutes old (max 30 minutes). Please request a new code from the sender."
+- Future timestamps: "Invalid token: created_at is in the future. Check system clock."
+
 

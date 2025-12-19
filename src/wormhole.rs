@@ -2,9 +2,13 @@ use anyhow::{Context, Result};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 #[cfg(feature = "iroh")]
 use iroh::{EndpointAddr, RelayUrl};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Current token format version
-pub const CURRENT_VERSION: u8 = 2;
+pub const CURRENT_VERSION: u8 = 3;
+
+/// TTL for wormhole codes in seconds (30 minutes)
+pub const CODE_TTL_SECS: u64 = 30 * 60;
 
 /// Protocol identifier for iroh transport
 pub const PROTOCOL_IROH: &str = "iroh";
@@ -64,6 +68,8 @@ pub struct WormholeToken {
     pub version: u8,
     /// Protocol identifier (e.g., "iroh", "tor", "webrtc")
     pub protocol: String,
+    /// Unix timestamp when this token was created (for TTL validation)
+    pub created_at: u64,
     /// Whether extra AES-256-GCM encryption layer is used
     pub extra_encrypt: bool,
     /// AES-256-GCM key as base64 string (only present if extra_encrypt is true)
@@ -97,6 +103,14 @@ pub struct WormholeToken {
     pub webrtc_filename: Option<String>,
 }
 
+/// Get current Unix timestamp in seconds
+fn current_timestamp() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
 /// Generate a wormhole code from endpoint address
 /// Format: base64url(json(WormholeToken))
 ///
@@ -120,6 +134,7 @@ pub fn generate_code(
     let token = WormholeToken {
         version: CURRENT_VERSION,
         protocol: PROTOCOL_IROH.to_string(),
+        created_at: current_timestamp(),
         extra_encrypt,
         key: key.map(|k| URL_SAFE_NO_PAD.encode(k)),
         addr: Some(minimal_addr),
@@ -156,6 +171,7 @@ pub fn generate_tor_code(
     let token = WormholeToken {
         version: CURRENT_VERSION,
         protocol: PROTOCOL_TOR.to_string(),
+        created_at: current_timestamp(),
         extra_encrypt,
         key: key.map(|k| URL_SAFE_NO_PAD.encode(k)),
         addr: None,
@@ -194,6 +210,7 @@ pub fn generate_webrtc_code(
     let token = WormholeToken {
         version: CURRENT_VERSION,
         protocol: PROTOCOL_WEBRTC.to_string(),
+        created_at: current_timestamp(),
         extra_encrypt: true, // Always true for webrtc
         key: Some(URL_SAFE_NO_PAD.encode(key)),
         addr: None,
@@ -264,28 +281,48 @@ pub fn parse_code(code: &str) -> Result<WormholeToken> {
         "Invalid wormhole code: failed to parse token. Make sure the code is correct.",
     )?;
 
-    // Validate version (support both v1 and v2)
-    if token.version != 1 && token.version != 2 {
+    // Validate version
+    if token.version != CURRENT_VERSION {
         anyhow::bail!(
-            "Unsupported token version {}. This receiver supports versions 1 and 2.",
-            token.version
+            "Unsupported token version {}. This receiver requires version {}.",
+            token.version,
+            CURRENT_VERSION
         );
     }
 
-    // Validate protocol for v2 tokens
-    if token.version == 2 {
+    // Validate protocol for v2+ tokens
+    if token.version >= 2 {
         if token.protocol != PROTOCOL_IROH
             && token.protocol != PROTOCOL_TOR
             && token.protocol != PROTOCOL_WEBRTC
         {
             anyhow::bail!(
-                "Invalid protocol '{}' in v2 token. Supported protocols: '{}', '{}', '{}'",
+                "Invalid protocol '{}'. Supported protocols: '{}', '{}', '{}'",
                 token.protocol,
                 PROTOCOL_IROH,
                 PROTOCOL_TOR,
                 PROTOCOL_WEBRTC
             );
         }
+    }
+
+    // Validate TTL
+    let now = current_timestamp();
+    if token.created_at > now + 60 {
+        // Allow 60s clock skew into future
+        anyhow::bail!(
+            "Invalid token: created_at is in the future. Check system clock."
+        );
+    }
+    let age = now.saturating_sub(token.created_at);
+    if age > CODE_TTL_SECS {
+        let minutes = age / 60;
+        anyhow::bail!(
+            "Token expired: code is {} minutes old (max {} minutes). \
+             Please request a new code from the sender.",
+            minutes,
+            CODE_TTL_SECS / 60
+        );
     }
 
     // Validate key consistency
@@ -311,34 +348,34 @@ pub fn parse_code(code: &str) -> Result<WormholeToken> {
         anyhow::bail!("Invalid v1 token: missing endpoint address");
     }
 
-    // For version 2 with iroh protocol, ensure addr is present
-    if token.version == 2 && token.protocol == PROTOCOL_IROH && token.addr.is_none() {
-        anyhow::bail!("Invalid v2 iroh token: missing endpoint address");
+    // For v2+ with iroh protocol, ensure addr is present
+    if token.version >= 2 && token.protocol == PROTOCOL_IROH && token.addr.is_none() {
+        anyhow::bail!("Invalid iroh token: missing endpoint address");
     }
 
-    // For version 2 with tor protocol, ensure onion_address is present
-    if token.version == 2 && token.protocol == PROTOCOL_TOR {
+    // For v2+ with tor protocol, ensure onion_address is present
+    if token.version >= 2 && token.protocol == PROTOCOL_TOR {
         if token.onion_address.is_none() {
-            anyhow::bail!("Invalid v2 tor token: missing onion address");
+            anyhow::bail!("Invalid tor token: missing onion address");
         }
     }
 
-    // For version 2 with webrtc protocol, ensure webrtc fields and key are present
-    if token.version == 2 && token.protocol == PROTOCOL_WEBRTC {
+    // For v2+ with webrtc protocol, ensure webrtc fields and key are present
+    if token.version >= 2 && token.protocol == PROTOCOL_WEBRTC {
         if token.webrtc_sender_pubkey.is_none() {
-            anyhow::bail!("Invalid v2 webrtc token: missing sender pubkey");
+            anyhow::bail!("Invalid webrtc token: missing sender pubkey");
         }
         if token.webrtc_transfer_id.is_none() {
-            anyhow::bail!("Invalid v2 webrtc token: missing transfer ID");
+            anyhow::bail!("Invalid webrtc token: missing transfer ID");
         }
         if token.key.is_none() {
-            anyhow::bail!("Invalid v2 webrtc token: encryption key required for webrtc transfers");
+            anyhow::bail!("Invalid webrtc token: encryption key required for webrtc transfers");
         }
         if token.webrtc_filename.is_none() {
-            anyhow::bail!("Invalid v2 webrtc token: missing filename");
+            anyhow::bail!("Invalid webrtc token: missing filename");
         }
         if token.webrtc_transfer_type.is_none() {
-            anyhow::bail!("Invalid v2 webrtc token: missing transfer type");
+            anyhow::bail!("Invalid webrtc token: missing transfer type");
         }
     }
 
