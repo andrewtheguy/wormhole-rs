@@ -99,7 +99,9 @@ This guide describes common scenarios where `wormhole-rs` shines and which mode 
 
 **Solution**: **Iroh Mode + Custom Relays**
 - **Why**: Iroh allows you to run your own lightweight relay (DERP). By pointing `wormhole-rs` to your own infrastructure, you achieve a true peer-to-peer connection where no third-party relays are involved.
-- **Current Status**: Custom relays are supported today via `--relay-url`, but peer discovery still uses iroh's public DNS/pkarr services. Full zero-third-party operation will require the planned custom DNS server support (see ROADMAP: Support Custom Iroh DNS Server).
+- **Current Status**: Custom relays are supported today via `--relay-url`, but peer discovery still uses iroh's public DNS/pkarr services. Until custom DNS support lands (see ROADMAP: Support Custom Iroh DNS Server), the fully zero-third-party options are:
+  - **WebRTC Manual Signaling** (`--manual-signaling`), exchanging signaling blobs out-of-band; or
+  - **Local Mode** (`send-local` / `receive-local`) when both peers share a LAN and can rely on mDNS.
 - **Resources**: Implementation for the relay server allows for independence and is available in the [Iroh repository](https://github.com/n0-computer/iroh).
 - **Command**:
   ```bash
