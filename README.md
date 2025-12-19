@@ -144,6 +144,17 @@ wormhole-rs send --pin webrtc /path/to/file
 wormhole-rs send --manual-signaling webrtc /path/to/file
 ```
 
+##### Custom Nostr Relays
+- By default, WebRTC mode discovers the best Nostr relays automatically via NIP-65/NIP-66.
+- Use `--nostr-relay` to specify custom Nostr relays for signaling:
+    ```bash
+    wormhole-rs send webrtc --nostr-relay wss://my-relay.com /path/to/file
+    ```
+- Use `--use-default-relays` to skip discovery and use hardcoded default relays:
+    ```bash
+    wormhole-rs send webrtc --use-default-relays /path/to/file
+    ```
+
 #### 3. Tor Mode
 *Anonymous transfers via Tor hidden services.*
 > Requires building with `--features onion`.

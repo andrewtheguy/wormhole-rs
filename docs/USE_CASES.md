@@ -97,7 +97,7 @@ This guide describes common scenarios where `wormhole-rs` shines and which mode 
 ## 6. Self-Hosted Infrastructure (Zero Third-Party Dependency)
 **Scenario**: You require complete control over the network infrastructure and cannot rely on public relays or discovery servers due to policy or privacy concerns.
 
-**Solution**: **Iroh Mode + Custom Relays**
+**Solution A**: **Iroh Mode + Custom DERP Relays**
 - **Why**: Iroh allows you to run your own lightweight relay (DERP). By pointing `wormhole-rs` to your own infrastructure, you achieve a true peer-to-peer connection where no third-party relays are involved.
 - **Current Status**: Custom relays are supported today via `--relay-url`, but peer discovery still uses iroh's public DNS/pkarr services. The receiver rejects relay-only connections when using the default public relay to avoid rate-limited paths. Until custom DNS support lands (see ROADMAP: Support Custom Iroh DNS Server), the fully zero-third-party options are:
   - **WebRTC Manual Signaling** (`--manual-signaling`), exchanging signaling blobs out-of-band; or
@@ -105,7 +105,14 @@ This guide describes common scenarios where `wormhole-rs` shines and which mode 
 - **Resources**: Implementation for the relay server allows for independence and is available in the [Iroh repository](https://github.com/n0-computer/iroh).
 - **Command**:
   ```bash
-  wormhole-rs send iroh --relay-url http://my-private-relay.com:3340 /path/to/file
+  wormhole-rs send iroh --relay-url https://my-private-relay.com /path/to/file
+  ```
+
+**Solution B**: **WebRTC Mode + Custom Nostr Relays**
+- **Why**: Run your own Nostr relay for signaling, keeping all metadata private.
+- **Command**:
+  ```bash
+  wormhole-rs send webrtc --nostr-relay wss://my-nostr-relay.com /path/to/file
   ```
 
 ---

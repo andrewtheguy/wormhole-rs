@@ -155,13 +155,19 @@ sequenceDiagram
 
 ### iroh Mode (`wormhole-rs send iroh`)
 - **Transport**: QUIC / TLS 1.3
-- **Discovery**: iroh's global discovery + mDNS
-- **Relay**: iroh managed relays (derp) - automatically used if direct P2P connection fails
+- **Discovery**: iroh's global discovery (DNS/pkarr) + mDNS for local network
+- **Relay**: iroh DERP relays - automatically used if direct P2P connection fails
+  - Default: Uses iroh's public relay (rate-limited, not for sustained data)
+  - Custom: Use `--relay-url` for self-hosted DERP relays (supports multiple for failover)
+  - Relay-only connections with the default public relay are rejected on receiver side
 - **Encryption**: Always authenticated/encrypted by QUIC. Optional extra AES layer.
 
 ### WebRTC Mode (`wormhole-rs send webrtc`)
 - **Transport**: WebRTC Data Channels (SCTP/DTLS)
 - **Signaling**: Nostr Relays (JSON payloads) by default; copy/paste manual signaling available with `--manual-signaling`
+  - Default: Auto-discovers best relays via NIP-65/NIP-66, probes for capability and latency
+  - Custom: Use `--nostr-relay wss://...` for specific Nostr relays
+  - Fallback: Use `--use-default-relays` to skip discovery and use hardcoded defaults
 - **NAT traversal**: STUN (no built-in TURN); if direct P2P fails, use Tor mode for relay
 - **Encryption**: Mandatory AES-256-GCM for all application data (on top of DTLS).
 
