@@ -11,6 +11,19 @@ wormhole-rs supports two main categories of transport:
    - **WebRTC Mode**: For when direct UDP is blocked (uses WebRTC with Nostr signaling + relay fallback)
    - **Tor Mode**: For anonymity (uses `arti` to create hidden services)
 2. **Local Transfers** (using `wormhole-rs send-local`):
+   - **mDNS Mode**: LAN-only transfers using mDNS discovery + TCP
+
+## Transfer Flows
+
+### 1. Internet Transfers (Wormhole Code)
+
+#### WebRTC Mode
+
+**1. Signaling (WebRTC + Nostr)**
+
+```mermaid
+sequenceDiagram
+    participant Sender
     participant Relays as Nostr Relays
     participant Receiver
 
@@ -19,12 +32,12 @@ wormhole-rs supports two main categories of transport:
     Sender->>Sender: 1. Generate 12-char PIN
     Sender->>Sender: 2. Encrypt Wormhole Code with PIN
     Sender->>Relays: 3. Publish PIN Exchange Event (kind 24243)
-    
+
     Receiver->>Receiver: 4. Enter PIN
     Receiver->>Relays: 5. Query for PIN hash
     Relays->>Receiver: 6. Return Encrypted Code
     Receiver->>Receiver: 7. Decrypt Wormhole Code
-    
+
     Note over Receiver: Continues with Standard Flow below...
 
     Sender->>Sender: 1. Gen ephemeral keys (Nostr + AES)
@@ -36,7 +49,7 @@ wormhole-rs supports two main categories of transport:
     Receiver->>Relays: 4. Connect & Send "Ready" (kind 24242)
     Sender->>Relays: 5. Send WebRTC Offer (SDP)
     Receiver->>Relays: 6. Send WebRTC Answer (SDP)
-    
+
     par ICE Candidate Exchange
         Sender->>Relays: Send ICE Candidates
         Receiver->>Relays: Send ICE Candidates
