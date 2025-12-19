@@ -26,14 +26,114 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Send a file or folder
+    #[cfg(feature = "webrtc")]
+    /// Send a file or folder via WebRTC (recommended, alias for send-webrtc)
     Send {
-        #[command(subcommand)]
-        transport: SendTransport,
+        /// Path to file or folder
+        path: PathBuf,
+
+        /// Send a folder (creates tar archive)
+        #[arg(long)]
+        folder: bool,
 
         /// Use PIN-based code exchange for Nostr (prompts for PIN input)
         #[arg(long)]
         pin: bool,
+
+        /// Custom Nostr relay URLs for signaling/fallback
+        #[arg(long = "nostr-relay")]
+        nostr_relay: Vec<String>,
+
+        /// Use default hardcoded Nostr relays instead of running relay discovery
+        #[arg(long)]
+        use_default_relays: bool,
+
+        /// Use manual copy/paste signaling instead of Nostr relays
+        #[arg(long)]
+        manual_signaling: bool,
+    },
+
+    #[cfg(feature = "webrtc")]
+    /// Send a file or folder via WebRTC with Nostr signaling (recommended)
+    #[command(name = "send-webrtc")]
+    SendWebrtc {
+        /// Path to file or folder
+        path: PathBuf,
+
+        /// Send a folder (creates tar archive)
+        #[arg(long)]
+        folder: bool,
+
+        /// Use PIN-based code exchange for Nostr (prompts for PIN input)
+        #[arg(long)]
+        pin: bool,
+
+        /// Custom Nostr relay URLs for signaling/fallback
+        #[arg(long = "nostr-relay")]
+        nostr_relay: Vec<String>,
+
+        /// Use default hardcoded Nostr relays instead of running relay discovery
+        #[arg(long)]
+        use_default_relays: bool,
+
+        /// Use manual copy/paste signaling instead of Nostr relays
+        #[arg(long)]
+        manual_signaling: bool,
+    },
+
+    #[cfg(feature = "iroh")]
+    /// Send a file or folder via iroh peer-to-peer network
+    #[command(name = "send-iroh")]
+    SendIroh {
+        /// Path to file or folder
+        path: PathBuf,
+
+        /// Send a folder (creates tar archive)
+        #[arg(long)]
+        folder: bool,
+
+        /// Use PIN-based code exchange for Nostr (prompts for PIN input)
+        #[arg(long)]
+        pin: bool,
+
+        /// Add extra AES-256-GCM encryption layer
+        #[arg(long)]
+        extra_encrypt: bool,
+
+        /// Custom relay server URLs (for iroh transport)
+        #[arg(long)]
+        relay_url: Vec<String>,
+    },
+
+    #[cfg(feature = "onion")]
+    /// Send a file or folder via Tor hidden service (anonymous)
+    #[command(name = "send-tor")]
+    SendTor {
+        /// Path to file or folder
+        path: PathBuf,
+
+        /// Send a folder (creates tar archive)
+        #[arg(long)]
+        folder: bool,
+
+        /// Use PIN-based code exchange for Nostr (prompts for PIN input)
+        #[arg(long)]
+        pin: bool,
+
+        /// Add extra AES-256-GCM encryption layer
+        #[arg(long)]
+        extra_encrypt: bool,
+    },
+
+    /// Send via local network (mDNS discovery)
+    #[command(name = "send-local")]
+    SendLocal {
+        /// Path to file or folder
+        path: PathBuf,
+
+        /// Send a folder (creates tar archive)
+        #[arg(long)]
+        folder: bool,
     },
 
     /// Receive a file or folder using a code
@@ -60,17 +160,6 @@ enum Commands {
         manual_signaling: bool,
     },
 
-    /// Send via local network (mDNS discovery)
-    #[command(name = "send-local")]
-    SendLocal {
-        /// Path to file or folder
-        path: PathBuf,
-
-        /// Send a folder (creates tar archive)
-        #[arg(long)]
-        folder: bool,
-    },
-
     /// Receive via local network (mDNS discovery)
     #[command(name = "receive-local")]
     ReceiveLocal {
@@ -79,69 +168,6 @@ enum Commands {
         output: Option<PathBuf>,
     },
 }
-
-
-/// Send transport options
-#[derive(Subcommand)]
-enum SendTransport {
-    #[cfg(feature = "iroh")]
-    /// Send via iroh peer-to-peer network
-    Iroh {
-        /// Path to file or folder
-        path: PathBuf,
-
-        /// Send a folder (creates tar archive)
-        #[arg(long)]
-        folder: bool,
-        /// Add extra AES-256-GCM encryption layer
-        #[arg(long)]
-        extra_encrypt: bool,
-
-        /// Custom relay server URLs (for iroh transport)
-        #[arg(long)]
-        relay_url: Vec<String>,
-    },
-
-    #[cfg(feature = "onion")]
-    /// Send via Tor hidden service (anonymous)
-    Tor {
-        /// Path to file or folder
-        path: PathBuf,
-
-        /// Send a folder (creates tar archive)
-        #[arg(long)]
-        folder: bool,
-
-        /// Add extra AES-256-GCM encryption layer
-        #[arg(long)]
-        extra_encrypt: bool,
-    },
-
-    #[cfg(feature = "webrtc")]
-    /// Send via WebRTC with Nostr signaling (recommended)
-    #[command(name = "webrtc")]
-    WebRtc {
-        /// Path to file or folder
-        path: PathBuf,
-
-        /// Send a folder (creates tar archive)
-        #[arg(long)]
-        folder: bool,
-
-        /// Custom Nostr relay URLs for signaling/fallback
-        #[arg(long = "nostr-relay")]
-        nostr_relay: Vec<String>,
-
-        /// Use default hardcoded Nostr relays instead of running relay discovery
-        #[arg(long)]
-        use_default_relays: bool,
-
-        /// Use manual copy/paste signaling instead of Nostr relays
-        #[arg(long)]
-        manual_signaling: bool,
-    },
-}
-
 
 
 /// Validate path exists and matches folder flag
@@ -177,76 +203,103 @@ fn validate_output_dir(output: &Option<PathBuf>) -> Result<()> {
     Ok(())
 }
 
+/// Helper to send via WebRTC
+#[cfg(feature = "webrtc")]
+async fn do_send_webrtc(
+    path: PathBuf,
+    folder: bool,
+    pin: bool,
+    nostr_relay: Vec<String>,
+    use_default_relays: bool,
+    manual_signaling: bool,
+) -> Result<()> {
+    validate_path(&path, folder)?;
+    let custom_relays = if nostr_relay.is_empty() {
+        None
+    } else {
+        Some(nostr_relay)
+    };
+    if folder {
+        webrtc_sender::send_folder_webrtc(
+            &path,
+            custom_relays,
+            use_default_relays,
+            pin,
+            manual_signaling,
+        )
+        .await?;
+    } else {
+        webrtc_sender::send_file_webrtc(
+            &path,
+            custom_relays,
+            use_default_relays,
+            pin,
+            manual_signaling,
+        )
+        .await?;
+    }
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Send { transport, pin } => match transport {
-            #[cfg(feature = "iroh")]
-            SendTransport::Iroh {
-                path,
-                folder,
-                extra_encrypt,
-                relay_url,
-            } => {
-                validate_path(&path, folder)?;
-                if folder {
-                    iroh_sender::send_folder(&path, extra_encrypt, relay_url, pin).await?;
-                } else {
-                    iroh_sender::send_file(&path, extra_encrypt, relay_url, pin).await?;
-                }
-            }
+        #[cfg(feature = "webrtc")]
+        Commands::Send {
+            path,
+            folder,
+            pin,
+            nostr_relay,
+            use_default_relays,
+            manual_signaling,
+        } => {
+            do_send_webrtc(path, folder, pin, nostr_relay, use_default_relays, manual_signaling).await?;
+        }
 
-            #[cfg(feature = "onion")]
-            SendTransport::Tor {
-                path,
-                folder,
-                extra_encrypt,
-            } => {
-                validate_path(&path, folder)?;
-                if folder {
-                    onion_sender::send_folder_tor(&path, extra_encrypt, pin).await?;
-                } else {
-                    onion_sender::send_file_tor(&path, extra_encrypt, pin).await?;
-                }
-            }
+        #[cfg(feature = "webrtc")]
+        Commands::SendWebrtc {
+            path,
+            folder,
+            pin,
+            nostr_relay,
+            use_default_relays,
+            manual_signaling,
+        } => {
+            do_send_webrtc(path, folder, pin, nostr_relay, use_default_relays, manual_signaling).await?;
+        }
 
-            #[cfg(feature = "webrtc")]
-            SendTransport::WebRtc {
-                path,
-                folder,
-                nostr_relay,
-                use_default_relays,
-                manual_signaling,
-            } => {
-                validate_path(&path, folder)?;
-                let custom_relays = if nostr_relay.is_empty() {
-                    None
-                } else {
-                    Some(nostr_relay)
-                };
-                if folder {
-                    webrtc_sender::send_folder_webrtc(
-                        &path,
-                        custom_relays,
-                        use_default_relays,
-                        pin,
-                        manual_signaling,
-                    )
-                    .await?;
-                } else {
-                    webrtc_sender::send_file_webrtc(
-                        &path,
-                        custom_relays,
-                        use_default_relays,
-                        pin,
-                        manual_signaling,
-                    )
-                    .await?;
-                }
+        #[cfg(feature = "iroh")]
+        Commands::SendIroh {
+            path,
+            folder,
+            pin,
+            extra_encrypt,
+            relay_url,
+        } => {
+            validate_path(&path, folder)?;
+            if folder {
+                iroh_sender::send_folder(&path, extra_encrypt, relay_url, pin).await?;
+            } else {
+                iroh_sender::send_file(&path, extra_encrypt, relay_url, pin).await?;
             }
-        },
+        }
+
+        #[cfg(feature = "onion")]
+        Commands::SendTor {
+            path,
+            folder,
+            pin,
+            extra_encrypt,
+        } => {
+            validate_path(&path, folder)?;
+            if folder {
+                onion_sender::send_folder_tor(&path, extra_encrypt, pin).await?;
+            } else {
+                onion_sender::send_file_tor(&path, extra_encrypt, pin).await?;
+            }
+        }
 
         Commands::SendLocal { path, folder } => {
             validate_path(&path, folder)?;

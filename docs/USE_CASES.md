@@ -22,7 +22,7 @@ This guide describes common scenarios where `wormhole-rs` shines and which mode 
 - **Command**:
   ```bash
   # Sender
-  wormhole-rs send webrtc --manual-signaling /path/to/file
+  wormhole-rs send --manual-signaling /path/to/file
 
   # Receiver
   wormhole-rs receive --manual-signaling
@@ -38,9 +38,9 @@ This guide describes common scenarios where `wormhole-rs` shines and which mode 
 - **Why**: Instead of a massive code string, you only need to type a **12-character PIN**.
 - **Command**:
   ```bash
-  # Sender (using WebRTC for compatibility, or Iroh/Tor)
-  wormhole-rs send --pin webrtc /path/to/file
-  
+  # Sender (uses WebRTC by default, or use send-iroh/send-tor)
+  wormhole-rs send --pin /path/to/file
+
   # Receiver
   wormhole-rs receive --pin
   ```
@@ -58,14 +58,14 @@ This guide describes common scenarios where `wormhole-rs` shines and which mode 
 - **Why**: WebRTC tries to punch through NATs using STUN. Works in many restricted environments.
 - **Command**:
   ```bash
-  wormhole-rs send --pin webrtc /path/to/file
+  wormhole-rs send --pin /path/to/file
   ```
 
 **Solution B**: **Tor Mode** (if WebRTC fails)
 - **Why**: If direct P2P connection fails completely, Tor mode provides a reliable relay path through the Tor network with better privacy than any third-party relay.
 - **Command**:
   ```bash
-  wormhole-rs send --pin tor /path/to/file
+  wormhole-rs send-tor --pin /path/to/file
   ```
 
 ---
@@ -73,11 +73,11 @@ This guide describes common scenarios where `wormhole-rs` shines and which mode 
 ## 4. Maximum Anonymity
 **Scenario**: You want to transfer a file without revealing your IP address to the peer or any relay servers.
 
-**Solution**: **Tor Mode** (`onion`)
+**Solution**: **Tor Mode** (`send-tor`)
 - **Why**: Creates a Tor Hidden Service for the transfer. Traffic is routed through the Tor network, masking locations of both parties.
 - **Command**:
   ```bash
-  wormhole-rs send --pin tor /path/to/file
+  wormhole-rs send-tor --pin /path/to/file
   ```
 
 ---
@@ -88,11 +88,11 @@ This guide describes common scenarios where `wormhole-rs` shines and which mode 
 **Solution**: **WebRTC Mode** (Recommended) or **Iroh Mode**
 - **WebRTC**: The recommended mode works well for large files over stable connections.
   ```bash
-  wormhole-rs send webrtc /path/to/large-video.mp4
+  wormhole-rs send /path/to/large-video.mp4
   ```
 - **Iroh**: Alternative using QUIC, optimized for high throughput and congestion control.
   ```bash
-  wormhole-rs send iroh /path/to/large-video.mp4
+  wormhole-rs send-iroh /path/to/large-video.mp4
   ```
 
 ---
@@ -108,14 +108,14 @@ This guide describes common scenarios where `wormhole-rs` shines and which mode 
 - **Resources**: Implementation for the relay server allows for independence and is available in the [Iroh repository](https://github.com/n0-computer/iroh).
 - **Command**:
   ```bash
-  wormhole-rs send iroh --relay-url https://my-private-relay.com /path/to/file
+  wormhole-rs send-iroh --relay-url https://my-private-relay.com /path/to/file
   ```
 
 **Solution B**: **WebRTC Mode + Custom Nostr Relays**
 - **Why**: Run your own Nostr relay for signaling, keeping all metadata private.
 - **Command**:
   ```bash
-  wormhole-rs send webrtc --nostr-relay wss://my-nostr-relay.com /path/to/file
+  wormhole-rs send --nostr-relay wss://my-nostr-relay.com /path/to/file
   ```
 
 ---
@@ -133,7 +133,7 @@ This guide describes common scenarios where `wormhole-rs` shines and which mode 
 - **Command**:
   ```bash
   # Sender
-  wormhole-rs send webrtc --manual-signaling /path/to/file
+  wormhole-rs send --manual-signaling /path/to/file
 
   # Receiver
   wormhole-rs receive --manual-signaling

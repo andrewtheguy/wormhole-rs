@@ -100,73 +100,76 @@ cargo build --release --all-features
 
 ## Usage
 
-### Internet Transfers (`wormhole-rs send`)
+### Internet Transfers
 
 Use these modes for transfers over the internet. They all use a **Wormhole Code** for connection.
 
-#### 1. WebRTC Mode (Recommended)
+#### 1. WebRTC Mode (Recommended) - `send` / `send-webrtc`
 *Most mature and reliable. Works well for both small and large files. Has manual signaling fallback (`--manual-signaling`) for direct P2P when Nostr relays are unavailable.*
 > Requires building with `--features webrtc`.
 
 ```bash
-# Standard send (displays wormhole code)
-wormhole-rs send webrtc /path/to/file
+# Standard send (displays wormhole code) - uses WebRTC by default
+wormhole-rs send /path/to/file
+
+# Explicit WebRTC send (same as above)
+wormhole-rs send-webrtc /path/to/file
 
 # Send folder
-wormhole-rs send webrtc /path/to/folder --folder
+wormhole-rs send /path/to/folder --folder
 
 # Send using a 12-character PIN (checksum-validated)
-wormhole-rs send --pin webrtc /path/to/file
+wormhole-rs send --pin /path/to/file
 
 # Send with copy/paste manual signaling (no relays)
-wormhole-rs send --manual-signaling webrtc /path/to/file
+wormhole-rs send --manual-signaling /path/to/file
 ```
 
 ##### Custom Nostr Relays
 - By default, WebRTC mode discovers the best Nostr relays automatically via NIP-65/NIP-66.
 - Use `--nostr-relay` to specify custom Nostr relays for signaling:
     ```bash
-    wormhole-rs send webrtc --nostr-relay wss://my-relay.com /path/to/file
+    wormhole-rs send --nostr-relay wss://my-relay.com /path/to/file
     ```
 - Use `--use-default-relays` to skip discovery and use hardcoded default relays:
     ```bash
-    wormhole-rs send webrtc --use-default-relays /path/to/file
+    wormhole-rs send --use-default-relays /path/to/file
     ```
 
-#### 2. iroh Mode
+#### 2. iroh Mode - `send-iroh`
 *Alternative P2P transport using QUIC. Direct P2P with automatic relay fallback.*
 > Requires building with `--features iroh`.
 
 ```bash
 # Send file
-wormhole-rs send iroh /path/to/file
+wormhole-rs send-iroh /path/to/file
 
 # Send folder
-wormhole-rs send iroh /path/to/folder --folder
+wormhole-rs send-iroh /path/to/folder --folder
 
 # With extra AES-256-GCM encryption
-wormhole-rs send iroh /path/to/file --extra-encrypt
+wormhole-rs send-iroh /path/to/file --extra-encrypt
 ```
 
 ##### Custom Iroh Relays
 - Default behavior uses iroh's public relay fallback plus direct P2P.
 - For self-hosted setups, point both sides at your own DERP relay(s):
     ```bash
-    wormhole-rs send iroh --relay-url https://relay1.example.com /path/to/file
+    wormhole-rs send-iroh --relay-url https://relay1.example.com /path/to/file
     wormhole-rs receive --relay-url https://relay1.example.com
     ```
 - Multiple `--relay-url` flags are supported for failover.
 - Discovery still relies on iroh's public DNS/pkarr services today; full zero-third-party operation will land with the planned custom DNS server support (see ROADMAP).
 
-#### 3. Tor Mode
+#### 3. Tor Mode - `send-tor`
 *Anonymous transfers via Tor hidden services.*
 > Requires building with `--features onion`.
 
 ```bash
-wormhole-rs send tor /path/to/file
+wormhole-rs send-tor /path/to/file
 
 # Send using PIN
-wormhole-rs send --pin tor /path/to/file
+wormhole-rs send-tor --pin /path/to/file
 ```
 
 #### Receiving (Internet)

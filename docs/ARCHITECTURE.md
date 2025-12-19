@@ -153,7 +153,7 @@ sequenceDiagram
 
 ## Connection Types/Modes
 
-### WebRTC Mode (`wormhole-rs send webrtc`) - Recommended
+### WebRTC Mode (`wormhole-rs send` / `send-webrtc`) - Recommended
 - **Why Recommended**: Most mature and reliable; works well for both small and large files; has manual signaling fallback (`--manual-signaling`) for direct P2P when Nostr relays are unavailable
 - **Transport**: WebRTC Data Channels (SCTP/DTLS)
 - **Signaling**: Nostr Relays (JSON payloads) by default; copy/paste manual signaling available with `--manual-signaling`
@@ -163,7 +163,7 @@ sequenceDiagram
 - **NAT traversal**: STUN (no built-in TURN); if direct P2P fails, use Tor mode for relay
 - **Encryption**: Mandatory AES-256-GCM for all application data (on top of DTLS).
 
-### iroh Mode (`wormhole-rs send iroh`)
+### iroh Mode (`wormhole-rs send-iroh`)
 - **Transport**: QUIC / TLS 1.3
 - **Discovery**: iroh's global discovery (DNS/pkarr) + mDNS for local network
 - **Relay**: iroh DERP relays - automatically used if direct P2P connection fails
@@ -178,7 +178,7 @@ sequenceDiagram
 - **Encryption**: Mandatory AES-256-GCM using SPAKE2-derived key
 - **Port**: Random ephemeral port
 
-### Tor Mode (`wormhole-rs send tor`)
+### Tor Mode (`wormhole-rs send-tor`)
 - **Transport**: Tor Onion Services
 - **Discovery**: Onion Address
 - **Encryption**: Tor Circuit encryption + Optional extra AES.
