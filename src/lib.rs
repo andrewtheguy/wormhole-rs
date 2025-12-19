@@ -1,5 +1,6 @@
 pub mod crypto;
 pub mod folder;
+pub mod pin;
 #[cfg(feature = "iroh")]
 pub mod iroh_common;
 pub mod nostr_protocol;
@@ -26,6 +27,7 @@ pub mod onion_sender;
 pub mod mdns_common;
 pub mod mdns_receiver;
 pub mod mdns_sender;
+pub mod spake2_handshake;
 
 #[cfg(feature = "webrtc")]
 pub mod webrtc_sender;

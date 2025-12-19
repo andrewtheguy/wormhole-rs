@@ -24,9 +24,9 @@ use crate::folder::{
     print_tar_extraction_info, StreamingReader,
 };
 use crate::mdns_common::{
-    derive_key_from_passphrase, MdnsServiceInfo, SALT_LENGTH, SERVICE_TYPE, TXT_FILENAME,
-    TXT_FILE_SIZE, TXT_SALT, TXT_TRANSFER_ID, TXT_TRANSFER_TYPE,
+    MdnsServiceInfo, SERVICE_TYPE, TXT_FILENAME, TXT_FILE_SIZE, TXT_TRANSFER_ID, TXT_TRANSFER_TYPE,
 };
+use crate::spake2_handshake::handshake_as_initiator;
 use crate::transfer::{format_bytes, num_chunks, recv_encrypted_chunk, recv_encrypted_header, TransferType};
 
 /// Timeout for mDNS browsing (seconds)
@@ -66,8 +66,9 @@ pub async fn receive_mdns(output_dir: Option<PathBuf>) -> Result<()> {
             break;
         }
 
-        // Stop early if we found at least one sender and haven't received updates for a while
-        if !services.is_empty() && browse_start.elapsed() > Duration::from_secs(5) {
+        // Stop early if we found at least one sender with routable addresses
+        let has_routable_service = services.values().any(|s| !s.addresses.is_empty());
+        if has_routable_service && browse_start.elapsed() > Duration::from_secs(5) {
             break;
         }
 
@@ -95,25 +96,6 @@ pub async fn receive_mdns(output_dir: Option<PathBuf>) -> Result<()> {
                         .map(|v| v.val_str().to_string())
                         .unwrap_or_else(|| "file".to_string());
 
-                    // Parse salt from TXT record (hex-encoded)
-                    let salt_result: Result<[u8; SALT_LENGTH], _> = properties
-                        .get(TXT_SALT)
-                        .map(|v| v.val_str())
-                        .ok_or_else(|| "missing salt")
-                        .and_then(|hex_str| {
-                            hex::decode(hex_str)
-                                .map_err(|_| "invalid hex")
-                                .and_then(|bytes| {
-                                    bytes.try_into().map_err(|_| "invalid salt length")
-                                })
-                        });
-
-                    // Skip services without valid salt
-                    let salt = match salt_result {
-                        Ok(s) => s,
-                        Err(_) => continue,
-                    };
-
                     // Filter and deduplicate addresses: prefer IPv4 and non-link-local IPv6
                     let all_addrs: Vec<IpAddr> = info.get_addresses().iter().map(|s| s.to_ip_addr()).collect();
                     let filtered: HashSet<IpAddr> = all_addrs
@@ -134,7 +116,6 @@ pub async fn receive_mdns(output_dir: Option<PathBuf>) -> Result<()> {
                         file_size,
                         transfer_type,
                         addresses,
-                        salt,
                     };
 
                     if !transfer_id.is_empty() {
@@ -231,12 +212,8 @@ pub async fn receive_mdns(output_dir: Option<PathBuf>) -> Result<()> {
 
     println!("\nSelected: {}", selected.filename);
 
-    // Prompt for passphrase
-    let passphrase = prompt_passphrase()?;
-
-    // Derive key using per-transfer salt
-    println!("Deriving encryption key...");
-    let key = derive_key_from_passphrase(&passphrase, &selected.salt)?;
+    // Prompt for PIN
+    let pin = prompt_pin()?;
 
     // Connect to sender
     let addr = selected
@@ -250,15 +227,16 @@ pub async fn receive_mdns(output_dir: Option<PathBuf>) -> Result<()> {
         .await
         .context("Failed to connect to sender")?;
 
-    println!("Connected!");
+    println!("Connected! Performing SPAKE2 key exchange...");
 
-    // Send handshake: "WORMHOLE:<transfer_id>"
-    let handshake = format!("WORMHOLE:{}", selected.transfer_id);
-    use tokio::io::AsyncWriteExt;
-    stream.write_all(handshake.as_bytes()).await
-        .context("Failed to send handshake")?;
+    // Perform SPAKE2 handshake to derive encryption key
+    let key = handshake_as_initiator(&mut stream, &pin, &selected.transfer_id)
+        .await
+        .context("SPAKE2 handshake failed - wrong PIN?")?;
 
-    // Receive file
+    println!("Key exchange successful!");
+
+    // Receive file using SPAKE2-derived key
     receive_data_over_tcp(stream, &key, output_dir).await
 }
 
@@ -465,17 +443,9 @@ fn prompt_selection(max: usize) -> Result<Option<usize>> {
     }
 }
 
-/// Prompt user for passphrase.
-fn prompt_passphrase() -> Result<String> {
-    print!("Enter passphrase: ");
-    std::io::stdout().flush()?;
-    let mut input = String::new();
-    std::io::stdin().read_line(&mut input)?;
-    let passphrase = input.trim().to_string();
-    if passphrase.is_empty() {
-        anyhow::bail!("Passphrase cannot be empty");
-    }
-    Ok(passphrase)
+/// Prompt user for PIN with checksum validation.
+fn prompt_pin() -> Result<String> {
+    crate::pin::prompt_pin().context("Failed to read PIN")
 }
 
 /// Prompt user to overwrite existing file.

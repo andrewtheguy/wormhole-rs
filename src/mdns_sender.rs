@@ -17,10 +17,10 @@ use tokio::sync::Mutex;
 use crate::crypto::CHUNK_SIZE;
 use crate::folder::{create_tar_archive, print_tar_creation_info, TarArchive};
 use crate::mdns_common::{
-    derive_key_from_passphrase, generate_passphrase, generate_salt, generate_transfer_id,
-    PORT_RANGE_END, PORT_RANGE_START, SERVICE_TYPE, TXT_FILENAME, TXT_FILE_SIZE, TXT_SALT,
-    TXT_TRANSFER_ID, TXT_TRANSFER_TYPE,
+    generate_pin, generate_transfer_id, PORT_RANGE_END, PORT_RANGE_START, SERVICE_TYPE,
+    TXT_FILENAME, TXT_FILE_SIZE, TXT_TRANSFER_ID, TXT_TRANSFER_TYPE,
 };
+use crate::spake2_handshake::handshake_as_responder;
 use crate::transfer::{
     format_bytes, num_chunks, send_encrypted_chunk, send_encrypted_header, FileHeader,
     TransferType,
@@ -71,22 +71,18 @@ pub async fn send_file_mdns(file_path: &Path) -> Result<()> {
 
     println!("Preparing to send: {} ({})", filename, format_bytes(file_size));
 
-    // Generate random passphrase and salt
-    let passphrase = generate_passphrase();
-    let salt = generate_salt();
-    println!("\nPassphrase: {}\n", passphrase);
-    println!("Share this passphrase with the receiver.\n");
-
-    // Derive encryption key from passphrase and salt
-    let key = derive_key_from_passphrase(&passphrase, &salt)?;
+    // Generate random PIN (key will be derived via SPAKE2 handshake)
+    let pin = generate_pin();
+    println!("\nPIN: {}\n", pin);
+    println!("Share this PIN with the receiver.\n");
 
     // Open file
     let file = File::open(file_path)
         .await
         .context("Failed to open file")?;
 
-    // Transfer using common logic
-    transfer_data_internal(file, filename, file_size, TransferType::File, key, salt).await
+    // Transfer using common logic (key derived via SPAKE2 during handshake)
+    transfer_data_internal(file, filename, file_size, TransferType::File, pin).await
 }
 
 /// Send a folder as a tar archive via mDNS transport.
@@ -131,22 +127,18 @@ pub async fn send_folder_mdns(folder_path: &Path) -> Result<()> {
         folder_path.display()
     );
 
-    // Generate random passphrase and salt
-    let passphrase = generate_passphrase();
-    let salt = generate_salt();
-    println!("\nPassphrase: {}\n", passphrase);
-    println!("Share this passphrase with the receiver.\n");
-
-    // Derive encryption key from passphrase and salt
-    let key = derive_key_from_passphrase(&passphrase, &salt)?;
+    // Generate random PIN (key will be derived via SPAKE2 handshake)
+    let pin = generate_pin();
+    println!("\nPIN: {}\n", pin);
+    println!("Share this PIN with the receiver.\n");
 
     // Open tar file
     let file = File::open(&temp_path)
         .await
         .context("Failed to open tar file")?;
 
-    // Transfer
-    let result = transfer_data_internal(file, tar_filename, file_size, TransferType::Folder, key, salt).await;
+    // Transfer (key derived via SPAKE2 during handshake)
+    let result = transfer_data_internal(file, tar_filename, file_size, TransferType::Folder, pin).await;
 
     // Clear cleanup path (file will be dropped with temp_file)
     cleanup_path.lock().await.take();
@@ -160,8 +152,7 @@ async fn transfer_data_internal(
     filename: String,
     file_size: u64,
     transfer_type: TransferType,
-    key: [u8; 32],
-    salt: [u8; 16],
+    pin: String,
 ) -> Result<()> {
     // Generate transfer ID
     let transfer_id = generate_transfer_id();
@@ -178,7 +169,7 @@ async fn transfer_data_internal(
     // Create mDNS service daemon
     let mdns = ServiceDaemon::new().context("Failed to create mDNS daemon")?;
 
-    // Build TXT records
+    // Build TXT records (no salt needed - key derived via SPAKE2)
     let mut properties = HashMap::new();
     properties.insert(TXT_TRANSFER_ID.to_string(), transfer_id.clone());
     properties.insert(TXT_FILENAME.to_string(), filename.clone());
@@ -190,8 +181,6 @@ async fn transfer_data_internal(
             TransferType::Folder => "folder".to_string(),
         },
     );
-    // Add salt for key derivation (hex-encoded)
-    properties.insert(TXT_SALT.to_string(), hex::encode(salt));
 
     // Register service with auto address discovery
     let my_hostname = format!("{}.local.", random_host);
@@ -231,34 +220,30 @@ async fn transfer_data_internal(
 
         println!("Connection from: {}", peer_addr);
 
-        // Wait for receiver handshake: "WORMHOLE:<transfer_id>"
-        let expected_handshake = format!("WORMHOLE:{}", transfer_id);
-        let mut handshake_buf = vec![0u8; expected_handshake.len()];
-
-        use tokio::io::AsyncReadExt;
         use tokio::time::timeout;
 
+        // Perform SPAKE2 handshake (includes transfer ID validation)
         // Wait up to 10 seconds for handshake
         let handshake_result = timeout(
             std::time::Duration::from_secs(10),
-            stream.read_exact(&mut handshake_buf)
-        ).await;
+            handshake_as_responder(&mut stream, &pin, &transfer_id),
+        )
+        .await;
 
         match handshake_result {
-            Ok(Ok(_)) => {
-                if handshake_buf == expected_handshake.as_bytes() {
-                    println!("Receiver authenticated from: {}", peer_addr);
-                    // Send data over TCP
-                    send_data_over_tcp(stream, &mut file, filename.clone(), file_size, transfer_type, &key).await?;
-                    break;
-                } else {
-                    println!("Invalid handshake from {}, closing connection", peer_addr);
-                    drop(stream);
-                    continue;
-                }
+            Ok(Ok(key)) => {
+                println!("SPAKE2 handshake successful with: {}", peer_addr);
+                // Send data over TCP using SPAKE2-derived key
+                send_data_over_tcp(stream, &mut file, filename.clone(), file_size, transfer_type, &key).await?;
+                break;
             }
-            Ok(Err(_)) | Err(_) => {
-                println!("Handshake timeout/error from {}, closing connection", peer_addr);
+            Ok(Err(e)) => {
+                println!("SPAKE2 handshake failed from {}: {}", peer_addr, e);
+                drop(stream);
+                continue;
+            }
+            Err(_) => {
+                println!("Handshake timeout from {}, closing connection", peer_addr);
                 drop(stream);
                 continue;
             }

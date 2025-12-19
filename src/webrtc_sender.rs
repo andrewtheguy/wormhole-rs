@@ -12,7 +12,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::fs::File;
-use tokio::io::{AsyncReadExt, AsyncSeekExt};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncSeekExt};
 use tokio::sync::{mpsc, Mutex};
 use tokio::time::{timeout, Duration};
 use webrtc::ice_transport::ice_candidate::RTCIceCandidateInit;
@@ -109,18 +109,11 @@ async fn try_webrtc_transfer(
 
     // Wait for receiver's "ready" signal and offer
     println!("Waiting for receiver to connect via Nostr signaling...");
-    // Wait for receiver's "ready" signal and offer
-    println!("Waiting for receiver to connect via Nostr signaling...");
     println!("(Press ENTER to force fallback to relay mode if connection hangs)");
 
-    // Spawn a blocking task to listen for stdin input (Enter key)
-    let (input_tx, mut input_rx) = tokio::sync::oneshot::channel();
-    let stdin_task = tokio::task::spawn_blocking(move || {
-        let mut input = String::new();
-        if std::io::stdin().read_line(&mut input).is_ok() {
-            let _ = input_tx.send(());
-        }
-    });
+    // Use async stdin reading (can be cancelled unlike spawn_blocking)
+    let mut stdin_line = String::new();
+    let mut stdin_reader = tokio::io::BufReader::new(tokio::io::stdin());
 
     let receiver_pubkey;
 
@@ -163,23 +156,21 @@ async fn try_webrtc_transfer(
                     }
                     Some(_) => continue,
                     None => {
-                        stdin_task.abort();
                         return Ok(WebRtcResult::Failed("Signaling channel closed".to_string()));
                     }
                 }
             }
 
-            // Handle user input to force fallback
-            _ = &mut input_rx => {
-                 println!("\nUser forced fallback to relay mode.");
-                 signal_handle.abort();
-                 return Ok(WebRtcResult::Failed("User forced fallback".to_string()));
+            // Handle user input to force fallback (async, can be cancelled)
+            result = stdin_reader.read_line(&mut stdin_line) => {
+                if result.is_ok() {
+                    println!("\nUser forced fallback to relay mode.");
+                    signal_handle.abort();
+                    return Ok(WebRtcResult::Failed("User forced fallback".to_string()));
+                }
             }
         }
     }
-
-    // Abort the stdin task since we no longer need it
-    stdin_task.abort();
 
     let remote_pubkey = match receiver_pubkey {
         Some(pk) => pk,
@@ -209,7 +200,7 @@ async fn try_webrtc_transfer(
     let ice_seq = Arc::new(std::sync::atomic::AtomicU32::new(0));
     let ice_seq_clone = ice_seq.clone();
 
-    tokio::spawn(async move {
+    let ice_sender_handle = tokio::spawn(async move {
         while let Some(candidate) = ice_rx.recv().await {
             let candidate_json = match candidate.to_json() {
                 Ok(json) => json,
@@ -267,7 +258,7 @@ async fn try_webrtc_transfer(
     let rtc_peer_arc = Arc::new(rtc_peer);
     let rtc_peer_clone = rtc_peer_arc.clone();
 
-    tokio::spawn(async move {
+    let ice_receiver_handle = tokio::spawn(async move {
         while let Some(msg) = signal_rx.recv().await {
             if let SignalingMessage::IceCandidate { candidate, .. } = msg {
                 let candidate_init = RTCIceCandidateInit {
@@ -286,6 +277,8 @@ async fn try_webrtc_transfer(
     let open_result = timeout(WEBRTC_CONNECTION_TIMEOUT, open_rx).await;
 
     if open_result.is_err() {
+        ice_sender_handle.abort();
+        ice_receiver_handle.abort();
         signal_handle.abort();
         return Ok(WebRtcResult::Failed(
             "Timeout waiting for data channel".to_string(),
@@ -293,6 +286,8 @@ async fn try_webrtc_transfer(
     }
 
     if open_result.unwrap().is_err() {
+        ice_sender_handle.abort();
+        ice_receiver_handle.abort();
         signal_handle.abort();
         return Ok(WebRtcResult::Failed(
             "Data channel failed to open".to_string(),
@@ -409,7 +404,9 @@ async fn try_webrtc_transfer(
         }
     }
 
-    // Close connections
+    // Close connections and abort background tasks
+    ice_sender_handle.abort();
+    ice_receiver_handle.abort();
     let _ = rtc_peer_arc.close().await;
     signal_handle.abort();
 

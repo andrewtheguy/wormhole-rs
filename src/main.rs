@@ -326,16 +326,12 @@ async fn main() -> Result<()> {
 
             // Handle PIN mode if requested
             if pin {
-                print!("Enter {}-digit PIN: ", wormhole_rs::nostr_pin::PIN_LENGTH);
-                std::io::stdout().flush()?;
-                let mut pin_input = String::new();
-                std::io::stdin().read_line(&mut pin_input)?;
-                let pin_str = pin_input.trim();
+                let pin_str = wormhole_rs::pin::prompt_pin()?;
 
                 println!("Searching for wormhole token via Nostr...");
-                
+
                 // Fetch encrypted token from Nostr
-                let token_str = wormhole_rs::nostr_pin::fetch_wormhole_code_via_pin(pin_str).await?;
+                let token_str = wormhole_rs::nostr_pin::fetch_wormhole_code_via_pin(&pin_str).await?;
                 println!("Token found and decrypted!");
                 code = Some(token_str);
             }

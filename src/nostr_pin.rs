@@ -1,7 +1,6 @@
 //! PIN-based wormhole code exchange for Nostr transport.
 //!
 //! This module provides functions for:
-//! - Generating random 12-character PINs from unambiguous characters
 //! - Deriving encryption keys from PINs using Argon2id
 //! - Creating and parsing PIN exchange events (kind 24243)
 //! - Encrypting/decrypting wormhole codes with PIN-derived keys
@@ -14,10 +13,12 @@ use anyhow::{Context, Result};
 use argon2::{Argon2, Params, Version};
 use base64::{engine::general_purpose::STANDARD, Engine};
 use nostr_sdk::prelude::*;
-use rand::{Rng, RngCore};
+use rand::RngCore;
 use sha2::{Digest, Sha256};
 use tokio::time::Duration;
+
 use crate::nostr_protocol::DEFAULT_NOSTR_RELAYS;
+use crate::pin::{generate_pin, PIN_LENGTH};
 
 /// Nostr event kind for PIN exchange (24243)
 pub const PIN_EXCHANGE_KIND: u16 = 24243;
@@ -32,24 +33,6 @@ const AES_NONCE_LEN: usize = 12;
 const ARGON2_TIME_COST: u32 = 3;
 const ARGON2_MEMORY_COST: u32 = 65536; // 64 MiB
 const ARGON2_PARALLELISM: u32 = 4;
-
-/// Length of the PIN code in characters
-pub const PIN_LENGTH: usize = 12;
-
-/// Character set for PIN generation (alphanumeric + safe symbols)
-/// Removed similar characters (0/O, 1/I/l) to reduce ambiguity
-const PIN_CHARSET: &[u8] = b"23456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz$#@+";
-
-/// Generate a random 12-char PIN
-pub fn generate_pin() -> String {
-    let mut rng = rand::thread_rng();
-    (0..PIN_LENGTH)
-        .map(|_| {
-            let idx = rng.gen_range(0..PIN_CHARSET.len());
-            PIN_CHARSET[idx] as char
-        })
-        .collect()
-}
 
 /// PIN exchange event expiration (1 hour)
 const PIN_EVENT_EXPIRATION_SECS: u64 = 3600;
@@ -340,24 +323,6 @@ pub async fn fetch_wormhole_code_via_pin(pin: &str) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_pin_generation() {
-        let pin = generate_pin();
-        assert_eq!(pin.len(), PIN_LENGTH);
-        // Verify all chars are from charset
-        for c in pin.chars() {
-            assert!(PIN_CHARSET.contains(&(c as u8)));
-        }
-    }
-
-    #[test]
-    fn test_pin_generation_uniqueness() {
-        let pin1 = generate_pin();
-        let pin2 = generate_pin();
-        // Very unlikely to be the same
-        assert_ne!(pin1, pin2);
-    }
 
     #[test]
     fn test_pin_hint_consistency() {

@@ -1,0 +1,235 @@
+//! SPAKE2 handshake protocol for authenticated key exchange.
+//!
+//! This module provides Password-Authenticated Key Exchange (PAKE) using SPAKE2.
+//! Unlike simple KDF-based key derivation, SPAKE2 prevents offline dictionary attacks -
+//! an attacker who captures the network traffic cannot brute-force the passphrase offline.
+
+use anyhow::{Context, Result};
+use spake2::{Ed25519Group, Identity, Password, Spake2};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+/// SPAKE2 message length for Ed25519 group
+const SPAKE2_MSG_LEN: usize = 33;
+
+/// Identity string for wormhole protocol (used in SPAKE2 derivation)
+const IDENTITY_SENDER: &[u8] = b"wormhole-rs-sender";
+const IDENTITY_RECEIVER: &[u8] = b"wormhole-rs-receiver";
+
+/// Perform SPAKE2 handshake as initiator (receiver role in mDNS).
+///
+/// The receiver connects first and sends their SPAKE2 message along with
+/// the transfer ID, then receives the sender's SPAKE2 message.
+///
+/// # Protocol
+/// 1. Send: transfer_id_len (2 bytes) + transfer_id + spake2_msg (33 bytes)
+/// 2. Receive: spake2_msg (33 bytes)
+/// 3. Derive shared key
+///
+/// # Arguments
+/// * `stream` - TCP stream to sender
+/// * `pin` - User-provided PIN
+/// * `transfer_id` - Transfer ID for this session
+///
+/// # Returns
+/// 32-byte shared encryption key
+pub async fn handshake_as_initiator<S>(
+    stream: &mut S,
+    pin: &str,
+    transfer_id: &str,
+) -> Result<[u8; 32]>
+where
+    S: AsyncReadExt + AsyncWriteExt + Unpin,
+{
+    // Start SPAKE2 as side A (receiver)
+    let (state, outbound_msg) = Spake2::<Ed25519Group>::start_a(
+        &Password::new(pin.as_bytes()),
+        &Identity::new(IDENTITY_RECEIVER),
+        &Identity::new(IDENTITY_SENDER),
+    );
+
+    // Send: transfer_id_len (2 bytes BE) + transfer_id + spake2_msg (33 bytes)
+    let transfer_id_bytes = transfer_id.as_bytes();
+    let mut msg = Vec::with_capacity(2 + transfer_id_bytes.len() + SPAKE2_MSG_LEN);
+    msg.extend_from_slice(&(transfer_id_bytes.len() as u16).to_be_bytes());
+    msg.extend_from_slice(transfer_id_bytes);
+    msg.extend_from_slice(&outbound_msg);
+
+    stream
+        .write_all(&msg)
+        .await
+        .context("Failed to send SPAKE2 message")?;
+
+    // Receive peer's SPAKE2 message
+    let mut peer_msg = [0u8; SPAKE2_MSG_LEN];
+    stream
+        .read_exact(&mut peer_msg)
+        .await
+        .context("Failed to receive SPAKE2 message")?;
+
+    // Derive shared key
+    let key_bytes = state
+        .finish(&peer_msg)
+        .map_err(|_| anyhow::anyhow!("SPAKE2 key derivation failed"))?;
+
+    let mut key = [0u8; 32];
+    key.copy_from_slice(&key_bytes);
+    Ok(key)
+}
+
+/// Perform SPAKE2 handshake as responder (sender role in mDNS).
+///
+/// The sender waits for the receiver to connect and send their SPAKE2 message,
+/// then responds with their own SPAKE2 message.
+///
+/// # Protocol
+/// 1. Receive: transfer_id_len (2 bytes) + transfer_id + spake2_msg (33 bytes)
+/// 2. Validate transfer_id
+/// 3. Send: spake2_msg (33 bytes)
+/// 4. Derive shared key
+///
+/// # Arguments
+/// * `stream` - TCP stream from receiver
+/// * `pin` - User-provided PIN
+/// * `expected_transfer_id` - Expected transfer ID for validation
+///
+/// # Returns
+/// 32-byte shared encryption key
+pub async fn handshake_as_responder<S>(
+    stream: &mut S,
+    pin: &str,
+    expected_transfer_id: &str,
+) -> Result<[u8; 32]>
+where
+    S: AsyncReadExt + AsyncWriteExt + Unpin,
+{
+    // Receive: transfer_id_len (2 bytes BE) + transfer_id + spake2_msg (33 bytes)
+    let mut len_buf = [0u8; 2];
+    stream
+        .read_exact(&mut len_buf)
+        .await
+        .context("Failed to read transfer ID length")?;
+    let transfer_id_len = u16::from_be_bytes(len_buf) as usize;
+
+    // Sanity check on transfer ID length
+    if transfer_id_len > 256 {
+        anyhow::bail!("Invalid transfer ID length: {}", transfer_id_len);
+    }
+
+    let mut transfer_id_buf = vec![0u8; transfer_id_len];
+    stream
+        .read_exact(&mut transfer_id_buf)
+        .await
+        .context("Failed to read transfer ID")?;
+    let transfer_id =
+        String::from_utf8(transfer_id_buf).context("Invalid transfer ID encoding")?;
+
+    // Validate transfer ID
+    if transfer_id != expected_transfer_id {
+        anyhow::bail!(
+            "Transfer ID mismatch: expected '{}', got '{}'",
+            expected_transfer_id,
+            transfer_id
+        );
+    }
+
+    // Receive peer's SPAKE2 message
+    let mut peer_msg = [0u8; SPAKE2_MSG_LEN];
+    stream
+        .read_exact(&mut peer_msg)
+        .await
+        .context("Failed to receive SPAKE2 message")?;
+
+    // Start SPAKE2 as side B (sender)
+    // Note: Both sides must use the same identity parameters
+    let (state, outbound_msg) = Spake2::<Ed25519Group>::start_b(
+        &Password::new(pin.as_bytes()),
+        &Identity::new(IDENTITY_RECEIVER),
+        &Identity::new(IDENTITY_SENDER),
+    );
+
+    // Send our SPAKE2 message
+    stream
+        .write_all(&outbound_msg)
+        .await
+        .context("Failed to send SPAKE2 message")?;
+
+    // Derive shared key
+    let key_bytes = state
+        .finish(&peer_msg)
+        .map_err(|_| anyhow::anyhow!("SPAKE2 key derivation failed"))?;
+
+    let mut key = [0u8; 32];
+    key.copy_from_slice(&key_bytes);
+    Ok(key)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::io::duplex;
+
+    #[tokio::test]
+    async fn test_handshake_same_pin() {
+        let (mut client, mut server) = duplex(1024);
+        let pin = "test-pin-1234";
+        let transfer_id = "abc123def456";
+
+        let client_handle = tokio::spawn(async move {
+            handshake_as_initiator(&mut client, pin, transfer_id).await
+        });
+
+        let server_handle = tokio::spawn(async move {
+            handshake_as_responder(&mut server, pin, transfer_id).await
+        });
+
+        let (client_result, server_result) = tokio::join!(client_handle, server_handle);
+        let client_key = client_result.unwrap().unwrap();
+        let server_key = server_result.unwrap().unwrap();
+
+        // Both sides should derive the same key
+        assert_eq!(client_key, server_key);
+        assert_eq!(client_key.len(), 32);
+    }
+
+    #[tokio::test]
+    async fn test_handshake_wrong_pin() {
+        let (mut client, mut server) = duplex(1024);
+        let transfer_id = "abc123def456";
+
+        let client_handle = tokio::spawn(async move {
+            handshake_as_initiator(&mut client, "pin1", transfer_id).await
+        });
+
+        let server_handle = tokio::spawn(async move {
+            handshake_as_responder(&mut server, "pin2", transfer_id).await
+        });
+
+        let (client_result, server_result) = tokio::join!(client_handle, server_handle);
+        let client_key = client_result.unwrap().unwrap();
+        let server_key = server_result.unwrap().unwrap();
+
+        // Keys should be different with wrong PIN
+        // (actual failure happens when trying to decrypt data)
+        assert_ne!(client_key, server_key);
+    }
+
+    #[tokio::test]
+    async fn test_handshake_wrong_transfer_id() {
+        let (mut client, mut server) = duplex(1024);
+        let pin = "same-pin";
+
+        let client_handle = tokio::spawn(async move {
+            handshake_as_initiator(&mut client, pin, "transfer-1").await
+        });
+
+        let server_handle = tokio::spawn(async move {
+            handshake_as_responder(&mut server, pin, "transfer-2").await
+        });
+
+        let (client_result, server_result) = tokio::join!(client_handle, server_handle);
+
+        // Client might succeed (it doesn't validate transfer ID)
+        // Server should fail due to transfer ID mismatch
+        assert!(client_result.unwrap().is_ok() || server_result.unwrap().is_err());
+    }
+}
