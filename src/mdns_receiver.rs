@@ -212,8 +212,8 @@ pub async fn receive_mdns(output_dir: Option<PathBuf>) -> Result<()> {
 
     println!("\nSelected: {}", selected.filename);
 
-    // Prompt for passphrase
-    let passphrase = prompt_passphrase()?;
+    // Prompt for PIN
+    let pin = prompt_pin()?;
 
     // Connect to sender
     let addr = selected
@@ -230,9 +230,9 @@ pub async fn receive_mdns(output_dir: Option<PathBuf>) -> Result<()> {
     println!("Connected! Performing SPAKE2 key exchange...");
 
     // Perform SPAKE2 handshake to derive encryption key
-    let key = handshake_as_initiator(&mut stream, &passphrase, &selected.transfer_id)
+    let key = handshake_as_initiator(&mut stream, &pin, &selected.transfer_id)
         .await
-        .context("SPAKE2 handshake failed - wrong passphrase?")?;
+        .context("SPAKE2 handshake failed - wrong PIN?")?;
 
     println!("Key exchange successful!");
 
@@ -443,17 +443,17 @@ fn prompt_selection(max: usize) -> Result<Option<usize>> {
     }
 }
 
-/// Prompt user for passphrase.
-fn prompt_passphrase() -> Result<String> {
-    print!("Enter passphrase: ");
+/// Prompt user for PIN.
+fn prompt_pin() -> Result<String> {
+    print!("Enter PIN: ");
     std::io::stdout().flush()?;
     let mut input = String::new();
     std::io::stdin().read_line(&mut input)?;
-    let passphrase = input.trim().to_string();
-    if passphrase.is_empty() {
-        anyhow::bail!("Passphrase cannot be empty");
+    let pin = input.trim().to_string();
+    if pin.is_empty() {
+        anyhow::bail!("PIN cannot be empty");
     }
-    Ok(passphrase)
+    Ok(pin)
 }
 
 /// Prompt user to overwrite existing file.

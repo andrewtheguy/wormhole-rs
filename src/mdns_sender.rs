@@ -17,7 +17,7 @@ use tokio::sync::Mutex;
 use crate::crypto::CHUNK_SIZE;
 use crate::folder::{create_tar_archive, print_tar_creation_info, TarArchive};
 use crate::mdns_common::{
-    generate_passphrase, generate_transfer_id, PORT_RANGE_END, PORT_RANGE_START, SERVICE_TYPE,
+    generate_pin, generate_transfer_id, PORT_RANGE_END, PORT_RANGE_START, SERVICE_TYPE,
     TXT_FILENAME, TXT_FILE_SIZE, TXT_TRANSFER_ID, TXT_TRANSFER_TYPE,
 };
 use crate::spake2_handshake::handshake_as_responder;
@@ -71,10 +71,10 @@ pub async fn send_file_mdns(file_path: &Path) -> Result<()> {
 
     println!("Preparing to send: {} ({})", filename, format_bytes(file_size));
 
-    // Generate random passphrase (key will be derived via SPAKE2 handshake)
-    let passphrase = generate_passphrase();
-    println!("\nPassphrase: {}\n", passphrase);
-    println!("Share this passphrase with the receiver.\n");
+    // Generate random PIN (key will be derived via SPAKE2 handshake)
+    let pin = generate_pin();
+    println!("\nPIN: {}\n", pin);
+    println!("Share this PIN with the receiver.\n");
 
     // Open file
     let file = File::open(file_path)
@@ -82,7 +82,7 @@ pub async fn send_file_mdns(file_path: &Path) -> Result<()> {
         .context("Failed to open file")?;
 
     // Transfer using common logic (key derived via SPAKE2 during handshake)
-    transfer_data_internal(file, filename, file_size, TransferType::File, passphrase).await
+    transfer_data_internal(file, filename, file_size, TransferType::File, pin).await
 }
 
 /// Send a folder as a tar archive via mDNS transport.
@@ -127,10 +127,10 @@ pub async fn send_folder_mdns(folder_path: &Path) -> Result<()> {
         folder_path.display()
     );
 
-    // Generate random passphrase (key will be derived via SPAKE2 handshake)
-    let passphrase = generate_passphrase();
-    println!("\nPassphrase: {}\n", passphrase);
-    println!("Share this passphrase with the receiver.\n");
+    // Generate random PIN (key will be derived via SPAKE2 handshake)
+    let pin = generate_pin();
+    println!("\nPIN: {}\n", pin);
+    println!("Share this PIN with the receiver.\n");
 
     // Open tar file
     let file = File::open(&temp_path)
@@ -138,7 +138,7 @@ pub async fn send_folder_mdns(folder_path: &Path) -> Result<()> {
         .context("Failed to open tar file")?;
 
     // Transfer (key derived via SPAKE2 during handshake)
-    let result = transfer_data_internal(file, tar_filename, file_size, TransferType::Folder, passphrase).await;
+    let result = transfer_data_internal(file, tar_filename, file_size, TransferType::Folder, pin).await;
 
     // Clear cleanup path (file will be dropped with temp_file)
     cleanup_path.lock().await.take();
@@ -152,7 +152,7 @@ async fn transfer_data_internal(
     filename: String,
     file_size: u64,
     transfer_type: TransferType,
-    passphrase: String,
+    pin: String,
 ) -> Result<()> {
     // Generate transfer ID
     let transfer_id = generate_transfer_id();
@@ -226,7 +226,7 @@ async fn transfer_data_internal(
         // Wait up to 10 seconds for handshake
         let handshake_result = timeout(
             std::time::Duration::from_secs(10),
-            handshake_as_responder(&mut stream, &passphrase, &transfer_id),
+            handshake_as_responder(&mut stream, &pin, &transfer_id),
         )
         .await;
 

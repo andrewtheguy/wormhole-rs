@@ -27,14 +27,14 @@ const IDENTITY_RECEIVER: &[u8] = b"wormhole-rs-receiver";
 ///
 /// # Arguments
 /// * `stream` - TCP stream to sender
-/// * `passphrase` - User-provided passphrase
+/// * `pin` - User-provided PIN
 /// * `transfer_id` - Transfer ID for this session
 ///
 /// # Returns
 /// 32-byte shared encryption key
 pub async fn handshake_as_initiator<S>(
     stream: &mut S,
-    passphrase: &str,
+    pin: &str,
     transfer_id: &str,
 ) -> Result<[u8; 32]>
 where
@@ -42,7 +42,7 @@ where
 {
     // Start SPAKE2 as side A (receiver)
     let (state, outbound_msg) = Spake2::<Ed25519Group>::start_a(
-        &Password::new(passphrase.as_bytes()),
+        &Password::new(pin.as_bytes()),
         &Identity::new(IDENTITY_RECEIVER),
         &Identity::new(IDENTITY_SENDER),
     );
@@ -89,14 +89,14 @@ where
 ///
 /// # Arguments
 /// * `stream` - TCP stream from receiver
-/// * `passphrase` - User-provided passphrase
+/// * `pin` - User-provided PIN
 /// * `expected_transfer_id` - Expected transfer ID for validation
 ///
 /// # Returns
 /// 32-byte shared encryption key
 pub async fn handshake_as_responder<S>(
     stream: &mut S,
-    passphrase: &str,
+    pin: &str,
     expected_transfer_id: &str,
 ) -> Result<[u8; 32]>
 where
@@ -142,7 +142,7 @@ where
     // Start SPAKE2 as side B (sender)
     // Note: Both sides must use the same identity parameters
     let (state, outbound_msg) = Spake2::<Ed25519Group>::start_b(
-        &Password::new(passphrase.as_bytes()),
+        &Password::new(pin.as_bytes()),
         &Identity::new(IDENTITY_RECEIVER),
         &Identity::new(IDENTITY_SENDER),
     );
@@ -169,17 +169,17 @@ mod tests {
     use tokio::io::duplex;
 
     #[tokio::test]
-    async fn test_handshake_same_password() {
+    async fn test_handshake_same_pin() {
         let (mut client, mut server) = duplex(1024);
-        let passphrase = "test-passphrase-123";
+        let pin = "test-pin-1234";
         let transfer_id = "abc123def456";
 
         let client_handle = tokio::spawn(async move {
-            handshake_as_initiator(&mut client, passphrase, transfer_id).await
+            handshake_as_initiator(&mut client, pin, transfer_id).await
         });
 
         let server_handle = tokio::spawn(async move {
-            handshake_as_responder(&mut server, passphrase, transfer_id).await
+            handshake_as_responder(&mut server, pin, transfer_id).await
         });
 
         let (client_result, server_result) = tokio::join!(client_handle, server_handle);
@@ -192,23 +192,23 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_handshake_wrong_password() {
+    async fn test_handshake_wrong_pin() {
         let (mut client, mut server) = duplex(1024);
         let transfer_id = "abc123def456";
 
         let client_handle = tokio::spawn(async move {
-            handshake_as_initiator(&mut client, "password1", transfer_id).await
+            handshake_as_initiator(&mut client, "pin1", transfer_id).await
         });
 
         let server_handle = tokio::spawn(async move {
-            handshake_as_responder(&mut server, "password2", transfer_id).await
+            handshake_as_responder(&mut server, "pin2", transfer_id).await
         });
 
         let (client_result, server_result) = tokio::join!(client_handle, server_handle);
         let client_key = client_result.unwrap().unwrap();
         let server_key = server_result.unwrap().unwrap();
 
-        // Keys should be different with wrong password
+        // Keys should be different with wrong PIN
         // (actual failure happens when trying to decrypt data)
         assert_ne!(client_key, server_key);
     }
@@ -216,14 +216,14 @@ mod tests {
     #[tokio::test]
     async fn test_handshake_wrong_transfer_id() {
         let (mut client, mut server) = duplex(1024);
-        let passphrase = "same-password";
+        let pin = "same-pin";
 
         let client_handle = tokio::spawn(async move {
-            handshake_as_initiator(&mut client, passphrase, "transfer-1").await
+            handshake_as_initiator(&mut client, pin, "transfer-1").await
         });
 
         let server_handle = tokio::spawn(async move {
-            handshake_as_responder(&mut server, passphrase, "transfer-2").await
+            handshake_as_responder(&mut server, pin, "transfer-2").await
         });
 
         let (client_result, server_result) = tokio::join!(client_handle, server_handle);

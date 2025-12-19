@@ -326,7 +326,7 @@ async fn main() -> Result<()> {
 
             // Handle PIN mode if requested
             if pin {
-                print!("Enter {}-digit PIN: ", wormhole_rs::nostr_pin::PIN_LENGTH);
+                print!("Enter {}-digit PIN: ", wormhole_rs::pin::PIN_LENGTH);
                 std::io::stdout().flush()?;
                 let mut pin_input = String::new();
                 std::io::stdin().read_line(&mut pin_input)?;
