@@ -1,7 +1,15 @@
 use anyhow::{Context, Result};
+use std::io::Write;
+use std::path::Path;
+use tempfile::NamedTempFile;
+use tokio::fs::File;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use crate::crypto::{decrypt_chunk, encrypt_chunk, CHUNK_SIZE};
+use crate::folder::{create_tar_archive, print_tar_creation_info};
+
+/// Soft limit for large file transfers (100MB)
+pub const LARGE_FILE_THRESHOLD: u64 = 100 * 1024 * 1024;
 
 /// Transfer type identifier
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -260,4 +268,125 @@ pub fn format_bytes(bytes: u64) -> String {
     } else {
         format!("{} bytes", bytes)
     }
+}
+
+/// Prompt user for confirmation if file exceeds soft limit.
+/// Returns Ok(true) to proceed, Ok(false) to cancel.
+pub fn confirm_large_transfer(file_size: u64, filename: &str) -> Result<bool> {
+    if file_size <= LARGE_FILE_THRESHOLD {
+        return Ok(true);
+    }
+
+    println!(
+        "\n⚠️  Warning: {} is large ({}).",
+        filename,
+        format_bytes(file_size)
+    );
+    println!("Transfers are NOT resumable - if interrupted, you must start over.");
+    println!("Large files are recommended for local connections only (wormhole-rs send-local).");
+    print!("Continue anyway? [y/N]: ");
+    std::io::stdout().flush()?;
+
+    let mut input = String::new();
+    std::io::stdin().read_line(&mut input)?;
+    Ok(input.trim().eq_ignore_ascii_case("y"))
+}
+
+/// Result of preparing a file for transfer
+pub struct PreparedFile {
+    pub file: File,
+    pub filename: String,
+    pub file_size: u64,
+}
+
+/// Prepare a file for sending: validate, confirm if large, and open.
+/// Returns None if user cancels the transfer.
+pub async fn prepare_file_for_send(file_path: &Path) -> Result<Option<PreparedFile>> {
+    let metadata = tokio::fs::metadata(file_path)
+        .await
+        .context("Failed to read file metadata")?;
+    let file_size = metadata.len();
+    let filename = file_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .context("Invalid filename")?
+        .to_string();
+
+    println!(
+        "📁 Preparing to send: {} ({})",
+        filename,
+        format_bytes(file_size)
+    );
+
+    // Confirm if file is large
+    if !confirm_large_transfer(file_size, &filename)? {
+        println!("Transfer cancelled.");
+        return Ok(None);
+    }
+
+    // Open file
+    let file = File::open(file_path)
+        .await
+        .context("Failed to open file")?;
+
+    Ok(Some(PreparedFile {
+        file,
+        filename,
+        file_size,
+    }))
+}
+
+/// Result of preparing a folder archive for transfer
+pub struct PreparedFolder {
+    pub file: File,
+    pub filename: String,
+    pub file_size: u64,
+    /// Keep temp file alive to prevent deletion until transfer completes
+    pub temp_file: NamedTempFile,
+}
+
+/// Prepare a folder for sending: validate, create tar archive, confirm if large, and open.
+/// Returns None if user cancels the transfer.
+pub async fn prepare_folder_for_send(folder_path: &Path) -> Result<Option<PreparedFolder>> {
+    // Validate folder
+    if !folder_path.is_dir() {
+        anyhow::bail!("Not a directory: {}", folder_path.display());
+    }
+
+    let folder_name = folder_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .context("Invalid folder name")?;
+
+    println!("📁 Creating tar archive of: {}", folder_name);
+    print_tar_creation_info();
+
+    // Create tar archive
+    let tar_archive = create_tar_archive(folder_path)?;
+    let filename = tar_archive.filename;
+    let file_size = tar_archive.file_size;
+
+    println!(
+        "📦 Archive created: {} ({})",
+        filename,
+        format_bytes(file_size)
+    );
+
+    // Confirm if archive is large
+    if !confirm_large_transfer(file_size, &filename)? {
+        println!("Transfer cancelled.");
+        return Ok(None);
+    }
+
+    // Open tar file
+    let file = File::open(tar_archive.temp_file.path())
+        .await
+        .context("Failed to open tar file")?;
+
+    Ok(Some(PreparedFolder {
+        file,
+        filename,
+        file_size,
+        temp_file: tar_archive.temp_file,
+    }))
 }

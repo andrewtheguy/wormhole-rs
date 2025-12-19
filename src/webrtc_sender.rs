@@ -19,9 +19,11 @@ use webrtc::ice_transport::ice_candidate::RTCIceCandidateInit;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 
 use crate::crypto::{encrypt_chunk, generate_key, CHUNK_SIZE};
-use crate::folder::{create_tar_archive, print_tar_creation_info};
 use crate::nostr_signaling::{create_sender_signaling, NostrSignaling, SignalingMessage};
-use crate::transfer::{format_bytes, num_chunks, FileHeader, TransferType};
+use crate::transfer::{
+    format_bytes, num_chunks, prepare_file_for_send, prepare_folder_for_send, FileHeader,
+    TransferType,
+};
 use crate::webrtc_common::{setup_data_channel_handlers, WebRtcPeer};
 use crate::wormhole::generate_webrtc_code;
 
@@ -550,33 +552,15 @@ async fn send_file_webrtc_internal(
     use_default_relays: bool,
     use_pin: bool,
 ) -> Result<()> {
-    // Get file metadata
-    let metadata = tokio::fs::metadata(file_path)
-        .await
-        .context("Failed to read file metadata")?;
-    let file_size = metadata.len();
-    let filename = file_path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .context("Invalid filename")?
-        .to_string();
+    let prepared = match prepare_file_for_send(file_path).await? {
+        Some(p) => p,
+        None => return Ok(()),
+    };
 
-    println!(
-        "Preparing to send: {} ({})",
-        filename,
-        format_bytes(file_size)
-    );
-
-    // Open file
-    let file = File::open(file_path)
-        .await
-        .context("Failed to open file")?;
-
-    // Transfer using webrtc transport
     transfer_data_webrtc_internal(
-        file,
-        filename,
-        file_size,
+        prepared.file,
+        prepared.filename,
+        prepared.file_size,
         TransferType::File,
         custom_relays,
         use_default_relays,
@@ -625,42 +609,20 @@ async fn send_folder_webrtc_internal(
     use_default_relays: bool,
     use_pin: bool,
 ) -> Result<()> {
-    // Validate folder
-    if !folder_path.is_dir() {
-        anyhow::bail!("Not a directory: {}", folder_path.display());
-    }
-
-    let folder_name = folder_path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .context("Invalid folder name")?;
-
-    println!("Creating tar archive of: {}", folder_name);
-    print_tar_creation_info();
-
-    // Create tar archive using shared folder logic
-    let tar_archive = create_tar_archive(folder_path)?;
-    let temp_tar = tar_archive.temp_file;
-    let tar_filename = tar_archive.filename;
-    let file_size = tar_archive.file_size;
+    let prepared = match prepare_folder_for_send(folder_path).await? {
+        Some(p) => p,
+        None => return Ok(()),
+    };
 
     // Set up cleanup handler for Ctrl+C
-    let temp_path = temp_tar.path().to_path_buf();
+    let temp_path = prepared.temp_file.path().to_path_buf();
     let cleanup_path: TempFileCleanup = Arc::new(Mutex::new(Some(temp_path)));
     setup_cleanup_handler(cleanup_path.clone());
 
-    println!("Archive created: {} ({})", tar_filename, format_bytes(file_size));
-
-    // Open tar file
-    let file = File::open(temp_tar.path())
-        .await
-        .context("Failed to open tar file")?;
-
-    // Transfer using webrtc transport
     let result = transfer_data_webrtc_internal(
-        file,
-        tar_filename,
-        file_size,
+        prepared.file,
+        prepared.filename,
+        prepared.file_size,
         TransferType::Folder,
         custom_relays,
         use_default_relays,

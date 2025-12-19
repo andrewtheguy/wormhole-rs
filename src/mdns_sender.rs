@@ -15,15 +15,14 @@ use tokio::net::TcpStream;
 use tokio::sync::Mutex;
 
 use crate::crypto::CHUNK_SIZE;
-use crate::folder::{create_tar_archive, print_tar_creation_info, TarArchive};
 use crate::mdns_common::{
     generate_pin, generate_transfer_id, PORT_RANGE_END, PORT_RANGE_START, SERVICE_TYPE,
     TXT_FILENAME, TXT_FILE_SIZE, TXT_TRANSFER_ID, TXT_TRANSFER_TYPE,
 };
 use crate::spake2_handshake::handshake_as_responder;
 use crate::transfer::{
-    format_bytes, num_chunks, send_encrypted_chunk, send_encrypted_header, FileHeader,
-    TransferType,
+    format_bytes, num_chunks, prepare_file_for_send, prepare_folder_for_send,
+    send_encrypted_chunk, send_encrypted_header, FileHeader, TransferType,
 };
 
 /// Find an available TCP port in the configured range.
@@ -58,31 +57,24 @@ fn find_available_port() -> Result<TcpListener> {
 /// Generates a random passphrase and displays it to the user.
 /// The file is encrypted using a key derived from the passphrase.
 pub async fn send_file_mdns(file_path: &Path) -> Result<()> {
-    // Get file metadata
-    let metadata = tokio::fs::metadata(file_path)
-        .await
-        .context("Failed to read file metadata")?;
-    let file_size = metadata.len();
-    let filename = file_path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .context("Invalid filename")?
-        .to_string();
-
-    println!("Preparing to send: {} ({})", filename, format_bytes(file_size));
+    let prepared = match prepare_file_for_send(file_path).await? {
+        Some(p) => p,
+        None => return Ok(()),
+    };
 
     // Generate random PIN (key will be derived via SPAKE2 handshake)
     let pin = generate_pin();
     println!("\nPIN: {}\n", pin);
     println!("Share this PIN with the receiver.\n");
 
-    // Open file
-    let file = File::open(file_path)
-        .await
-        .context("Failed to open file")?;
-
-    // Transfer using common logic (key derived via SPAKE2 during handshake)
-    transfer_data_internal(file, filename, file_size, TransferType::File, pin).await
+    transfer_data_internal(
+        prepared.file,
+        prepared.filename,
+        prepared.file_size,
+        TransferType::File,
+        pin,
+    )
+    .await
 }
 
 /// Send a folder as a tar archive via mDNS transport.
@@ -91,54 +83,30 @@ pub async fn send_file_mdns(file_path: &Path) -> Result<()> {
 /// a receiver to connect. Generates a random passphrase and displays it.
 /// The archive is encrypted using a key derived from the passphrase.
 pub async fn send_folder_mdns(folder_path: &Path) -> Result<()> {
-    // Validate folder
-    if !folder_path.is_dir() {
-        anyhow::bail!("Not a directory: {}", folder_path.display());
-    }
-
-    let folder_name = folder_path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .context("Invalid folder name")?;
-
-    println!("Creating tar archive of: {}", folder_name);
-    print_tar_creation_info();
-
-    // Create tar archive (blocking operation)
-    let folder_path_owned = folder_path.to_owned();
-    let tar_archive: TarArchive =
-        tokio::task::spawn_blocking(move || create_tar_archive(&folder_path_owned))
-            .await
-            .context("Failed to spawn blocking task")??;
-
-    let tar_filename = tar_archive.filename;
-    let file_size = tar_archive.file_size;
-    let temp_path = tar_archive.temp_file.path().to_path_buf();
+    let prepared = match prepare_folder_for_send(folder_path).await? {
+        Some(p) => p,
+        None => return Ok(()),
+    };
 
     // Set up cleanup handler for temp file
+    let temp_path = prepared.temp_file.path().to_path_buf();
     let cleanup_path: Arc<Mutex<Option<std::path::PathBuf>>> =
-        Arc::new(Mutex::new(Some(temp_path.clone())));
+        Arc::new(Mutex::new(Some(temp_path)));
     setup_cleanup_handler(cleanup_path.clone());
-
-    println!(
-        "Archive created: {} ({}) from {}",
-        tar_filename,
-        format_bytes(file_size),
-        folder_path.display()
-    );
 
     // Generate random PIN (key will be derived via SPAKE2 handshake)
     let pin = generate_pin();
     println!("\nPIN: {}\n", pin);
     println!("Share this PIN with the receiver.\n");
 
-    // Open tar file
-    let file = File::open(&temp_path)
-        .await
-        .context("Failed to open tar file")?;
-
-    // Transfer (key derived via SPAKE2 during handshake)
-    let result = transfer_data_internal(file, tar_filename, file_size, TransferType::Folder, pin).await;
+    let result = transfer_data_internal(
+        prepared.file,
+        prepared.filename,
+        prepared.file_size,
+        TransferType::Folder,
+        pin,
+    )
+    .await;
 
     // Clear cleanup path (file will be dropped with temp_file)
     cleanup_path.lock().await.take();

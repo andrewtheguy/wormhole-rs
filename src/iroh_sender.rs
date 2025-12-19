@@ -7,11 +7,10 @@ use tokio::io::AsyncReadExt;
 use tokio::sync::Mutex;
 
 use crate::crypto::{generate_key, CHUNK_SIZE};
-use crate::folder::{create_tar_archive, print_tar_creation_info};
 use crate::iroh_common::{create_sender_endpoint, wait_for_direct_connection, DirectConnectionResult};
 use crate::transfer::{
-    format_bytes, num_chunks, send_chunk, send_encrypted_chunk, send_encrypted_header,
-    send_header, FileHeader, TransferType,
+    format_bytes, num_chunks, prepare_file_for_send, prepare_folder_for_send, send_chunk,
+    send_encrypted_chunk, send_encrypted_header, send_header, FileHeader, TransferType,
 };
 use crate::wormhole::generate_code;
 
@@ -207,31 +206,15 @@ async fn transfer_data_internal(
 
 /// Send a file and return the wormhole code
 pub async fn send_file(file_path: &Path, extra_encrypt: bool, relay_urls: Vec<String>, use_pin: bool) -> Result<()> {
-    // Get file metadata
-    let metadata = tokio::fs::metadata(file_path)
-        .await
-        .context("Failed to read file metadata")?;
-    let file_size = metadata.len();
-    let filename = file_path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .context("Invalid filename")?
-        .to_string();
+    let prepared = match prepare_file_for_send(file_path).await? {
+        Some(p) => p,
+        None => return Ok(()),
+    };
 
-    println!(
-        "📁 Preparing to send: {} ({})",
-        filename,
-        format_bytes(file_size)
-    );
-
-    // Open file
-    let file = File::open(file_path).await.context("Failed to open file")?;
-
-    // Transfer using common logic
     transfer_data_internal(
-        file,
-        filename,
-        file_size,
+        prepared.file,
+        prepared.filename,
+        prepared.file_size,
         TransferType::File,
         extra_encrypt,
         relay_urls,
@@ -247,46 +230,20 @@ pub async fn send_file(file_path: &Path, extra_encrypt: bool, relay_urls: Vec<St
 /// support Unix permission modes (rwx), so files may have different permissions
 /// after extraction on Windows.
 pub async fn send_folder(folder_path: &Path, extra_encrypt: bool, relay_urls: Vec<String>, use_pin: bool) -> Result<()> {
-    // Validate folder
-    if !folder_path.is_dir() {
-        anyhow::bail!("Not a directory: {}", folder_path.display());
-    }
-
-    let folder_name = folder_path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .context("Invalid folder name")?;
-
-    println!("📁 Creating tar archive of: {}", folder_name);
-    print_tar_creation_info();
-
-    // Create tar archive using shared folder logic
-    let tar_archive = create_tar_archive(folder_path)?;
-    let temp_tar = tar_archive.temp_file;
-    let tar_filename = tar_archive.filename;
-    let file_size = tar_archive.file_size;
+    let prepared = match prepare_folder_for_send(folder_path).await? {
+        Some(p) => p,
+        None => return Ok(()),
+    };
 
     // Set up cleanup handler for Ctrl+C
-    let temp_path = temp_tar.path().to_path_buf();
+    let temp_path = prepared.temp_file.path().to_path_buf();
     let cleanup_path: TempFileCleanup = Arc::new(Mutex::new(Some(temp_path)));
     setup_cleanup_handler(cleanup_path.clone());
 
-    println!(
-        "📦 Archive created: {} ({})",
-        tar_filename,
-        format_bytes(file_size)
-    );
-
-    // Open tar file
-    let file = File::open(temp_tar.path())
-        .await
-        .context("Failed to open tar file")?;
-
-    // Transfer using common logic
     let result = transfer_data_internal(
-        file,
-        tar_filename,
-        file_size,
+        prepared.file,
+        prepared.filename,
+        prepared.file_size,
         TransferType::Folder,
         extra_encrypt,
         relay_urls,
@@ -297,7 +254,7 @@ pub async fn send_folder(folder_path: &Path, extra_encrypt: bool, relay_urls: Ve
     // Clear cleanup path (transfer succeeded or failed, temp file handled)
     cleanup_path.lock().await.take();
 
-    // Temp file is automatically cleaned up when NamedTempFile is dropped
+    // Temp file is automatically cleaned up when NamedTempFile (prepared.temp_file) is dropped
 
     result
 }
