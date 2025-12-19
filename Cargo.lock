@@ -8911,6 +8911,7 @@ dependencies = [
  "base64 0.22.1",
  "bytes",
  "clap",
+ "crc32fast",
  "futures",
  "hex",
  "iroh",

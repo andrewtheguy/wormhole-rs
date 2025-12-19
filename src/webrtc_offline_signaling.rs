@@ -76,10 +76,14 @@ fn wrap_lines(s: &str, width: usize) -> String {
         .join("\n")
 }
 
-/// Display the offer as base64url-encoded JSON with line wrapping for the user to copy
+/// Display the offer as base64url-encoded JSON with CRC32 checksum for the user to copy
 pub fn display_offer_json(offer: &OfflineOffer) -> Result<()> {
     let json = serde_json::to_string(offer).context("Failed to serialize offer")?;
-    let encoded = URL_SAFE_NO_PAD.encode(json.as_bytes());
+    let json_bytes = json.as_bytes();
+    let checksum = crc32fast::hash(json_bytes);
+    let mut payload = json_bytes.to_vec();
+    payload.extend_from_slice(&checksum.to_be_bytes());
+    let encoded = URL_SAFE_NO_PAD.encode(&payload);
     let wrapped = wrap_lines(&encoded, LINE_WIDTH);
 
     println!();
@@ -96,10 +100,14 @@ pub fn display_offer_json(offer: &OfflineOffer) -> Result<()> {
     Ok(())
 }
 
-/// Display the answer as base64url-encoded JSON with line wrapping for the user to copy
+/// Display the answer as base64url-encoded JSON with CRC32 checksum for the user to copy
 pub fn display_answer_json(answer: &OfflineAnswer) -> Result<()> {
     let json = serde_json::to_string(answer).context("Failed to serialize answer")?;
-    let encoded = URL_SAFE_NO_PAD.encode(json.as_bytes());
+    let json_bytes = json.as_bytes();
+    let checksum = crc32fast::hash(json_bytes);
+    let mut payload = json_bytes.to_vec();
+    payload.extend_from_slice(&checksum.to_be_bytes());
+    let encoded = URL_SAFE_NO_PAD.encode(&payload);
     let wrapped = wrap_lines(&encoded, LINE_WIDTH);
 
     println!();
@@ -138,34 +146,56 @@ fn read_multiline_input() -> Result<String> {
     Ok(lines.join(""))
 }
 
-/// Read and parse base64url-encoded offer from user input (supports multi-line)
-pub fn read_offer_json() -> Result<OfflineOffer> {
-    println!("Paste sender's code, then press Ctrl+D (or Enter twice):");
-    std::io::stdout().flush()?;
+/// Decode base64 input with CRC32 checksum validation, with retry on error
+fn decode_with_checksum(prompt: &str) -> Result<String> {
+    loop {
+        println!("{}", prompt);
+        std::io::stdout().flush()?;
 
-    let encoded = read_multiline_input()?;
-    let decoded = URL_SAFE_NO_PAD
-        .decode(&encoded)
-        .context("Failed to decode code")?;
-    let json = String::from_utf8(decoded).context("Invalid UTF-8 in decoded data")?;
-    let offer: OfflineOffer = serde_json::from_str(&json).context("Failed to parse offer")?;
+        let encoded = read_multiline_input()?;
 
-    Ok(offer)
+        if encoded.is_empty() {
+            eprintln!("No input received. Please try again.\n");
+            continue;
+        }
+
+        let decoded = match URL_SAFE_NO_PAD.decode(&encoded) {
+            Ok(d) => d,
+            Err(_) => {
+                eprintln!("Invalid code format. Please try again.\n");
+                continue;
+            }
+        };
+
+        if decoded.len() < 4 {
+            eprintln!("Code too short. Please try again.\n");
+            continue;
+        }
+
+        let (json_bytes, checksum_bytes) = decoded.split_at(decoded.len() - 4);
+        let expected = u32::from_be_bytes(checksum_bytes.try_into().unwrap());
+        let actual = crc32fast::hash(json_bytes);
+
+        if expected != actual {
+            eprintln!("Checksum mismatch - code may have been corrupted during copy/paste.");
+            eprintln!("Please try again.\n");
+            continue;
+        }
+
+        return String::from_utf8(json_bytes.to_vec()).context("Invalid UTF-8 in decoded data");
+    }
 }
 
-/// Read and parse base64url-encoded answer from user input (supports multi-line)
+/// Read and parse base64url-encoded offer from user input with CRC32 validation
+pub fn read_offer_json() -> Result<OfflineOffer> {
+    let json = decode_with_checksum("Paste sender's code, then press Enter twice:")?;
+    serde_json::from_str(&json).context("Failed to parse offer")
+}
+
+/// Read and parse base64url-encoded answer from user input with CRC32 validation
 pub fn read_answer_json() -> Result<OfflineAnswer> {
-    println!("Paste receiver's response code, then press Ctrl+D (or Enter twice):");
-    std::io::stdout().flush()?;
-
-    let encoded = read_multiline_input()?;
-    let decoded = URL_SAFE_NO_PAD
-        .decode(&encoded)
-        .context("Failed to decode code")?;
-    let json = String::from_utf8(decoded).context("Invalid UTF-8 in decoded data")?;
-    let answer: OfflineAnswer = serde_json::from_str(&json).context("Failed to parse answer")?;
-
-    Ok(answer)
+    let json = decode_with_checksum("Paste receiver's response code, then press Enter twice:")?;
+    serde_json::from_str(&json).context("Failed to parse answer")
 }
 
 #[cfg(test)]
