@@ -1,7 +1,7 @@
-//! Offline WebRTC receiver - Direct LAN transfer without any servers
+//! Manual signaling WebRTC receiver - Direct transfer with copy/paste signaling
 //!
 //! This module implements WebRTC file receiving using copy/paste JSON signaling.
-//! No STUN servers, no Nostr relays, no internet connection required.
+//! Uses STUN servers for NAT traversal but no Nostr relays for signaling.
 
 use anyhow::{Context, Result};
 use bytes::Bytes;
@@ -99,8 +99,8 @@ pub async fn receive_file_offline(output_dir: Option<PathBuf>) -> Result<()> {
     );
     println!("Transfer type: {}", transfer_info.transfer_type);
 
-    // Create WebRTC peer in offline mode (no STUN servers)
-    let mut rtc_peer = WebRtcPeer::new_offline().await?;
+    // Create WebRTC peer with STUN for NAT traversal
+    let mut rtc_peer = WebRtcPeer::new().await?;
 
     // Set remote description with offer
     let offer_sdp =
@@ -131,9 +131,7 @@ pub async fn receive_file_offline(output_dir: Option<PathBuf>) -> Result<()> {
     println!("Collected {} ICE candidates", candidates.len());
 
     if candidates.is_empty() {
-        anyhow::bail!(
-            "No ICE candidates gathered. Make sure you're on the same network as the sender."
-        );
+        anyhow::bail!("No ICE candidates gathered. Check your network connection.");
     }
 
     // Create and display answer JSON
@@ -158,9 +156,7 @@ pub async fn receive_file_offline(output_dir: Option<PathBuf>) -> Result<()> {
     let data_channel = tokio::time::timeout(CONNECTION_TIMEOUT, data_channel_rx.recv())
         .await
         .map_err(|_| {
-            anyhow::anyhow!(
-                "Connection timeout. Make sure you're on the same network as the sender."
-            )
+            anyhow::anyhow!("Connection timeout. NAT traversal may have failed.")
         })?
         .context("Failed to receive data channel")?;
 

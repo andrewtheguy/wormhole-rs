@@ -557,6 +557,64 @@ pub async fn send_file_webrtc(
     custom_relays: Option<Vec<String>>,
     use_default_relays: bool,
     use_pin: bool,
+    manual_signaling: bool,
+) -> Result<TransferResult> {
+    // If manual signaling mode, use offline sender directly
+    if manual_signaling {
+        crate::webrtc_offline_sender::send_file_offline(file_path)
+            .await
+            .map(|_| TransferResult::Confirmed)
+    } else {
+        // Try normal Nostr signaling path
+        match send_file_webrtc_internal(
+            file_path,
+            force_relay,
+            custom_relays.clone(),
+            use_default_relays,
+            use_pin,
+        )
+        .await
+        {
+            Ok(result) => Ok(result),
+            Err(e) => {
+                // Check if this is a signaling error (not a file/transfer error)
+                let err_msg = e.to_string();
+                if err_msg.contains("relay")
+                    || err_msg.contains("Nostr")
+                    || err_msg.contains("signaling")
+                    || err_msg.contains("connection")
+                {
+                    eprintln!("\nNostr signaling failed: {}", e);
+                    eprintln!(
+                        "Press Enter to use manual signaling (copy/paste), or Ctrl+C to abort..."
+                    );
+
+                    // Wait for Enter
+                    let stdin = tokio::io::stdin();
+                    let mut reader = tokio::io::BufReader::new(stdin);
+                    let mut line = String::new();
+                    reader.read_line(&mut line).await?;
+
+                    // Fall back to manual signaling
+                    crate::webrtc_offline_sender::send_file_offline(file_path)
+                        .await
+                        .map(|_| TransferResult::Confirmed)
+                } else {
+                    // Non-signaling error, propagate it
+                    Err(e)
+                }
+            }
+        }
+    }
+}
+
+/// Internal function for normal Nostr signaling path
+async fn send_file_webrtc_internal(
+    file_path: &Path,
+    force_relay: bool,
+    custom_relays: Option<Vec<String>>,
+    use_default_relays: bool,
+    use_pin: bool,
 ) -> Result<TransferResult> {
     // Get file metadata
     let metadata = tokio::fs::metadata(file_path)
@@ -596,6 +654,64 @@ pub async fn send_file_webrtc(
 
 /// Send a folder as a tar archive via webrtc transport
 pub async fn send_folder_webrtc(
+    folder_path: &Path,
+    force_relay: bool,
+    custom_relays: Option<Vec<String>>,
+    use_default_relays: bool,
+    use_pin: bool,
+    manual_signaling: bool,
+) -> Result<TransferResult> {
+    // If manual signaling mode, use offline sender directly
+    if manual_signaling {
+        return crate::webrtc_offline_sender::send_folder_offline(folder_path)
+            .await
+            .map(|_| TransferResult::Confirmed);
+    }
+
+    // Try normal Nostr signaling path
+    match send_folder_webrtc_internal(
+        folder_path,
+        force_relay,
+        custom_relays.clone(),
+        use_default_relays,
+        use_pin,
+    )
+    .await
+    {
+        Ok(result) => Ok(result),
+        Err(e) => {
+            // Check if this is a signaling error (not a file/transfer error)
+            let err_msg = e.to_string();
+            if err_msg.contains("relay")
+                || err_msg.contains("Nostr")
+                || err_msg.contains("signaling")
+                || err_msg.contains("connection")
+            {
+                eprintln!("\nNostr signaling failed: {}", e);
+                eprintln!(
+                    "Press Enter to use manual signaling (copy/paste), or Ctrl+C to abort..."
+                );
+
+                // Wait for Enter
+                let stdin = tokio::io::stdin();
+                let mut reader = tokio::io::BufReader::new(stdin);
+                let mut line = String::new();
+                reader.read_line(&mut line).await?;
+
+                // Fall back to manual signaling
+                crate::webrtc_offline_sender::send_folder_offline(folder_path)
+                    .await
+                    .map(|_| TransferResult::Confirmed)
+            } else {
+                // Non-signaling error, propagate it
+                Err(e)
+            }
+        }
+    }
+}
+
+/// Internal function for normal Nostr signaling path (folder)
+async fn send_folder_webrtc_internal(
     folder_path: &Path,
     force_relay: bool,
     custom_relays: Option<Vec<String>>,
