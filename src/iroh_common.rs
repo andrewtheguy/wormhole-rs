@@ -17,9 +17,9 @@ pub const DIRECT_WAIT_TIMEOUT: Duration = Duration::from_secs(5);
 /// Result of waiting for direct connection
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DirectConnectionResult {
-    /// Direct P2P connection was established
-    Direct,
-    /// Connection is still using relay (hole-punching failed or timed out)
+    /// Direct or Mixed P2P connection was established
+    DirectOrMixed,
+    /// Connection is still using relay only (hole-punching failed or timed out)
     StillRelay,
 }
 
@@ -34,20 +34,23 @@ pub async fn wait_for_direct_connection(
         return DirectConnectionResult::StillRelay; // Unknown = treat as non-direct
     };
 
-    // Check initial state - if already direct, accept immediately
-    if matches!(watcher.get(), ConnectionType::Direct(_)) {
-        return DirectConnectionResult::Direct;
+    // Check initial state - if already direct or mixed, accept immediately
+    match watcher.get() {
+        ConnectionType::Direct(_) | ConnectionType::Mixed(..) => {
+            return DirectConnectionResult::DirectOrMixed;
+        }
+        _ => {}
     }
 
     // Wait for connection type updates with timeout
     let result = tokio::time::timeout(DIRECT_WAIT_TIMEOUT, async {
         loop {
             match watcher.updated().await {
-                Ok(ConnectionType::Direct(_)) => {
-                    return DirectConnectionResult::Direct;
+                Ok(ConnectionType::Direct(_)) | Ok(ConnectionType::Mixed(..)) => {
+                    return DirectConnectionResult::DirectOrMixed;
                 }
                 Ok(_) => {
-                    // Still Relay or Mixed, continue waiting for next update
+                    // Still Relay only, continue waiting for next update
                 }
                 Err(_) => {
                     return DirectConnectionResult::StillRelay;
