@@ -46,6 +46,23 @@ fn setup_cleanup_handler(cleanup_path: TempFileCleanup) {
     });
 }
 
+/// Set up data channel close handler that notifies via channel
+fn setup_data_channel_close_handler(
+    dc: &Arc<webrtc::data_channel::RTCDataChannel>,
+    close_tx: tokio::sync::oneshot::Sender<()>,
+) {
+    let close_tx = Arc::new(Mutex::new(Some(close_tx)));
+    dc.on_close(Box::new(move || {
+        let close_tx = close_tx.clone();
+        Box::pin(async move {
+            if let Some(tx) = close_tx.lock().await.take() {
+                let _ = tx.send(());
+            }
+            println!("Data channel closed");
+        })
+    }));
+}
+
 /// Check if an error is a signaling-related error (vs file/transfer error)
 fn is_signaling_error(err: &anyhow::Error) -> bool {
     let err_msg = err.to_string().to_lowercase();
@@ -137,7 +154,9 @@ async fn try_webrtc_transfer(
     // Set up channel for receiving data channel messages
     let (message_tx, mut message_rx) = mpsc::channel::<Vec<u8>>(100);
     let (open_tx, open_rx) = tokio::sync::oneshot::channel();
+    let (close_tx, close_rx) = tokio::sync::oneshot::channel();
     setup_data_channel_handlers(&data_channel, message_tx, Some(open_tx));
+    setup_data_channel_close_handler(&data_channel, close_tx);
 
     // Start listening for signaling messages
     let (mut signal_rx, signal_handle) = signaling.start_message_receiver();
@@ -395,24 +414,51 @@ async fn try_webrtc_transfer(
         .await
         .context("Failed to send done message")?;
 
-    // Wait for ACK from receiver
+    // Wait for ACK from receiver (or data channel close, which means receiver is done)
     println!("Waiting for receiver to confirm...");
-    let ack_result = timeout(Duration::from_secs(30), async {
-        while let Some(msg) = message_rx.recv().await {
-            if !msg.is_empty() && msg[0] == 3 {
-                return Ok(());
+
+    // Wrap close_rx in a Mutex so it can be used in async block
+    let close_rx = Arc::new(Mutex::new(Some(close_rx)));
+    let close_rx_clone = close_rx.clone();
+
+    let ack_result: Result<bool, ()> = timeout(Duration::from_secs(10), async {
+        loop {
+            tokio::select! {
+                msg = message_rx.recv() => {
+                    match msg {
+                        Some(data) if !data.is_empty() && data[0] == 3 => {
+                            return true; // Got explicit ACK
+                        }
+                        Some(_) => continue,
+                        None => return false, // Channel closed
+                    }
+                }
+                _ = async {
+                    if let Some(rx) = close_rx_clone.lock().await.take() {
+                        let _ = rx.await;
+                    } else {
+                        // Already consumed, just pend forever
+                        std::future::pending::<()>().await;
+                    }
+                } => {
+                    return false; // Data channel closed
+                }
             }
         }
-        Err(anyhow::anyhow!("Channel closed without ACK"))
     })
-    .await;
+    .await
+    .map_err(|_| ());
 
     match ack_result {
-        Ok(Ok(())) => {
+        Ok(true) => {
             println!("Receiver confirmed!");
         }
-        _ => {
-            println!("Warning: Did not receive confirmation from receiver");
+        Ok(false) => {
+            // Data channel closed - receiver got the data and disconnected
+            println!("Transfer complete (receiver disconnected)");
+        }
+        Err(_) => {
+            println!("Warning: Did not receive confirmation from receiver (timeout)");
         }
     }
 
