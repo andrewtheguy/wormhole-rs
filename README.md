@@ -4,11 +4,11 @@ A secure peer-to-peer file transfer tool with two main transport categories:
 
 **1. Internet Transfers** (Wormhole Code)
 - **iroh mode** - Direct P2P transfers using [iroh](https://github.com/n0-computer/iroh) with QUIC/TLS (automatic relay fallback)
-- **WebRTC mode** - WebRTC transfers with Nostr signaling and tmpfiles.org relay fallback - requires `webrtc` feature
+- **WebRTC mode** - WebRTC transfers with Nostr signaling (or copy/paste `--manual-signaling`) and tmpfiles.org relay fallback - requires `webrtc` feature
 - **Tor mode** - Anonymous transfers via Tor hidden services (.onion addresses) - requires `onion` feature
 
-**2. Local Transfers** (Passphrase)
-- **Local mode** - LAN transfers using mDNS discovery and TCP - no internet required
+**2. Local Transfers** (PIN + SPAKE2)
+- **Local mode** - LAN transfers using mDNS discovery, SPAKE2 key exchange from a 12-character PIN, and TCP transport (no internet required)
 
 ## Features
 
@@ -18,9 +18,9 @@ A secure peer-to-peer file transfer tool with two main transport categories:
     - **Local**: Private LAN transfers using mDNS
 - **File and folder transfers** - Send individual files or entire directories (automatically archived)
 - **Local discovery** - mDNS for same-network transfers
-- **NAT traversal** - STUN/TURN for WebRTC, relay fallback for Iroh
+- **NAT traversal** - STUN for WebRTC (no built-in TURN); relay fallback for Iroh; tmpfiles.org fallback for WebRTC when P2P fails
 - **Manual Relay Fallback** - Force fallback to tmpfiles.org relay mode (`--force-relay`) if WebRTC fails
-- **PIN-based Transfers** - Use short 12-digit PINs instead of long wormhole codes for easier typing
+- **PIN-based Transfers** - Use short 12-character PINs (with checksum) instead of long wormhole codes for easier typing
 - **Cross-platform** - Single binary, supports macOS, Linux, and Windows
 
 ## Common Use Cases
@@ -101,15 +101,18 @@ wormhole-rs send iroh /path/to/file --extra-encrypt
 ```
 
 #### 2. WebRTC Mode
-*Browser-compatible. Uses WebRTC + Nostr signaling.*
+*Browser-compatible. Uses WebRTC + Nostr signaling; copy/paste signaling works with `--manual-signaling`.*
 > Requires building with `--features webrtc`.
 
 ```bash
 # Standard send (displays wormhole code)
 wormhole-rs send webrtc /path/to/file
 
-# Send using a 12-digit PIN (Easier to type)
+# Send using a 12-character PIN (checksum-validated)
 wormhole-rs send --pin webrtc /path/to/file
+
+# Send with copy/paste manual signaling (no relays)
+wormhole-rs send --manual-signaling webrtc /path/to/file
 ```
 
 #### 3. Tor Mode
@@ -133,13 +136,16 @@ wormhole-rs receive --code <WORMHOLE_CODE>
 
 # Receive using PIN
 wormhole-rs receive --pin
+
+# Receive with copy/paste manual signaling (WebRTC)
+wormhole-rs receive --manual-signaling
 ```
 
 ---
 
 ### Local LAN Transfers (`wormhole-rs send-local`)
 
-Use this mode for transfers on the same network (no internet required). Uses a **Passphrase** (not a code).
+Use this mode for transfers on the same network (no internet required). A **PIN** is shown and fed into a SPAKE2 PAKE to derive the AES key (not a wormhole code).
 
 ```bash
 # Send locally
@@ -155,15 +161,15 @@ wormhole-rs receive-local
 ## Security
 
 All modes provide end-to-end encryption.
-- **Global Modes (Iroh, WebRTC, Tor)**: The **Wormhole Code** contains the key/address information.
-- **Local Mode**: Uses a short **Passphrase** for key derivation.
+- **Global Modes (Iroh, WebRTC, Tor)**: The **Wormhole Code** carries the key/address information.
+- **Local Mode**: Uses a 12-character PIN that feeds a SPAKE2 PAKE to derive the AES key (no wormhole code).
 
 | Mode | Type | Key Exchange | Transport Encryption |
 |------|------|--------------|---------------------|
 | iroh | Internet | Wormhole Code | QUIC/TLS 1.3 |
 | WebRTC | Internet | Wormhole Code | DTLS (WebRTC) / TLS (Relay) |
 | Tor | Internet | Wormhole Code | Tor circuits |
-| Local | LAN | **Passphrase** | None (TCP) |
+| Local | LAN | SPAKE2 (PIN + transfer_id) | AES-256-GCM over TCP |
 
 Relay servers (iroh, tmpfiles.org) never see decrypted content or encryption keys.
 
