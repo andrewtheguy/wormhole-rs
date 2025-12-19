@@ -8,9 +8,11 @@ use anyhow::{Context, Result};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use serde::{Deserialize, Serialize};
 use std::io::{BufRead, Write};
+use std::time::{SystemTime, UNIX_EPOCH};
 use webrtc::ice_transport::ice_candidate::RTCIceCandidate;
 
 use crate::nostr_signaling::IceCandidatePayload;
+use crate::wormhole::CODE_TTL_SECS;
 
 /// Line width for wrapped output (safe for most terminals)
 const LINE_WIDTH: usize = 76;
@@ -18,6 +20,14 @@ const LINE_WIDTH: usize = 76;
 /// Magic trailer bytes appended before base64 encoding to trigger end-of-input detection
 /// Uses null bytes which cannot appear in valid JSON
 const END_MARKER: &[u8] = b"\x00END\x00";
+
+/// Get current Unix timestamp in seconds
+fn current_timestamp() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
 
 // ============================================================================
 // JSON Signaling Structures
@@ -39,6 +49,8 @@ pub struct OfflineOffer {
     pub sdp: String,
     pub ice_candidates: Vec<IceCandidatePayload>,
     pub transfer_info: TransferInfo,
+    /// Unix timestamp when this offer was created (for TTL validation)
+    pub created_at: u64,
 }
 
 /// Offline answer containing SDP and ICE candidates
@@ -214,10 +226,35 @@ fn decode_with_checksum(prompt: &str) -> Result<String> {
     }
 }
 
+/// Validate TTL of an offer
+fn validate_offer_ttl(offer: &OfflineOffer) -> Result<()> {
+    let now = current_timestamp();
+
+    // Allow 60s clock skew into future
+    if offer.created_at > now + 60 {
+        anyhow::bail!("Invalid offer: created_at is in the future. Check system clock.");
+    }
+
+    let age = now.saturating_sub(offer.created_at);
+    if age > CODE_TTL_SECS {
+        let minutes = age / 60;
+        anyhow::bail!(
+            "Offer expired: code is {} minutes old (max {} minutes). \
+             Please request a new code from the sender.",
+            minutes,
+            CODE_TTL_SECS / 60
+        );
+    }
+
+    Ok(())
+}
+
 /// Read and parse base64url-encoded offer from user input with CRC32 validation
 pub fn read_offer_json() -> Result<OfflineOffer> {
     let json = decode_with_checksum("=== RECEIVER STEP 1: Paste sender's code ===")?;
-    serde_json::from_str(&json).context("Failed to parse offer")
+    let offer: OfflineOffer = serde_json::from_str(&json).context("Failed to parse offer")?;
+    validate_offer_ttl(&offer)?;
+    Ok(offer)
 }
 
 /// Read and parse base64url-encoded answer from user input with CRC32 validation
@@ -245,6 +282,7 @@ mod tests {
                 transfer_type: "file".to_string(),
                 encryption_key: "0".repeat(64),
             },
+            created_at: current_timestamp(),
         };
 
         let json = serde_json::to_string(&offer).unwrap();
@@ -253,6 +291,7 @@ mod tests {
         assert_eq!(parsed.sdp, offer.sdp);
         assert_eq!(parsed.transfer_info.filename, "test.txt");
         assert_eq!(parsed.ice_candidates.len(), 1);
+        assert!(parsed.created_at > 0);
     }
 
     #[test]
