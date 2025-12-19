@@ -530,8 +530,8 @@ async fn transfer_data_webrtc_internal(
             anyhow::bail!(
                 "WebRTC connection failed: {}\n\n\
                  If direct P2P connection is not possible, try one of these alternatives:\n  \
-                 - Use Tor mode: wormhole-rs send tor <file>\n  \
-                 - Use manual signaling: wormhole-rs send webrtc --manual-signaling <file>\n  \
+                 - Use Tor mode: wormhole-rs send-tor <file>\n  \
+                 - Use manual signaling: wormhole-rs send --manual-signaling <file>\n  \
                  - Use local mode (same LAN): wormhole-rs send-local <file>",
                 reason
             );

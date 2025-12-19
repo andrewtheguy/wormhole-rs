@@ -419,8 +419,8 @@ pub async fn receive_webrtc(code: &str, output_dir: Option<PathBuf>) -> Result<(
             anyhow::bail!(
                 "WebRTC connection failed: {}\n\n\
                  If direct P2P connection is not possible, ask the sender to try:\n  \
-                 - Tor mode: wormhole-rs send tor <file>\n  \
-                 - Manual signaling: wormhole-rs send webrtc --manual-signaling <file>",
+                 - Tor mode: wormhole-rs send-tor <file>\n  \
+                 - Manual signaling: wormhole-rs send --manual-signaling <file>",
                 reason
             );
         }

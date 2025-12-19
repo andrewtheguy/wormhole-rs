@@ -91,12 +91,12 @@ async fn transfer_data_internal(
         .await
         .ok_or_else(|| anyhow::anyhow!(
             "No incoming connection.\n\n\
-             If relay connection fails, try Tor mode: wormhole-rs send tor <file>"
+             If relay connection fails, try Tor mode: wormhole-rs send-tor <file>"
         ))?
         .await
         .map_err(|e| anyhow::anyhow!(
             "Failed to accept connection: {}\n\n\
-             If relay connection fails, try Tor mode: wormhole-rs send tor <file>",
+             If relay connection fails, try Tor mode: wormhole-rs send-tor <file>",
             e
         ))?;
 

@@ -96,7 +96,7 @@ pub async fn receive(code: &str, output_dir: Option<PathBuf>, relay_urls: Vec<St
         .await
         .map_err(|e| anyhow::anyhow!(
             "Failed to connect to sender: {}\n\n\
-             If relay connection fails, try Tor mode: wormhole-rs send tor <file>",
+             If relay connection fails, try Tor mode: wormhole-rs send-tor <file>",
             e
         ))?;
 
@@ -118,8 +118,8 @@ pub async fn receive(code: &str, output_dir: Option<PathBuf>, relay_urls: Vec<St
         //             bail!(
         //                 "Connection rejected: relay-only connection not allowed with default public relay {}.\n\n\
         //                  The default relay is rate-limited. Try one of these alternatives:\n  \
-        //                  - Use Tor mode: wormhole-rs send tor <file>\n  \
-        //                  - Use a custom relay: wormhole-rs send iroh --relay-url <url> <file>",
+        //                  - Use Tor mode: wormhole-rs send-tor <file>\n  \
+        //                  - Use a custom relay: wormhole-rs send-iroh --relay-url <url> <file>",
         //                 url
         //             );
         //         }
@@ -127,8 +127,8 @@ pub async fn receive(code: &str, output_dir: Option<PathBuf>, relay_urls: Vec<St
         //             bail!(
         //                 "Connection rejected: no viable path with no verified connection to this PublicKey.\n\n\
         //                  Try one of these alternatives:\n  \
-        //                  - Use Tor mode: wormhole-rs send tor <file>\n  \
-        //                  - Use a custom relay: wormhole-rs send iroh --relay-url <url> <file>"
+        //                  - Use Tor mode: wormhole-rs send-tor <file>\n  \
+        //                  - Use a custom relay: wormhole-rs send-iroh --relay-url <url> <file>"
         //             );
         //         }
         //         _ => {}
