@@ -83,9 +83,14 @@ pub fn display_offer_json(offer: &OfflineOffer) -> Result<()> {
     let wrapped = wrap_lines(&encoded, LINE_WIDTH);
 
     println!();
-    println!("=== COPY THIS CODE AND SEND TO RECEIVER ===");
+    println!("Ask the receiver to run:");
+    println!("  wormhole-rs receive --manual-signaling");
+    println!();
+    println!("Then copy the code between the markers and send to receiver:");
+    println!();
+    println!("--- START CODE ---");
     println!("{}", wrapped);
-    println!("============================================");
+    println!("--- END CODE ---");
     println!();
 
     Ok(())
@@ -98,9 +103,11 @@ pub fn display_answer_json(answer: &OfflineAnswer) -> Result<()> {
     let wrapped = wrap_lines(&encoded, LINE_WIDTH);
 
     println!();
-    println!("=== COPY THIS CODE AND SEND TO SENDER ===");
+    println!("Copy the code between the markers and send to sender:");
+    println!();
+    println!("--- START CODE ---");
     println!("{}", wrapped);
-    println!("==========================================");
+    println!("--- END CODE ---");
     println!();
 
     Ok(())
