@@ -5,17 +5,29 @@ This guide describes common scenarios where `wormhole-rs` shines and which mode 
 ## 1. No Internet Access (LAN / Air-gapped)
 **Scenario**: You need to transfer files between two computers on the same Wi-Fi or Ethernet network, but the internet is down, slow, or you are in an isolated environment (air-gapped).
 
-**Solution**: **Local Mode** (`send-local` / `receive-local`)
-- **Why**: It uses mDNS for discovery and direct TCP connections. No data leaves your local network. It relies on a short passphrase instead of a long code.
+**Solution A**: **Local Mode** (`send-local` / `receive-local`)
+- **Why**: Uses mDNS for discovery and direct TCP connections. No data leaves your local network. Relies on a short passphrase instead of a long code.
 - **Command**:
   ```bash
   # Sender
   wormhole-rs send-local /path/to/file
-  
+
   # Receiver
   wormhole-rs receive-local
   ```
 - **Experience**: The sender sets a passphrase (e.g., "secret"). The receiver finds the sender automatically and prompts for that passphrase.
+
+**Solution B**: **WebRTC Manual Signaling** (`--manual-signaling`)
+- **Why**: When mDNS discovery doesn't work (different subnets, VPN issues), manual signaling allows WebRTC P2P transfer by exchanging codes out-of-band.
+- **Command**:
+  ```bash
+  # Sender
+  wormhole-rs send webrtc --manual-signaling /path/to/file
+
+  # Receiver
+  wormhole-rs receive --manual-signaling
+  ```
+- **Experience**: Exchange base64 codes via any channel (chat, paper, verbal). No internet or relay servers needed.
 
 ---
 
