@@ -228,6 +228,12 @@ All wormhole codes and signaling offers include a creation timestamp and are val
 1. **Wormhole Codes** (iroh/tor/webrtc via Nostr): Validated in `parse_code()` before connection
 2. **Manual Signaling Offers**: Validated in `read_offer_json()` before WebRTC handshake
 
+**Not used for mDNS (Local Mode):**
+TTL validation is not applied to local mDNS transfers because it is unnecessary:
+- The mDNS service advertisement is ephemeral and disappears when the sender exits
+- There is no persistent code/token that could be stored and replayed later
+- The connection happens immediately over direct TCP on the LAN
+
 **Error Messages:**
 - Expired codes: "Token expired: code is X minutes old (max 30 minutes). Please request a new code from the sender."
 - Future timestamps: "Invalid token: created_at is in the future. Check system clock."
