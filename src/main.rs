@@ -10,7 +10,7 @@ use wormhole_rs::wormhole;
 use wormhole_rs::{onion_receiver, onion_sender};
 
 #[cfg(feature = "webrtc")]
-use wormhole_rs::{webrtc_receiver, webrtc_sender::{self, TransferResult}};
+use wormhole_rs::{webrtc_receiver, webrtc_sender::{self, TransferResult}, webrtc_offline_receiver};
 
 
 use wormhole_rs::{mdns_receiver, mdns_sender};
@@ -53,6 +53,11 @@ enum Commands {
         /// Use PIN-based code exchange for Nostr (prompts for PIN input)
         #[arg(long)]
         pin: bool,
+
+        /// Use manual copy/paste signaling instead of Nostr relays (WebRTC)
+        #[cfg(feature = "webrtc")]
+        #[arg(long)]
+        manual_signaling: bool,
     },
 
     /// Send via local network (mDNS discovery)
@@ -269,6 +274,45 @@ async fn main() -> Result<()> {
             mdns_receiver::receive_mdns(output).await?;
         }
 
+        #[cfg(feature = "webrtc")]
+        Commands::Receive { mut code, output, relay_url, pin, manual_signaling } => {
+            // Validate output directory if provided
+            validate_output_dir(&output)?;
+
+            // Handle manual signaling mode (WebRTC with copy/paste)
+            if manual_signaling {
+                webrtc_offline_receiver::receive_file_offline(output).await?;
+                return Ok(());
+            }
+
+            // Handle PIN mode if requested
+            if pin {
+                let pin_str = wormhole_rs::pin::prompt_pin()?;
+
+                println!("Searching for wormhole token via Nostr...");
+
+                // Fetch encrypted token from Nostr
+                let token_str = wormhole_rs::nostr_pin::fetch_wormhole_code_via_pin(&pin_str).await?;
+                println!("Token found and decrypted!");
+                code = Some(token_str);
+            }
+
+            // Get code from argument or prompt
+            let code = match code {
+                Some(c) => c,
+                None => {
+                    print!("Enter wormhole code: ");
+                    io::stdout().flush()?;
+                    let mut input = String::new();
+                    io::stdin().read_line(&mut input)?;
+                    input.trim().to_string()
+                }
+            };
+
+            receive_with_code(&code, output, relay_url).await?;
+        }
+
+        #[cfg(not(feature = "webrtc"))]
         Commands::Receive { mut code, output, relay_url, pin } => {
             // Validate output directory if provided
             validate_output_dir(&output)?;
