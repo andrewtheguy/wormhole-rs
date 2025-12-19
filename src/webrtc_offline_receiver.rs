@@ -27,8 +27,8 @@ use crate::webrtc_offline_signaling::{
 /// Timeout for ICE gathering
 const ICE_GATHERING_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// Timeout for WebRTC connection
-const CONNECTION_TIMEOUT: Duration = Duration::from_secs(60);
+/// Timeout for WebRTC connection (3 minutes to allow time for copy/paste signaling)
+const CONNECTION_TIMEOUT: Duration = Duration::from_secs(180);
 
 /// Shared state for temp file cleanup on interrupt
 type TempFileCleanup = Arc<Mutex<Option<PathBuf>>>;
