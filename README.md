@@ -126,7 +126,7 @@ wormhole-rs send iroh /path/to/file --extra-encrypt
     wormhole-rs send iroh --relay-url https://relay1.example.com /path/to/file
     wormhole-rs receive --relay-url https://relay1.example.com
     ```
-- Multiple `--relay-url` flags are supported for failover; `relay-only` is rejected when using the default public relay.
+- Multiple `--relay-url` flags are supported for failover; relay-only connections using the default public relay are rejected on the **receiver** side to avoid rate-limited public data paths.
 - Discovery still relies on iroh's public DNS/pkarr services today; full zero-third-party operation will land with the planned custom DNS server support (see ROADMAP).
 
 #### 2. WebRTC Mode
