@@ -48,6 +48,16 @@ Install with custom release tag:
 curl -sSL https://raw.githubusercontent.com/andrewtheguy/wormhole-rs/main/install.sh | bash -s <RELEASE_TAG>
 ```
 
+By default the installer pulls the latest **stable** release. Use `--prerelease` for the newest prerelease, or pass an explicit tag to pin to a specific build. Examples:
+
+```bash
+# Latest prerelease
+curl -sSL https://raw.githubusercontent.com/andrewtheguy/wormhole-rs/main/install.sh | bash -s -- --prerelease
+
+# Pin to a specific tag
+curl -sSL https://raw.githubusercontent.com/andrewtheguy/wormhole-rs/main/install.sh | bash -s 20251210172710
+```
+
 ### Quick Install (Windows)
 
 ```powershell
@@ -57,6 +67,16 @@ irm https://raw.githubusercontent.com/andrewtheguy/wormhole-rs/main/install.ps1 
 Install with custom release tag:
 ```powershell
 irm https://raw.githubusercontent.com/andrewtheguy/wormhole-rs/main/install.ps1 | iex -Args <RELEASE_TAG>
+```
+
+By default the PowerShell installer pulls the latest **stable** release. Use `-PreRelease` for the newest prerelease, or pass an explicit tag to pin to a specific build. Examples:
+
+```powershell
+# Latest prerelease
+irm https://raw.githubusercontent.com/andrewtheguy/wormhole-rs/main/install.ps1 | iex -Args -PreRelease
+
+# Pin to a specific tag
+irm https://raw.githubusercontent.com/andrewtheguy/wormhole-rs/main/install.ps1 | iex -Args 20251210172710
 ```
 
 ### From Source
