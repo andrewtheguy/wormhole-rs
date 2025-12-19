@@ -99,6 +99,16 @@ wormhole-rs send iroh /path/to/folder --folder
 wormhole-rs send iroh /path/to/file --extra-encrypt
 ```
 
+##### Custom Iroh Relays
+- Default behavior uses iroh's public relay fallback plus direct P2P; the public relay is rate-limited and not meant for sustained data paths.
+- For production or self-hosted setups, point both sides at your own DERP relay(s):
+    ```bash
+    wormhole-rs send iroh --relay-url https://relay1.example.com /path/to/file
+    wormhole-rs receive --relay-url https://relay1.example.com
+    ```
+- Multiple `--relay-url` flags are supported for failover; `relay-only` is rejected when using the default public relay.
+- Discovery still relies on iroh's public DNS/pkarr services today; full zero-third-party operation will land with the planned custom DNS server support (see ROADMAP).
+
 #### 2. WebRTC Mode
 *Browser-compatible. Uses WebRTC + Nostr signaling; copy/paste signaling works with `--manual-signaling`.*
 > Requires building with `--features webrtc`.
