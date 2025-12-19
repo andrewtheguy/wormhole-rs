@@ -101,6 +101,7 @@ async fn transfer_data_internal(
 
     let remote_id = conn.remote_id();
     println!("✅ Receiver connected!");
+    println!("   📡 Remote ID: {}", remote_id);
 
     // When using default public relay (not custom), reject relay-only connections
     // The default relay is rate-limited and not suitable for data transfer
@@ -114,7 +115,12 @@ async fn transfer_data_internal(
                  - Use a custom relay: wormhole-rs send iroh --relay-url <url> <file>"
             );
         }
-        println!("   🔗 Direct P2P connection established");
+    }
+
+    // Print actual connection type (Direct, Relay, Mixed, None)
+    if let Some(mut conn_type_watcher) = endpoint.conn_type(remote_id) {
+        let conn_type = conn_type_watcher.get();
+        println!("   🔗 Connection: {:?}", conn_type);
     }
 
     // Open bi-directional stream
