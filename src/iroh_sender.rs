@@ -8,7 +8,7 @@ use tokio::sync::Mutex;
 
 use crate::crypto::{generate_key, CHUNK_SIZE};
 use crate::folder::{create_tar_archive, print_tar_creation_info};
-use crate::iroh_common::create_sender_endpoint;
+use crate::iroh_common::{create_sender_endpoint, wait_for_direct_connection, DirectConnectionResult};
 use crate::transfer::{
     format_bytes, num_chunks, send_chunk, send_encrypted_chunk, send_encrypted_header,
     send_header, FileHeader, TransferType,
@@ -54,7 +54,7 @@ async fn transfer_data_internal(
     };
 
     // Create iroh endpoint
-    let endpoint = create_sender_endpoint(relay_urls).await?;
+    let (endpoint, using_custom_relay) = create_sender_endpoint(relay_urls).await?;
 
     // Get our address
     let addr = endpoint.addr();
@@ -100,7 +100,23 @@ async fn transfer_data_internal(
             e
         ))?;
 
+    let remote_id = conn.remote_id();
     println!("✅ Receiver connected!");
+
+    // When using default public relay (not custom), reject relay-only connections
+    // The default relay is rate-limited and not suitable for data transfer
+    if !using_custom_relay {
+        if wait_for_direct_connection(&endpoint, remote_id).await == DirectConnectionResult::StillRelay {
+            conn.close(1u32.into(), b"relay connections not allowed with default relay");
+            anyhow::bail!(
+                "Connection rejected: relay-only connection not allowed with default public relay.\n\n\
+                 The default relay is rate-limited. Try one of these alternatives:\n  \
+                 - Use Tor mode: wormhole-rs send tor <file>\n  \
+                 - Use a custom relay: wormhole-rs send iroh --relay-url <url> <file>"
+            );
+        }
+        println!("   🔗 Direct P2P connection established");
+    }
 
     // Open bi-directional stream
     let (mut send_stream, mut recv_stream) = conn.open_bi().await.context("Failed to open stream")?;

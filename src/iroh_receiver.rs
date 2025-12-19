@@ -85,7 +85,7 @@ pub async fn receive(code: &str, output_dir: Option<PathBuf>, relay_urls: Vec<St
     println!("✅ Code valid. Connecting to sender...");
 
     // Create iroh endpoint
-    let endpoint = create_receiver_endpoint(relay_urls).await?;
+    let (endpoint, _using_custom_relay) = create_receiver_endpoint(relay_urls).await?;
 
     // Connect to sender
     let conn = endpoint
@@ -103,6 +103,7 @@ pub async fn receive(code: &str, output_dir: Option<PathBuf>, relay_urls: Vec<St
     println!("   📡 Remote ID: {}", remote_id);
 
     // Get connection type (Direct, Relay, Mixed, None)
+    // Note: Sender handles relay rejection when using default relay
     if let Some(mut conn_type_watcher) = endpoint.conn_type(remote_id) {
         let conn_type = conn_type_watcher.get();
         println!("   🔗 Connection: {:?}", conn_type);
