@@ -443,17 +443,9 @@ fn prompt_selection(max: usize) -> Result<Option<usize>> {
     }
 }
 
-/// Prompt user for PIN.
+/// Prompt user for PIN with checksum validation.
 fn prompt_pin() -> Result<String> {
-    print!("Enter PIN: ");
-    std::io::stdout().flush()?;
-    let mut input = String::new();
-    std::io::stdin().read_line(&mut input)?;
-    let pin = input.trim().to_string();
-    if pin.is_empty() {
-        anyhow::bail!("PIN cannot be empty");
-    }
-    Ok(pin)
+    crate::pin::prompt_pin().context("Failed to read PIN")
 }
 
 /// Prompt user to overwrite existing file.
