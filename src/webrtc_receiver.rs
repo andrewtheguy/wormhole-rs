@@ -190,7 +190,7 @@ async fn try_webrtc_receive(
     let ice_seq = Arc::new(std::sync::atomic::AtomicU32::new(0));
     let ice_seq_clone = ice_seq.clone();
 
-    tokio::spawn(async move {
+    let ice_sender_handle = tokio::spawn(async move {
         while let Some(candidate) = ice_rx.recv().await {
             let candidate_json = match candidate.to_json() {
                 Ok(json) => json,
@@ -248,7 +248,7 @@ async fn try_webrtc_receive(
     let rtc_peer_arc = Arc::new(rtc_peer);
     let rtc_peer_clone = rtc_peer_arc.clone();
 
-    tokio::spawn(async move {
+    let ice_receiver_handle = tokio::spawn(async move {
         while let Some(msg) = signal_rx.recv().await {
             if let SignalingMessage::IceCandidate { candidate, .. } = msg {
                 let candidate_init = RTCIceCandidateInit {
@@ -280,12 +280,16 @@ async fn try_webrtc_receive(
             println!("Data channel opened successfully");
         }
         Ok(Err(_)) => {
+            ice_sender_handle.abort();
+            ice_receiver_handle.abort();
             signal_handle.abort();
             return Ok(WebRtcResult::Failed(
                 "Data channel failed to open".to_string(),
             ));
         }
         Err(_) => {
+            ice_sender_handle.abort();
+            ice_receiver_handle.abort();
             signal_handle.abort();
             return Ok(WebRtcResult::Failed(
                 "Timeout waiting for data channel to open".to_string(),
@@ -346,7 +350,9 @@ async fn try_webrtc_receive(
         }
     }
 
-    // Close connections
+    // Close connections and abort background tasks
+    ice_sender_handle.abort();
+    ice_receiver_handle.abort();
     let _ = rtc_peer_arc.close().await;
     signal_handle.abort();
 
