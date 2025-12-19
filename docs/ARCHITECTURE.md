@@ -157,9 +157,8 @@ sequenceDiagram
 - **Transport**: QUIC / TLS 1.3
 - **Discovery**: iroh's global discovery (DNS/pkarr) + mDNS for local network
 - **Relay**: iroh DERP relays - automatically used if direct P2P connection fails
-  - Default: Uses iroh's public relay (rate-limited, not for sustained data)
+  - Default: Uses iroh's public relay
   - Custom: Use `--relay-url` for self-hosted DERP relays (supports multiple for failover)
-  - Relay-only connections with the default public relay are rejected on receiver side
 - **Encryption**: Always authenticated/encrypted by QUIC. Optional extra AES layer.
 
 ### WebRTC Mode (`wormhole-rs send webrtc`)

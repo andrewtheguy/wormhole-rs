@@ -1,5 +1,5 @@
-use anyhow::{bail, Context, Result};
-use iroh::{endpoint::ConnectionType, Watcher};
+use anyhow::{Context, Result};
+use iroh::Watcher;
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -85,7 +85,7 @@ pub async fn receive(code: &str, output_dir: Option<PathBuf>, relay_urls: Vec<St
     println!("✅ Code valid. Connecting to sender...");
 
     // Track whether we're using the default relay (no overrides provided)
-    let is_default_relay = relay_urls.is_empty();
+    let _is_default_relay = relay_urls.is_empty();
 
     // Create iroh endpoint
     let endpoint = create_receiver_endpoint(relay_urls).await?;
@@ -110,29 +110,30 @@ pub async fn receive(code: &str, output_dir: Option<PathBuf>, relay_urls: Vec<St
         let conn_type = conn_type_watcher.get();
         println!("   🔗 Connection: {:?}", conn_type);
 
-        // Abort if we only have relay/none while using the default relay (no custom relay supplied)
-        if is_default_relay {
-            match conn_type {
-                ConnectionType::Relay(url) => {
-                    bail!(
-                        "Connection rejected: relay-only connection not allowed with default public relay {}.\n\n\
-                         The default relay is rate-limited. Try one of these alternatives:\n  \
-                         - Use Tor mode: wormhole-rs send tor <file>\n  \
-                         - Use a custom relay: wormhole-rs send iroh --relay-url <url> <file>",
-                        url
-                    );
-                }
-                ConnectionType::None => {
-                    bail!(
-                        "Connection rejected: no viable path with no verified connection to this PublicKey.\n\n\
-                         Try one of these alternatives:\n  \
-                         - Use Tor mode: wormhole-rs send tor <file>\n  \
-                         - Use a custom relay: wormhole-rs send iroh --relay-url <url> <file>"
-                    );
-                }
-                _ => {}
-            }
-        }
+        // NOTE: Relay-only rejection disabled - uncomment below to re-enable
+        // // Abort if we only have relay/none while using the default relay (no custom relay supplied)
+        // if is_default_relay {
+        //     match conn_type {
+        //         ConnectionType::Relay(url) => {
+        //             bail!(
+        //                 "Connection rejected: relay-only connection not allowed with default public relay {}.\n\n\
+        //                  The default relay is rate-limited. Try one of these alternatives:\n  \
+        //                  - Use Tor mode: wormhole-rs send tor <file>\n  \
+        //                  - Use a custom relay: wormhole-rs send iroh --relay-url <url> <file>",
+        //                 url
+        //             );
+        //         }
+        //         ConnectionType::None => {
+        //             bail!(
+        //                 "Connection rejected: no viable path with no verified connection to this PublicKey.\n\n\
+        //                  Try one of these alternatives:\n  \
+        //                  - Use Tor mode: wormhole-rs send tor <file>\n  \
+        //                  - Use a custom relay: wormhole-rs send iroh --relay-url <url> <file>"
+        //             );
+        //         }
+        //         _ => {}
+        //     }
+        // }
     }
 
     // Accept bi-directional stream
