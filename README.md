@@ -20,7 +20,7 @@ A secure peer-to-peer file transfer tool with two main transport categories:
 - **Local discovery** - mDNS for same-network transfers
 - **NAT traversal** - STUN for WebRTC; relay fallback for Iroh; use Tor mode as relay when direct P2P fails
 - **PIN-based Transfers** - Use short 12-character PINs (with checksum) instead of long wormhole codes for easier typing
-- **Cross-platform** - Single binary, supports macOS, Linux, and Windows
+- **Cross-platform** - Single, standalone native binary for macOS, Linux, and Windows (zero-dependency install)
 
 ## Common Use Cases
 
@@ -36,6 +36,8 @@ For detailed protocol flows, wire formats, see [ARCHITECTURE.md](docs/ARCHITECTU
 
 
 ## Installation
+
+The release installers fetch a native, standalone executable. You only need the binary in your PATH; no runtime dependencies or package managers are required.
 
 ### Quick Install (Linux & macOS)
 
