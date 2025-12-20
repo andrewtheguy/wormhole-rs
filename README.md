@@ -149,8 +149,6 @@ wormhole-rs send-iroh /path/to/file
 # Send folder
 wormhole-rs send-iroh /path/to/folder --folder
 
-# With extra AES-256-GCM encryption
-wormhole-rs send-iroh /path/to/file --extra-encrypt
 ```
 
 ##### Custom Iroh Relays

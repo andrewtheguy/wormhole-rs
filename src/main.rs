@@ -96,10 +96,6 @@ enum Commands {
         #[arg(long)]
         pin: bool,
 
-        /// Add extra AES-256-GCM encryption layer
-        #[arg(long)]
-        extra_encrypt: bool,
-
         /// Custom relay server URLs (for iroh transport)
         #[arg(long)]
         relay_url: Vec<String>,
@@ -119,10 +115,6 @@ enum Commands {
         /// Use PIN-based code exchange for Nostr (prompts for PIN input)
         #[arg(long)]
         pin: bool,
-
-        /// Add extra AES-256-GCM encryption layer
-        #[arg(long)]
-        extra_encrypt: bool,
     },
 
     /// Send via local network (mDNS discovery)
@@ -275,14 +267,13 @@ async fn main() -> Result<()> {
             path,
             folder,
             pin,
-            extra_encrypt,
             relay_url,
         } => {
             validate_path(&path, folder)?;
             if folder {
-                iroh_sender::send_folder(&path, extra_encrypt, relay_url, pin).await?;
+                iroh_sender::send_folder(&path, relay_url, pin).await?;
             } else {
-                iroh_sender::send_file(&path, extra_encrypt, relay_url, pin).await?;
+                iroh_sender::send_file(&path, relay_url, pin).await?;
             }
         }
 
@@ -291,13 +282,12 @@ async fn main() -> Result<()> {
             path,
             folder,
             pin,
-            extra_encrypt,
         } => {
             validate_path(&path, folder)?;
             if folder {
-                onion_sender::send_folder_tor(&path, extra_encrypt, pin).await?;
+                onion_sender::send_folder_tor(&path, pin).await?;
             } else {
-                onion_sender::send_file_tor(&path, extra_encrypt, pin).await?;
+                onion_sender::send_file_tor(&path, pin).await?;
             }
         }
 

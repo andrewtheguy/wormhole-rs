@@ -12,8 +12,7 @@ use crate::folder::{
     print_tar_extraction_info, StreamingReader,
 };
 use crate::transfer::{
-    format_bytes, num_chunks, recv_chunk, recv_encrypted_chunk, recv_encrypted_header, recv_header,
-    TransferType,
+    format_bytes, num_chunks, recv_encrypted_chunk, recv_encrypted_header, TransferType,
 };
 use crate::wormhole::{decode_key, parse_code, PROTOCOL_TOR};
 
@@ -67,17 +66,7 @@ pub async fn receive_file_tor(code: &str, output_dir: Option<PathBuf>) -> Result
         );
     }
 
-    if token.extra_encrypt {
-        println!("Extra AES-256-GCM encryption detected");
-    } else {
-        println!("Using Tor's built-in end-to-end encryption");
-    }
-
-    let key = token
-        .key
-        .as_ref()
-        .map(|k| decode_key(k))
-        .transpose()
+    let key = decode_key(&token.key)
         .context("Failed to decode encryption key")?;
 
     let onion_addr = token
@@ -139,15 +128,9 @@ pub async fn receive_file_tor(code: &str, output_dir: Option<PathBuf>) -> Result
     println!("Connected!");
 
     // Read file header
-    let header = if let Some(ref k) = key {
-        recv_encrypted_header(&mut stream, k)
-            .await
-            .context("Failed to read file header")?
-    } else {
-        recv_header(&mut stream)
-            .await
-            .context("Failed to read file header")?
-    };
+    let header = recv_encrypted_header(&mut stream, &key)
+        .await
+        .context("Failed to read file header")?;
 
     // Check transfer type
     if header.transfer_type == TransferType::Folder {
@@ -210,15 +193,9 @@ pub async fn receive_file_tor(code: &str, output_dir: Option<PathBuf>) -> Result
     println!("Receiving {} chunks...", total_chunks);
 
     while bytes_received < header.file_size {
-        let chunk = if let Some(ref k) = key {
-            recv_encrypted_chunk(&mut stream, k, chunk_num)
-                .await
-                .context("Failed to receive chunk")?
-        } else {
-            recv_chunk(&mut stream)
-                .await
-                .context("Failed to receive chunk")?
-        };
+        let chunk = recv_encrypted_chunk(&mut stream, &key, chunk_num)
+            .await
+            .context("Failed to receive chunk")?;
 
         bytes_received += chunk.len() as u64;
         chunk_num += 1;
@@ -293,7 +270,7 @@ pub async fn receive_file_tor(code: &str, output_dir: Option<PathBuf>) -> Result
 async fn receive_folder_stream<S: AsyncReadExt + AsyncWriteExt + Unpin + Send + 'static>(
     stream: S,
     header: crate::transfer::FileHeader,
-    key: Option<[u8; 32]>,
+    key: [u8; 32],
     output_dir: Option<PathBuf>,
 ) -> Result<()> {
     println!(

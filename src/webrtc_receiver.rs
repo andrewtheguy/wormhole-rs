@@ -381,13 +381,11 @@ pub async fn receive_webrtc(code: &str, output_dir: Option<PathBuf>) -> Result<(
         .webrtc_relays
         .clone()
         .context("Missing relay list in wormhole code")?;
-    let key = token
-        .key
-        .as_ref()
-        .map(|k| decode_key(k))
-        .transpose()
-        .context("Failed to decode encryption key")?
-        .context("Encryption key required for webrtc transfers")?;
+    let key_str = Some(token.key.as_str())
+        .filter(|s| !s.is_empty())
+        .context("Missing encryption key in wormhole code")?;
+    let key = decode_key(key_str)
+        .context("Failed to decode encryption key")?;
 
     // Parse sender public key
     let sender_pubkey: nostr_sdk::PublicKey = sender_pubkey_hex
@@ -718,6 +716,4 @@ impl std::io::Read for WebRtcStreamingReader {
         Ok(to_copy)
     }
 }
-
-
 

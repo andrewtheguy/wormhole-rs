@@ -10,7 +10,7 @@ use tar::{Archive, Builder};
 use tempfile::NamedTempFile;
 use walkdir::WalkDir;
 
-use crate::transfer::{recv_chunk, recv_encrypted_chunk};
+use crate::transfer::recv_encrypted_chunk;
 
 /// Result of creating a tar archive from a folder.
 pub struct TarArchive {
@@ -96,10 +96,9 @@ pub fn create_tar_archive(folder_path: &Path) -> Result<TarArchive> {
 
 /// Wrapper to bridge async chunk receiving with sync tar reading.
 /// Implements std::io::Read by fetching chunks on demand.
-/// Supports both encrypted and unencrypted modes.
 pub struct StreamingReader<R> {
     recv_stream: R,
-    key: Option<[u8; 32]>,
+    key: [u8; 32],
     chunk_num: u64,
     buffer: Vec<u8>,
     buffer_pos: usize,
@@ -112,12 +111,12 @@ impl<R> StreamingReader<R> {
     ///
     /// # Arguments
     /// * `recv_stream` - The async stream to read from
-    /// * `key` - Optional AES-256-GCM encryption key
+    /// * `key` - AES-256-GCM encryption key
     /// * `file_size` - Total expected bytes to read
     /// * `runtime_handle` - Tokio runtime handle for blocking operations
     pub fn new(
         recv_stream: R,
-        key: Option<[u8; 32]>,
+        key: [u8; 32],
         file_size: u64,
         runtime_handle: tokio::runtime::Handle,
     ) -> Self {
@@ -145,11 +144,7 @@ impl<R: tokio::io::AsyncReadExt + Unpin + Send> Read for StreamingReader<R> {
         if self.buffer_pos >= self.buffer.len() && self.bytes_remaining > 0 {
             // Block on async chunk receive
             let chunk_result = self.runtime_handle.block_on(async {
-                if let Some(ref key) = self.key {
-                    recv_encrypted_chunk(&mut self.recv_stream, key, self.chunk_num).await
-                } else {
-                    recv_chunk(&mut self.recv_stream).await
-                }
+                recv_encrypted_chunk(&mut self.recv_stream, &self.key, self.chunk_num).await
             });
 
             match chunk_result {

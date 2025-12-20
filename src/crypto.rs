@@ -1,13 +1,8 @@
-//! AES-256-GCM encryption module for optional extra encryption layer.
+//! AES-256-GCM encryption module for application-layer payload protection.
 //!
-//! This module provides symmetric encryption for file transfers when using the
-//! `--extra-encrypt` flag. By default, wormhole-rs relies on iroh's built-in
-//! QUIC/TLS 1.3 encryption, which provides strong end-to-end encryption.
-//!
-//! The extra AES-256-GCM layer is useful for:
-//! - Future support for less secure transports (e.g., TURN servers for WebRTC)
-//! - Additional defense-in-depth when traversing untrusted relays
-//! - Scenarios where the encryption key should be part of the wormhole code
+//! wormhole-rs always encrypts headers and chunks with AES-256-GCM before
+//! sending over any transport. This provides consistent end-to-end protection
+//! regardless of the underlying protocol.
 
 use aes_gcm::{
     aead::{Aead, KeyInit},

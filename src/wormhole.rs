@@ -5,7 +5,7 @@ use iroh::{EndpointAddr, RelayUrl};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Current token format version
-pub const CURRENT_VERSION: u8 = 3;
+pub const CURRENT_VERSION: u8 = 4;
 
 /// TTL for wormhole codes in seconds (30 minutes)
 pub const CODE_TTL_SECS: u64 = 30 * 60;
@@ -70,11 +70,8 @@ pub struct WormholeToken {
     pub protocol: String,
     /// Unix timestamp when this token was created (for TTL validation)
     pub created_at: u64,
-    /// Whether extra AES-256-GCM encryption layer is used
-    pub extra_encrypt: bool,
-    /// AES-256-GCM key as base64 string (only present if extra_encrypt is true)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub key: Option<String>,
+    /// AES-256-GCM key as base64 string (always present for iroh/tor/webrtc)
+    pub key: String,
     /// Minimal endpoint address for connection (None for non-iroh transports)
     /// Contains only node ID and relay URL - IP addresses are auto-discovered
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -116,18 +113,12 @@ fn current_timestamp() -> u64 {
 ///
 /// # Arguments
 /// * `addr` - The endpoint address to connect to
-/// * `extra_encrypt` - Whether to include an AES-256-GCM encryption key
-/// * `key` - The encryption key (required if extra_encrypt is true)
+/// * `key` - The encryption key (required)
 #[cfg(feature = "iroh")]
 pub fn generate_code(
     addr: &EndpointAddr,
-    extra_encrypt: bool,
-    key: Option<&[u8; 32]>,
+    key: &[u8; 32],
 ) -> Result<String> {
-    if extra_encrypt && key.is_none() {
-        anyhow::bail!("Encryption key required when extra_encrypt is true");
-    }
-
     // Use MinimalAddr to strip IP addresses - they're auto-discovered by iroh
     let minimal_addr = MinimalAddr::from_endpoint_addr(addr);
 
@@ -135,8 +126,7 @@ pub fn generate_code(
         version: CURRENT_VERSION,
         protocol: PROTOCOL_IROH.to_string(),
         created_at: current_timestamp(),
-        extra_encrypt,
-        key: key.map(|k| URL_SAFE_NO_PAD.encode(k)),
+        key: URL_SAFE_NO_PAD.encode(key),
         addr: Some(minimal_addr),
         onion_address: None,
         webrtc_sender_pubkey: None,
@@ -157,23 +147,16 @@ pub fn generate_code(
 ///
 /// # Arguments
 /// * `onion_address` - The .onion address of the hidden service
-/// * `extra_encrypt` - Whether to include an AES-256-GCM encryption key
-/// * `key` - The encryption key (required if extra_encrypt is true)
+/// * `key` - The encryption key (required)
 pub fn generate_tor_code(
     onion_address: String,
-    extra_encrypt: bool,
-    key: Option<&[u8; 32]>,
+    key: &[u8; 32],
 ) -> Result<String> {
-    if extra_encrypt && key.is_none() {
-        anyhow::bail!("Encryption key required when extra_encrypt is true");
-    }
-
     let token = WormholeToken {
         version: CURRENT_VERSION,
         protocol: PROTOCOL_TOR.to_string(),
         created_at: current_timestamp(),
-        extra_encrypt,
-        key: key.map(|k| URL_SAFE_NO_PAD.encode(k)),
+        key: URL_SAFE_NO_PAD.encode(key),
         addr: None,
         onion_address: Some(onion_address),
         webrtc_sender_pubkey: None,
@@ -211,8 +194,7 @@ pub fn generate_webrtc_code(
         version: CURRENT_VERSION,
         protocol: PROTOCOL_WEBRTC.to_string(),
         created_at: current_timestamp(),
-        extra_encrypt: true, // Always true for webrtc
-        key: Some(URL_SAFE_NO_PAD.encode(key)),
+        key: URL_SAFE_NO_PAD.encode(key),
         addr: None,
         onion_address: None,
         webrtc_sender_pubkey: Some(sender_pubkey),
@@ -290,20 +272,18 @@ pub fn parse_code(code: &str) -> Result<WormholeToken> {
         );
     }
 
-    // Validate protocol for v2+ tokens
-    if token.version >= 2 {
-        if token.protocol != PROTOCOL_IROH
-            && token.protocol != PROTOCOL_TOR
-            && token.protocol != PROTOCOL_WEBRTC
-        {
-            anyhow::bail!(
-                "Invalid protocol '{}'. Supported protocols: '{}', '{}', '{}'",
-                token.protocol,
-                PROTOCOL_IROH,
-                PROTOCOL_TOR,
-                PROTOCOL_WEBRTC
-            );
-        }
+    // Validate protocol
+    if token.protocol != PROTOCOL_IROH
+        && token.protocol != PROTOCOL_TOR
+        && token.protocol != PROTOCOL_WEBRTC
+    {
+        anyhow::bail!(
+            "Invalid protocol '{}'. Supported protocols: '{}', '{}', '{}'",
+            token.protocol,
+            PROTOCOL_IROH,
+            PROTOCOL_TOR,
+            PROTOCOL_WEBRTC
+        );
     }
 
     // Validate TTL
@@ -325,51 +305,36 @@ pub fn parse_code(code: &str) -> Result<WormholeToken> {
         );
     }
 
-    // Validate key consistency
-    if token.extra_encrypt && token.key.is_none() {
-        anyhow::bail!("Invalid token: extra_encrypt is true but no key provided");
+    // Validate key format (required for all current protocols)
+    let key_bytes = URL_SAFE_NO_PAD
+        .decode(&token.key)
+        .context("Invalid key format: not valid base64")?;
+    if key_bytes.len() != 32 {
+        anyhow::bail!(
+            "Invalid key length: expected 32 bytes, got {}",
+            key_bytes.len()
+        );
     }
 
-    // Validate key format if present
-    if let Some(ref key_str) = token.key {
-        let key_bytes = URL_SAFE_NO_PAD
-            .decode(key_str)
-            .context("Invalid key format: not valid base64")?;
-        if key_bytes.len() != 32 {
-            anyhow::bail!(
-                "Invalid key length: expected 32 bytes, got {}",
-                key_bytes.len()
-            );
-        }
-    }
-
-    // For version 1 tokens, ensure addr is present (backward compatibility)
-    if token.version == 1 && token.addr.is_none() {
-        anyhow::bail!("Invalid v1 token: missing endpoint address");
-    }
-
-    // For v2+ with iroh protocol, ensure addr is present
-    if token.version >= 2 && token.protocol == PROTOCOL_IROH && token.addr.is_none() {
+    // For iroh protocol, ensure addr is present
+    if token.protocol == PROTOCOL_IROH && token.addr.is_none() {
         anyhow::bail!("Invalid iroh token: missing endpoint address");
     }
 
-    // For v2+ with tor protocol, ensure onion_address is present
-    if token.version >= 2 && token.protocol == PROTOCOL_TOR {
+    // For tor protocol, ensure onion_address is present
+    if token.protocol == PROTOCOL_TOR {
         if token.onion_address.is_none() {
             anyhow::bail!("Invalid tor token: missing onion address");
         }
     }
 
-    // For v2+ with webrtc protocol, ensure webrtc fields and key are present
-    if token.version >= 2 && token.protocol == PROTOCOL_WEBRTC {
+    // For webrtc protocol, ensure webrtc fields are present
+    if token.protocol == PROTOCOL_WEBRTC {
         if token.webrtc_sender_pubkey.is_none() {
             anyhow::bail!("Invalid webrtc token: missing sender pubkey");
         }
         if token.webrtc_transfer_id.is_none() {
             anyhow::bail!("Invalid webrtc token: missing transfer ID");
-        }
-        if token.key.is_none() {
-            anyhow::bail!("Invalid webrtc token: encryption key required for webrtc transfers");
         }
         if token.webrtc_filename.is_none() {
             anyhow::bail!("Invalid webrtc token: missing filename");
