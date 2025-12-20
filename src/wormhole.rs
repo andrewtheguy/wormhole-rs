@@ -272,20 +272,18 @@ pub fn parse_code(code: &str) -> Result<WormholeToken> {
         );
     }
 
-    // Validate protocol for v2+ tokens
-    if token.version >= 2 {
-        if token.protocol != PROTOCOL_IROH
-            && token.protocol != PROTOCOL_TOR
-            && token.protocol != PROTOCOL_WEBRTC
-        {
-            anyhow::bail!(
-                "Invalid protocol '{}'. Supported protocols: '{}', '{}', '{}'",
-                token.protocol,
-                PROTOCOL_IROH,
-                PROTOCOL_TOR,
-                PROTOCOL_WEBRTC
-            );
-        }
+    // Validate protocol
+    if token.protocol != PROTOCOL_IROH
+        && token.protocol != PROTOCOL_TOR
+        && token.protocol != PROTOCOL_WEBRTC
+    {
+        anyhow::bail!(
+            "Invalid protocol '{}'. Supported protocols: '{}', '{}', '{}'",
+            token.protocol,
+            PROTOCOL_IROH,
+            PROTOCOL_TOR,
+            PROTOCOL_WEBRTC
+        );
     }
 
     // Validate TTL
@@ -318,25 +316,20 @@ pub fn parse_code(code: &str) -> Result<WormholeToken> {
         );
     }
 
-    // For version 1 tokens, ensure addr is present (backward compatibility)
-    if token.version == 1 && token.addr.is_none() {
-        anyhow::bail!("Invalid v1 token: missing endpoint address");
-    }
-
-    // For v2+ with iroh protocol, ensure addr is present
-    if token.version >= 2 && token.protocol == PROTOCOL_IROH && token.addr.is_none() {
+    // For iroh protocol, ensure addr is present
+    if token.protocol == PROTOCOL_IROH && token.addr.is_none() {
         anyhow::bail!("Invalid iroh token: missing endpoint address");
     }
 
-    // For v2+ with tor protocol, ensure onion_address is present
-    if token.version >= 2 && token.protocol == PROTOCOL_TOR {
+    // For tor protocol, ensure onion_address is present
+    if token.protocol == PROTOCOL_TOR {
         if token.onion_address.is_none() {
             anyhow::bail!("Invalid tor token: missing onion address");
         }
     }
 
-    // For v2+ with webrtc protocol, ensure webrtc fields and key are present
-    if token.version >= 2 && token.protocol == PROTOCOL_WEBRTC {
+    // For webrtc protocol, ensure webrtc fields are present
+    if token.protocol == PROTOCOL_WEBRTC {
         if token.webrtc_sender_pubkey.is_none() {
             anyhow::bail!("Invalid webrtc token: missing sender pubkey");
         }
