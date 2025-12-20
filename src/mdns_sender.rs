@@ -66,8 +66,8 @@ pub async fn send_file_mdns(file_path: &Path) -> Result<()> {
     print_receiver_command("wormhole-rs receive-local");
     // Generate random PIN (key will be derived via SPAKE2 handshake)
     let pin = generate_pin();
-    println!("PIN: {}\n", pin);
-    println!("Share this PIN with the receiver.\n");
+    println!("🔢 PIN: {}\n", pin);
+    println!("Then enter the PIN above when prompted.\n");
 
     transfer_data_internal(
         prepared.file,
@@ -99,8 +99,8 @@ pub async fn send_folder_mdns(folder_path: &Path) -> Result<()> {
     print_receiver_command("wormhole-rs receive-local");
     // Generate random PIN (key will be derived via SPAKE2 handshake)
     let pin = generate_pin();
-    println!("PIN: {}\n", pin);
-    println!("Share this PIN with the receiver.\n");
+    println!("🔢 PIN: {}\n", pin);
+    println!("Then enter the PIN above when prompted.\n");
 
     let result = transfer_data_internal(
         prepared.file,
