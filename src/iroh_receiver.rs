@@ -12,8 +12,7 @@ use crate::folder::{
 };
 use crate::iroh_common::{create_receiver_endpoint, ALPN};
 use crate::transfer::{
-    format_bytes, num_chunks, recv_chunk, recv_encrypted_chunk, recv_encrypted_header, recv_header,
-    TransferType,
+    format_bytes, num_chunks, recv_encrypted_chunk, recv_encrypted_header, TransferType,
 };
 use crate::wormhole::parse_code;
 
@@ -63,18 +62,9 @@ fn setup_dir_cleanup_handler(cleanup_path: ExtractDirCleanup) {
 pub async fn receive(code: &str, output_dir: Option<PathBuf>, relay_urls: Vec<String>) -> Result<()> {
     println!("🔮 Parsing wormhole code...");
 
-    // Parse the wormhole code (auto-detects encryption mode)
+    // Parse the wormhole code
     let token = parse_code(code).context("Failed to parse wormhole code")?;
-
-    if token.extra_encrypt {
-        println!("🔐 Extra AES-256-GCM encryption detected");
-    }
-
-    let key = token
-        .key
-        .as_ref()
-        .map(|k| crate::wormhole::decode_key(k))
-        .transpose()
+    let key = crate::wormhole::decode_key(&token.key)
         .context("Failed to decode encryption key")?;
     let addr = token
         .addr
@@ -143,15 +133,9 @@ pub async fn receive(code: &str, output_dir: Option<PathBuf>, relay_urls: Vec<St
         .context("Failed to accept stream")?;
 
     // Read header (determines file vs folder)
-    let header = if let Some(ref k) = key {
-        recv_encrypted_header(&mut recv_stream, k)
-            .await
-            .context("Failed to read header")?
-    } else {
-        recv_header(&mut recv_stream)
-            .await
-            .context("Failed to read header")?
-    };
+    let header = recv_encrypted_header(&mut recv_stream, &key)
+        .await
+        .context("Failed to read header")?;
 
     // Dispatch based on transfer type
     match header.transfer_type {
@@ -197,7 +181,7 @@ pub async fn receive(code: &str, output_dir: Option<PathBuf>, relay_urls: Vec<St
 async fn receive_file_impl<R>(
     recv_stream: &mut R,
     header: &crate::transfer::FileHeader,
-    key: Option<[u8; 32]>,
+    key: [u8; 32],
     output_dir: Option<PathBuf>,
 ) -> Result<()>
 where
@@ -255,15 +239,9 @@ where
     println!("📥 Receiving {} chunks...", total_chunks);
 
     while bytes_received < header.file_size {
-        let chunk = if let Some(ref k) = key {
-            recv_encrypted_chunk(recv_stream, k, chunk_num)
-                .await
-                .context("Failed to receive chunk")?
-        } else {
-            recv_chunk(recv_stream)
-                .await
-                .context("Failed to receive chunk")?
-        };
+        let chunk = recv_encrypted_chunk(recv_stream, &key, chunk_num)
+            .await
+            .context("Failed to receive chunk")?;
 
         // Write synchronously (tempfile uses std::fs::File)
         temp_file
@@ -305,7 +283,7 @@ where
 async fn receive_folder_impl<R>(
     recv_stream: R,
     header: &crate::transfer::FileHeader,
-    key: Option<[u8; 32]>,
+    key: [u8; 32],
     output_dir: Option<PathBuf>,
 ) -> Result<()>
 where

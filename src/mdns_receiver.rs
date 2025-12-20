@@ -396,7 +396,7 @@ async fn receive_folder_impl(
     let runtime_handle = tokio::runtime::Handle::current();
 
     // Create streaming reader that feeds tar extractor directly
-    let reader = StreamingReader::new(stream, Some(*key), file_size, runtime_handle);
+    let reader = StreamingReader::new(stream, *key, file_size, runtime_handle);
 
     // Run tar extraction in blocking context, returning reader for ACK
     let extract_dir_clone = extract_dir.clone();

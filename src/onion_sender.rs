@@ -12,8 +12,8 @@ use tor_hsservice::{config::OnionServiceConfigBuilder, handle_rend_requests};
 
 use crate::crypto::{generate_key, CHUNK_SIZE};
 use crate::transfer::{
-    format_bytes, num_chunks, prepare_file_for_send, prepare_folder_for_send, send_chunk,
-    send_encrypted_chunk, send_encrypted_header, send_header, FileHeader, TransferType,
+    format_bytes, num_chunks, prepare_file_for_send, prepare_folder_for_send,
+    send_encrypted_chunk, send_encrypted_header, FileHeader, TransferType,
 };
 use crate::wormhole::generate_tor_code;
 
@@ -24,17 +24,10 @@ async fn transfer_data_tor_internal(
     filename: String,
     file_size: u64,
     transfer_type: TransferType,
-    extra_encrypt: bool,
     use_pin: bool,
 ) -> Result<()> {
-    // Generate encryption key only if extra encryption is enabled
-    let key = if extra_encrypt {
-        println!("Extra AES-256-GCM encryption enabled");
-        Some(generate_key())
-    } else {
-        println!("Using Tor's built-in end-to-end encryption");
-        None
-    };
+    // Always generate encryption key for application-layer encryption
+    let key = generate_key();
 
     // Bootstrap Tor client (ephemeral mode - new keys each run)
     let temp_dir = tempfile::tempdir()?;
@@ -70,7 +63,7 @@ async fn transfer_data_tor_internal(
     let onion_addr_str = format!("{}", onion_addr.display_unredacted());
 
     // Generate wormhole code
-    let code = generate_tor_code(onion_addr_str.clone(), extra_encrypt, key.as_ref())?;
+    let code = generate_tor_code(onion_addr_str.clone(), &key)?;
 
     println!("\nWormhole code:\n{}\n", code);
     
@@ -107,15 +100,9 @@ async fn transfer_data_tor_internal(
 
         // Send file header
         let header = FileHeader::new(transfer_type, filename, file_size);
-        if let Some(ref k) = key {
-            send_encrypted_header(&mut stream, k, &header)
-                .await
-                .context("Failed to send header")?;
-        } else {
-            send_header(&mut stream, &header)
-                .await
-                .context("Failed to send header")?;
-        }
+        send_encrypted_header(&mut stream, &key, &header)
+            .await
+            .context("Failed to send header")?;
 
         // Send chunks
         let total_chunks = num_chunks(file_size);
@@ -131,15 +118,9 @@ async fn transfer_data_tor_internal(
                 break;
             }
 
-            if let Some(ref k) = key {
-                send_encrypted_chunk(&mut stream, k, chunk_num, &buffer[..bytes_read])
-                    .await
-                    .context("Failed to send chunk")?;
-            } else {
-                send_chunk(&mut stream, &buffer[..bytes_read])
-                    .await
-                    .context("Failed to send chunk")?;
-            }
+            send_encrypted_chunk(&mut stream, &key, chunk_num, &buffer[..bytes_read])
+                .await
+                .context("Failed to send chunk")?;
 
             chunk_num += 1;
             bytes_sent += bytes_read as u64;
@@ -195,7 +176,7 @@ async fn transfer_data_tor_internal(
 }
 
 /// Send a file via Tor hidden service
-pub async fn send_file_tor(file_path: &Path, extra_encrypt: bool, use_pin: bool) -> Result<()> {
+pub async fn send_file_tor(file_path: &Path, use_pin: bool) -> Result<()> {
     let prepared = match prepare_file_for_send(file_path).await? {
         Some(p) => p,
         None => return Ok(()),
@@ -206,14 +187,13 @@ pub async fn send_file_tor(file_path: &Path, extra_encrypt: bool, use_pin: bool)
         prepared.filename,
         prepared.file_size,
         TransferType::File,
-        extra_encrypt,
         use_pin,
     )
     .await
 }
 
 /// Send a folder via Tor hidden service (as tar archive)
-pub async fn send_folder_tor(folder_path: &Path, extra_encrypt: bool, use_pin: bool) -> Result<()> {
+pub async fn send_folder_tor(folder_path: &Path, use_pin: bool) -> Result<()> {
     let prepared = match prepare_folder_for_send(folder_path).await? {
         Some(p) => p,
         None => return Ok(()),
@@ -225,7 +205,6 @@ pub async fn send_folder_tor(folder_path: &Path, extra_encrypt: bool, use_pin: b
         prepared.filename,
         prepared.file_size,
         TransferType::Folder,
-        extra_encrypt,
         use_pin,
     )
     .await

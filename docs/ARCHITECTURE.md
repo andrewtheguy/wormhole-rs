@@ -169,7 +169,7 @@ sequenceDiagram
 - **Relay**: iroh DERP relays - automatically used if direct P2P connection fails
   - Default: Uses iroh's public relay
   - Custom: Use `--relay-url` for self-hosted DERP relays (supports multiple for failover)
-- **Encryption**: Always authenticated/encrypted by QUIC. Optional extra AES layer.
+- **Encryption**: Always AES-256-GCM encrypted at the application layer, plus QUIC/TLS.
 
 ### Local Mode (`wormhole-rs send-local`)
 - **Transport**: Raw TCP
@@ -181,7 +181,7 @@ sequenceDiagram
 ### Tor Mode (`wormhole-rs send-tor`)
 - **Transport**: Tor Onion Services
 - **Discovery**: Onion Address
-- **Encryption**: Tor Circuit encryption + Optional extra AES.
+- **Encryption**: Tor circuit encryption plus mandatory AES-256-GCM at the application layer.
 
 
 
@@ -234,5 +234,4 @@ TTL validation is not applied to local mDNS transfers because it is unnecessary:
 **Error Messages:**
 - Expired codes: "Token expired: code is X minutes old (max 30 minutes). Please request a new code from the sender."
 - Future timestamps: "Invalid token: created_at is in the future. Check system clock."
-
 
