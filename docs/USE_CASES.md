@@ -128,7 +128,7 @@ This guide describes common scenarios where `wormhole-rs` shines and which mode 
 - **Features**:
   - Step-by-step instructions guide both parties
   - CRC32 checksum validates copy/paste integrity
-  - Magic trailer enables automatic end-of-input detection
+  - Explicit BEGIN/END markers frame each payload
   - 30-minute TTL prevents stale session attacks
 - **Command**:
   ```bash
@@ -139,7 +139,7 @@ This guide describes common scenarios where `wormhole-rs` shines and which mode 
   wormhole-rs receive --manual-signaling
   ```
 - **Experience**:
-  1. Sender generates offer code (base64) and displays it with clear START/END markers
+  1. Sender generates offer code (base64) and displays it between BEGIN/END markers
   2. Sender shares the code via any channel (Signal, email, read aloud, etc.)
   3. Receiver pastes the code and generates a response code
   4. Receiver shares the response back to sender

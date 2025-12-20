@@ -17,9 +17,11 @@ use crate::wormhole::CODE_TTL_SECS;
 /// Line width for wrapped output (safe for most terminals)
 const LINE_WIDTH: usize = 76;
 
-/// Magic trailer bytes appended before base64 encoding to trigger end-of-input detection
-/// Uses null bytes which cannot appear in valid JSON
-const END_MARKER: &[u8] = b"\x00END\x00";
+/// Marker strings for manual signaling payloads (SSH-key style)
+const OFFER_BEGIN_MARKER: &str = "-----BEGIN WORMHOLE WEBRTC OFFER-----";
+const OFFER_END_MARKER: &str = "-----END WORMHOLE WEBRTC OFFER-----";
+const ANSWER_BEGIN_MARKER: &str = "-----BEGIN WORMHOLE WEBRTC ANSWER-----";
+const ANSWER_END_MARKER: &str = "-----END WORMHOLE WEBRTC ANSWER-----";
 
 /// Get current Unix timestamp in seconds
 fn current_timestamp() -> u64 {
@@ -99,7 +101,6 @@ pub fn display_offer_json(offer: &OfflineOffer) -> Result<()> {
     let checksum = crc32fast::hash(json_bytes);
     let mut payload = json_bytes.to_vec();
     payload.extend_from_slice(&checksum.to_be_bytes());
-    payload.extend_from_slice(END_MARKER);
     let encoded = URL_SAFE_NO_PAD.encode(&payload);
     let wrapped = wrap_lines(&encoded, LINE_WIDTH);
 
@@ -110,9 +111,9 @@ pub fn display_offer_json(offer: &OfflineOffer) -> Result<()> {
     println!("=== SENDER STEP 2: Press Enter to show response code and then copy it to send to receiver ===");
     std::io::stdout().flush()?;
     let _ = std::io::stdin().read_line(&mut String::new());
-    println!("--- START CODE ---");
+    println!("{}", OFFER_BEGIN_MARKER);
     println!("{}", wrapped);
-    println!("--- END CODE ---");
+    println!("{}", OFFER_END_MARKER);
     println!();
     println!("Copy the code above and send to receiver, then wait for their response code for STEP 3...");
     println!();
@@ -127,7 +128,6 @@ pub fn display_answer_json(answer: &OfflineAnswer) -> Result<()> {
     let checksum = crc32fast::hash(json_bytes);
     let mut payload = json_bytes.to_vec();
     payload.extend_from_slice(&checksum.to_be_bytes());
-    payload.extend_from_slice(END_MARKER);
     let encoded = URL_SAFE_NO_PAD.encode(&payload);
     let wrapped = wrap_lines(&encoded, LINE_WIDTH);
 
@@ -135,9 +135,9 @@ pub fn display_answer_json(answer: &OfflineAnswer) -> Result<()> {
     println!("=== RECEIVER STEP 2: Press Enter to show response code and then copy it to send to sender ===");
     std::io::stdout().flush()?;
     let _ = std::io::stdin().read_line(&mut String::new());
-    println!("--- START CODE ---");
+    println!("{}", ANSWER_BEGIN_MARKER);
     println!("{}", wrapped);
-    println!("--- END CODE ---");
+    println!("{}", ANSWER_END_MARKER);
     println!();
     println!("Copy the code above and send to sender, after sending the code above, wait for connection...");
     println!();
@@ -149,42 +149,86 @@ pub fn display_answer_json(answer: &OfflineAnswer) -> Result<()> {
 // Input Functions
 // ============================================================================
 
-/// Base64url encoding of END_MARKER for input detection
-const END_MARKER_B64: &str = "AEVORAA";
+/// Extract base64 payload between explicit BEGIN/END markers
+fn extract_marked_payload<I>(lines: I, begin: &str, end: &str) -> Result<String>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut in_payload = false;
+    let mut collected = Vec::new();
 
-/// Read multi-line input until an empty line or the end marker is detected
-fn read_multiline_input() -> Result<String> {
-    let stdin = std::io::stdin();
-    let mut lines = Vec::new();
-
-    for line in stdin.lock().lines() {
-        let line = line.context("Failed to read line")?;
+    for line in lines {
         let trimmed = line.trim();
 
-        // Stop on empty line
-        if trimmed.is_empty() {
-            break;
+        if trimmed.is_empty() && !in_payload {
+            continue;
         }
 
-        lines.push(trimmed.to_string());
+        if trimmed == begin {
+            if in_payload {
+                anyhow::bail!("Duplicate BEGIN marker found.");
+            }
+            in_payload = true;
+            continue;
+        }
 
-        // Stop immediately if this line contains the end marker (auto-detect EOF)
-        if trimmed.contains(END_MARKER_B64) {
-            break;
+        if trimmed == end {
+            if !in_payload {
+                anyhow::bail!("END marker found before BEGIN marker.");
+            }
+            let joined = collected.join("");
+            if joined.is_empty() {
+                anyhow::bail!("No payload found between markers.");
+            }
+            return Ok(joined);
+        }
+
+        if !in_payload {
+            anyhow::bail!("Unexpected text before BEGIN marker.");
+        }
+
+        if !trimmed.is_empty() {
+            collected.push(trimmed.to_string());
         }
     }
 
-    // Join all lines (removing any whitespace/newlines)
-    Ok(lines.join(""))
+    if !in_payload {
+        anyhow::bail!("Missing BEGIN marker.");
+    }
+
+    anyhow::bail!("Missing END marker.");
+}
+
+/// Read multi-line input and extract base64 payload between markers
+fn read_marked_input(begin: &str, end: &str) -> Result<String> {
+    let stdin = std::io::stdin();
+    let lines = stdin
+        .lock()
+        .lines()
+        .map(|line| line.context("Failed to read line"));
+    let mut collected = Vec::new();
+    for line in lines {
+        collected.push(line?);
+        if collected.last().map(|l| l.trim() == end).unwrap_or(false) {
+            break;
+        }
+    }
+    extract_marked_payload(collected, begin, end)
 }
 
 /// Decode base64 input with CRC32 checksum validation, with retry on error
-fn decode_with_checksum(prompt: &str) -> Result<String> {
+fn decode_with_checksum(prompt: &str, begin: &str, end: &str) -> Result<String> {
     loop {
         println!("{}", prompt);
         std::io::stdout().flush()?;
 
-        let encoded = read_multiline_input()?;
+        let encoded = match read_marked_input(begin, end) {
+            Ok(payload) => payload,
+            Err(err) => {
+                eprintln!("{err}\nPlease try again.\n");
+                continue;
+            }
+        };
 
         if encoded.is_empty() {
             eprintln!("No input received. Please try again.\n");
@@ -199,18 +243,11 @@ fn decode_with_checksum(prompt: &str) -> Result<String> {
             }
         };
 
-        // Need at least CRC32 (4 bytes) + END_MARKER (5 bytes) + minimal JSON
-        if decoded.len() < 4 + END_MARKER.len() + 2 {
+        // Need at least CRC32 (4 bytes) + minimal JSON
+        if decoded.len() < 4 + 2 {
             eprintln!("Code too short. Please try again.\n");
             continue;
         }
-
-        // Strip end marker if present
-        let decoded = if decoded.ends_with(END_MARKER) {
-            &decoded[..decoded.len() - END_MARKER.len()]
-        } else {
-            &decoded[..]
-        };
 
         let (json_bytes, checksum_bytes) = decoded.split_at(decoded.len() - 4);
         let expected = u32::from_be_bytes(checksum_bytes.try_into().unwrap());
@@ -251,7 +288,11 @@ fn validate_offer_ttl(offer: &OfflineOffer) -> Result<()> {
 
 /// Read and parse base64url-encoded offer from user input with CRC32 validation
 pub fn read_offer_json() -> Result<OfflineOffer> {
-    let json = decode_with_checksum("=== RECEIVER STEP 1: Paste sender's code ===")?;
+    let json = decode_with_checksum(
+        "=== RECEIVER STEP 1: Paste sender's code (including BEGIN/END markers) ===",
+        OFFER_BEGIN_MARKER,
+        OFFER_END_MARKER,
+    )?;
     let offer: OfflineOffer = serde_json::from_str(&json).context("Failed to parse offer")?;
     validate_offer_ttl(&offer)?;
     Ok(offer)
@@ -259,7 +300,11 @@ pub fn read_offer_json() -> Result<OfflineOffer> {
 
 /// Read and parse base64url-encoded answer from user input with CRC32 validation
 pub fn read_answer_json() -> Result<OfflineAnswer> {
-    let json = decode_with_checksum("=== SENDER STEP 3: Paste receiver's response code ===")?;
+    let json = decode_with_checksum(
+        "=== SENDER STEP 3: Paste receiver's response code (including BEGIN/END markers) ===",
+        ANSWER_BEGIN_MARKER,
+        ANSWER_END_MARKER,
+    )?;
     serde_json::from_str(&json).context("Failed to parse answer")
 }
 
@@ -305,5 +350,45 @@ mod tests {
         let parsed: OfflineAnswer = serde_json::from_str(&json).unwrap();
 
         assert_eq!(parsed.sdp, answer.sdp);
+    }
+
+    #[test]
+    fn test_extract_marked_payload_ok() {
+        let lines = vec![
+            "  ".to_string(),
+            OFFER_BEGIN_MARKER.to_string(),
+            "abc".to_string(),
+            "def".to_string(),
+            OFFER_END_MARKER.to_string(),
+        ];
+        let payload =
+            extract_marked_payload(lines, OFFER_BEGIN_MARKER, OFFER_END_MARKER).unwrap();
+        assert_eq!(payload, "abcdef");
+    }
+
+    #[test]
+    fn test_extract_marked_payload_missing_begin() {
+        let lines = vec!["abc".to_string(), OFFER_END_MARKER.to_string()];
+        let err = extract_marked_payload(lines, OFFER_BEGIN_MARKER, OFFER_END_MARKER).unwrap_err();
+        assert!(err.to_string().contains("BEGIN"));
+    }
+
+    #[test]
+    fn test_extract_marked_payload_missing_end() {
+        let lines = vec![OFFER_BEGIN_MARKER.to_string(), "abc".to_string()];
+        let err = extract_marked_payload(lines, OFFER_BEGIN_MARKER, OFFER_END_MARKER).unwrap_err();
+        assert!(err.to_string().contains("END"));
+    }
+
+    #[test]
+    fn test_extract_marked_payload_text_before_begin() {
+        let lines = vec![
+            "junk".to_string(),
+            OFFER_BEGIN_MARKER.to_string(),
+            "abc".to_string(),
+            OFFER_END_MARKER.to_string(),
+        ];
+        let err = extract_marked_payload(lines, OFFER_BEGIN_MARKER, OFFER_END_MARKER).unwrap_err();
+        assert!(err.to_string().contains("Unexpected"));
     }
 }
