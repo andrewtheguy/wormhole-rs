@@ -26,6 +26,13 @@ use crate::transfer::{
     send_encrypted_chunk, send_encrypted_header, FileHeader, TransferType,
 };
 
+/// Display receiver instructions and PIN to the user.
+fn display_receiver_instructions(pin: &str) {
+    print_receiver_command("wormhole-rs receive-local");
+    println!("🔢 PIN: {}\n", pin);
+    println!("Then enter the PIN above when prompted.\n");
+}
+
 /// Find an available TCP port in the configured range.
 /// Binds to [::] for dual-stack (IPv4 + IPv6) support.
 /// Starts at a random port within the range for unpredictability.
@@ -63,11 +70,9 @@ pub async fn send_file_mdns(file_path: &Path) -> Result<()> {
         None => return Ok(()),
     };
 
-    print_receiver_command("wormhole-rs receive-local");
     // Generate random PIN (key will be derived via SPAKE2 handshake)
     let pin = generate_pin();
-    println!("🔢 PIN: {}\n", pin);
-    println!("Then enter the PIN above when prompted.\n");
+    display_receiver_instructions(&pin);
 
     transfer_data_internal(
         prepared.file,
@@ -96,11 +101,9 @@ pub async fn send_folder_mdns(folder_path: &Path) -> Result<()> {
         Arc::new(Mutex::new(Some(temp_path)));
     setup_cleanup_handler(cleanup_path.clone());
 
-    print_receiver_command("wormhole-rs receive-local");
     // Generate random PIN (key will be derived via SPAKE2 handshake)
     let pin = generate_pin();
-    println!("🔢 PIN: {}\n", pin);
-    println!("Then enter the PIN above when prompted.\n");
+    display_receiver_instructions(&pin);
 
     let result = transfer_data_internal(
         prepared.file,
