@@ -15,6 +15,7 @@ use tokio::net::TcpStream;
 use tokio::sync::Mutex;
 
 use crate::crypto::CHUNK_SIZE;
+use crate::cli_instructions::print_receiver_command;
 use crate::mdns_common::{
     generate_pin, generate_transfer_id, PORT_RANGE_END, PORT_RANGE_START, SERVICE_TYPE,
     TXT_FILENAME, TXT_FILE_SIZE, TXT_TRANSFER_ID, TXT_TRANSFER_TYPE,
@@ -24,6 +25,13 @@ use crate::transfer::{
     format_bytes, num_chunks, prepare_file_for_send, prepare_folder_for_send,
     send_encrypted_chunk, send_encrypted_header, FileHeader, TransferType,
 };
+
+/// Display receiver instructions and PIN to the user.
+fn display_receiver_instructions(pin: &str) {
+    print_receiver_command("wormhole-rs receive-local");
+    println!("🔢 PIN: {}\n", pin);
+    println!("Then enter the PIN above when prompted.\n");
+}
 
 /// Find an available TCP port in the configured range.
 /// Binds to [::] for dual-stack (IPv4 + IPv6) support.
@@ -64,8 +72,7 @@ pub async fn send_file_mdns(file_path: &Path) -> Result<()> {
 
     // Generate random PIN (key will be derived via SPAKE2 handshake)
     let pin = generate_pin();
-    println!("\nPIN: {}\n", pin);
-    println!("Share this PIN with the receiver.\n");
+    display_receiver_instructions(&pin);
 
     transfer_data_internal(
         prepared.file,
@@ -96,8 +103,7 @@ pub async fn send_folder_mdns(folder_path: &Path) -> Result<()> {
 
     // Generate random PIN (key will be derived via SPAKE2 handshake)
     let pin = generate_pin();
-    println!("\nPIN: {}\n", pin);
-    println!("Share this PIN with the receiver.\n");
+    display_receiver_instructions(&pin);
 
     let result = transfer_data_internal(
         prepared.file,
@@ -172,7 +178,6 @@ async fn transfer_data_internal(
     println!("Filename: {}", filename);
     println!("Size: {}", format_bytes(file_size));
     println!("\nWaiting for receiver to connect...");
-    println!("Receiver should run: wormhole-rs receive-local\n");
 
     // Accept connection (using tokio's TcpListener for async)
     // We need to convert std TcpListener to tokio TcpListener

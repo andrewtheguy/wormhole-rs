@@ -1,4 +1,5 @@
 pub mod crypto;
+mod cli_instructions;
 pub mod folder;
 pub mod pin;
 #[cfg(feature = "iroh")]
