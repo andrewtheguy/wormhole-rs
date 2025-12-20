@@ -26,6 +26,7 @@ use crate::transfer::{
 };
 use crate::webrtc_common::{setup_data_channel_handlers, WebRtcPeer};
 use crate::wormhole::generate_webrtc_code;
+use crate::cli_instructions::print_receiver_command;
 
 /// Connection timeout for WebRTC handshake
 const WEBRTC_CONNECTION_TIMEOUT: Duration = Duration::from_secs(30);
@@ -115,14 +116,12 @@ async fn display_transfer_code(
         )
         .await?;
 
-        println!("\n🔢 PIN: {}\n", pin);
-        println!("On the receiving end, run:");
-        println!("  wormhole-rs receive --pin\n");
+        print_receiver_command("wormhole-rs receive --pin");
+        println!("🔢 PIN: {}\n", pin);
         println!("Then enter the PIN above when prompted.\n");
     } else {
-        println!("\n🔮 Wormhole code:\n{}\n", code_str);
-        println!("On the receiving end, run:");
-        println!("  wormhole-rs receive\n");
+        print_receiver_command("wormhole-rs receive");
+        println!("🔮 Wormhole code:\n{}\n", code_str);
         println!("Then enter the code above when prompted.\n");
     }
     Ok(())

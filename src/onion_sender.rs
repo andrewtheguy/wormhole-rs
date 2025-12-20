@@ -11,6 +11,7 @@ use tor_cell::relaycell::msg::Connected;
 use tor_hsservice::{config::OnionServiceConfigBuilder, handle_rend_requests};
 
 use crate::crypto::{generate_key, CHUNK_SIZE};
+use crate::cli_instructions::print_receiver_command;
 use crate::transfer::{
     format_bytes, num_chunks, prepare_file_for_send, prepare_folder_for_send,
     send_encrypted_chunk, send_encrypted_header, FileHeader, TransferType,
@@ -65,8 +66,14 @@ async fn transfer_data_tor_internal(
     // Generate wormhole code
     let code = generate_tor_code(onion_addr_str.clone(), &key)?;
 
+    if use_pin {
+        print_receiver_command("wormhole-rs receive --pin");
+    } else {
+        print_receiver_command("wormhole-rs receive");
+    }
+
     println!("\nWormhole code:\n{}\n", code);
-    
+
     if use_pin {
         // Generate ephemeral keys for PIN exchange
         let keys = nostr_sdk::Keys::generate();
@@ -77,12 +84,8 @@ async fn transfer_data_tor_internal(
         ).await?;
 
         println!("🔢 PIN: {}\n", pin);
-        println!("On the receiving end, run:");
-        println!("  wormhole-rs receive --pin\n");
         println!("Then enter the PIN above when prompted.\n");
     } else {
-        println!("On the receiving end, run:");
-        println!("  wormhole-rs receive\n");
         println!("Then enter the code above when prompted.\n");
     }
 

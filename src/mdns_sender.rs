@@ -15,6 +15,7 @@ use tokio::net::TcpStream;
 use tokio::sync::Mutex;
 
 use crate::crypto::CHUNK_SIZE;
+use crate::cli_instructions::print_receiver_command;
 use crate::mdns_common::{
     generate_pin, generate_transfer_id, PORT_RANGE_END, PORT_RANGE_START, SERVICE_TYPE,
     TXT_FILENAME, TXT_FILE_SIZE, TXT_TRANSFER_ID, TXT_TRANSFER_TYPE,
@@ -62,9 +63,10 @@ pub async fn send_file_mdns(file_path: &Path) -> Result<()> {
         None => return Ok(()),
     };
 
+    print_receiver_command("wormhole-rs receive-local");
     // Generate random PIN (key will be derived via SPAKE2 handshake)
     let pin = generate_pin();
-    println!("\nPIN: {}\n", pin);
+    println!("PIN: {}\n", pin);
     println!("Share this PIN with the receiver.\n");
 
     transfer_data_internal(
@@ -94,9 +96,10 @@ pub async fn send_folder_mdns(folder_path: &Path) -> Result<()> {
         Arc::new(Mutex::new(Some(temp_path)));
     setup_cleanup_handler(cleanup_path.clone());
 
+    print_receiver_command("wormhole-rs receive-local");
     // Generate random PIN (key will be derived via SPAKE2 handshake)
     let pin = generate_pin();
-    println!("\nPIN: {}\n", pin);
+    println!("PIN: {}\n", pin);
     println!("Share this PIN with the receiver.\n");
 
     let result = transfer_data_internal(
@@ -172,7 +175,6 @@ async fn transfer_data_internal(
     println!("Filename: {}", filename);
     println!("Size: {}", format_bytes(file_size));
     println!("\nWaiting for receiver to connect...");
-    println!("Receiver should run: wormhole-rs receive-local\n");
 
     // Accept connection (using tokio's TcpListener for async)
     // We need to convert std TcpListener to tokio TcpListener

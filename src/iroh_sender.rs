@@ -8,6 +8,7 @@ use tokio::io::AsyncReadExt;
 use tokio::sync::Mutex;
 
 use crate::crypto::{generate_key, CHUNK_SIZE};
+use crate::cli_instructions::print_receiver_command;
 use crate::iroh_common::{create_sender_endpoint};
 use crate::transfer::{
     format_bytes, num_chunks, prepare_file_for_send, prepare_folder_for_send,
@@ -56,6 +57,12 @@ async fn transfer_data_internal(
     // Generate wormhole code
     let code = generate_code(&addr, &key)?;
 
+    if use_pin {
+        print_receiver_command("wormhole-rs receive --pin");
+    } else {
+        print_receiver_command("wormhole-rs receive");
+    }
+
     println!("\n🔮 Wormhole code:\n{}\n", code);
 
     if use_pin {
@@ -68,12 +75,8 @@ async fn transfer_data_internal(
         ).await?;
 
         println!("🔢 PIN: {}\n", pin);
-        println!("On the receiving end, run:");
-        println!("  wormhole-rs receive --pin\n");
         println!("Then enter the PIN above when prompted.\n");
     } else {
-        println!("On the receiving end, run:");
-        println!("  wormhole-rs receive\n");
         println!("Then enter the code above when prompted.\n");
     }
 
