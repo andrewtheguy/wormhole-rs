@@ -110,8 +110,8 @@ async fn try_webrtc_receive(
     // Gather ICE candidates with retry logic
     println!("Gathering ICE candidates...");
     let mut candidate_payloads;
-    let mut retry_count = 0;
-    const MAX_ICE_GATHER_RETRIES: usize = 2;
+    let mut attempt_count = 0;
+    const MAX_ICE_GATHER_ATTEMPTS: usize = 2;
 
     loop {
         let candidates = rtc_peer
@@ -125,21 +125,21 @@ async fn try_webrtc_receive(
         }
 
         // No ICE candidates gathered
-        retry_count += 1;
-        if retry_count < MAX_ICE_GATHER_RETRIES {
+        attempt_count += 1;
+        if attempt_count < MAX_ICE_GATHER_ATTEMPTS {
             eprintln!(
                 "Warning: No ICE candidates gathered on attempt {}. Retrying...",
-                retry_count
+                attempt_count
             );
             // Brief delay before retry
             tokio::time::sleep(Duration::from_millis(500)).await;
         } else {
-            // After all retries exhausted, log and continue anyway
+            // After all attempts exhausted, log and continue anyway
             // (relay fallback or STUN might still work with empty candidates)
             eprintln!(
                 "Warning: Failed to gather any ICE candidates after {} attempts. \
                  Proceeding with empty candidate list - connection may fall back to relay servers.",
-                MAX_ICE_GATHER_RETRIES
+                MAX_ICE_GATHER_ATTEMPTS
             );
             break;
         }

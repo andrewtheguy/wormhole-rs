@@ -209,13 +209,7 @@ async fn try_webrtc_transfer(
         }
     }
 
-    let remote_pubkey = match receiver_pubkey {
-        Some(pk) => pk,
-        None => {
-            signal_handle.abort();
-            return Ok(WebRtcResult::Failed("No receiver pubkey".to_string()));
-        }
-    };
+    let remote_pubkey = receiver_pubkey.expect("receiver_pubkey must be Some after receiving Offer");
 
     // Create and send answer
     let answer = rtc_peer.create_answer().await?;
