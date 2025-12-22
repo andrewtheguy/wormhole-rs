@@ -107,13 +107,43 @@ async fn try_webrtc_receive(
     let offer = rtc_peer.create_offer().await?;
     rtc_peer.set_local_description(offer.clone()).await?;
 
-    // Gather ICE candidates
+    // Gather ICE candidates with retry logic
     println!("Gathering ICE candidates...");
-    let candidates = rtc_peer
-        .gather_ice_candidates(Duration::from_secs(10))
-        .await?;
-    let candidate_payloads = ice_candidates_to_payloads(candidates);
-    println!("Gathered {} ICE candidates", candidate_payloads.len());
+    let mut candidate_payloads;
+    let mut retry_count = 0;
+    const MAX_ICE_GATHER_RETRIES: usize = 2;
+
+    loop {
+        let candidates = rtc_peer
+            .gather_ice_candidates(Duration::from_secs(10))
+            .await?;
+        candidate_payloads = ice_candidates_to_payloads(candidates);
+
+        if !candidate_payloads.is_empty() {
+            println!("Gathered {} ICE candidates", candidate_payloads.len());
+            break;
+        }
+
+        // No ICE candidates gathered
+        retry_count += 1;
+        if retry_count < MAX_ICE_GATHER_RETRIES {
+            eprintln!(
+                "Warning: No ICE candidates gathered on attempt {}. Retrying...",
+                retry_count
+            );
+            // Brief delay before retry
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        } else {
+            // After all retries exhausted, log and continue anyway
+            // (relay fallback or STUN might still work with empty candidates)
+            eprintln!(
+                "Warning: Failed to gather any ICE candidates after {} attempts. \
+                 Proceeding with empty candidate list - connection may fall back to relay servers.",
+                MAX_ICE_GATHER_RETRIES
+            );
+            break;
+        }
+    }
 
     signaling
         .publish_offer(sender_pubkey, &offer.sdp, candidate_payloads)
@@ -130,8 +160,19 @@ async fn try_webrtc_receive(
                     let answer_sdp = RTCSessionDescription::answer(sdp.sdp)
                         .context("Failed to create answer SDP");
                     
-                    // Add bundled ICE candidates
+                    // Set remote description first
+                    match answer_sdp {
+                        Ok(sdp) => {
+                             if let Err(e) = rtc_peer.set_remote_description(sdp).await {
+                                 break Err(anyhow::anyhow!("Failed to set remote description: {}", e));
+                             }
+                        },
+                        Err(e) => break Err(e),
+                    }
+
+                    // Then add bundled ICE candidates with error propagation
                     println!("Received {} bundled ICE candidates", sdp.candidates.len());
+                    let mut candidate_error: Option<anyhow::Error> = None;
                     for candidate in sdp.candidates {
                         let candidate_init = RTCIceCandidateInit {
                             candidate: candidate.candidate,
@@ -140,19 +181,16 @@ async fn try_webrtc_receive(
                             username_fragment: None,
                         };
                          if let Err(e) = rtc_peer.add_ice_candidate(candidate_init).await {
-                             eprintln!("Failed to add bundled ICE candidate: {}", e);
+                             candidate_error = Some(anyhow::anyhow!("Failed to add bundled ICE candidate: {}", e));
+                             break;
                          }
                     }
 
-                    match answer_sdp {
-                        Ok(sdp) => {
-                             if let Err(e) = rtc_peer.set_remote_description(sdp).await {
-                                 break Err(anyhow::anyhow!("Failed to set remote description: {}", e));
-                             }
-                             break Ok(None);
-                        },
-                        Err(e) => break Err(e),
+                    if let Some(err) = candidate_error {
+                        break Err(err);
                     }
+
+                    break Ok(None);
                 }
 
                 Some(_) => continue,

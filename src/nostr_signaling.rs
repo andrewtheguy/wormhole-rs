@@ -127,10 +127,9 @@ impl NostrSignaling {
         &self,
         peer_pubkey: &PublicKey,
         event_type: &str,
-        seq: Option<u32>,
         content: &str,
     ) -> Result<Event> {
-        let mut tags = vec![
+        let tags = vec![
             Tag::custom(
                 TagKind::SingleLetter(SingleLetterTag::lowercase(Alphabet::T)),
                 vec![self.transfer_id.clone()],
@@ -141,13 +140,6 @@ impl NostrSignaling {
             ),
             Tag::custom(TagKind::Custom("type".into()), vec![event_type.to_string()]),
         ];
-
-        if let Some(s) = seq {
-            tags.push(Tag::custom(
-                TagKind::Custom("seq".into()),
-                vec![s.to_string()],
-            ));
-        }
 
         let event = EventBuilder::new(nostr_file_transfer_kind(), content)
             .tags(tags)
@@ -173,7 +165,7 @@ impl NostrSignaling {
         let content = STANDARD.encode(serde_json::to_string(&payload)?);
 
         let event =
-            self.create_signaling_event(receiver_pubkey, SIGNALING_TYPE_OFFER, Some(0), &content)?;
+            self.create_signaling_event(receiver_pubkey, SIGNALING_TYPE_OFFER, &content)?;
 
         self.client
             .send_event(&event)
@@ -198,7 +190,7 @@ impl NostrSignaling {
         let content = STANDARD.encode(serde_json::to_string(&payload)?);
 
         let event =
-            self.create_signaling_event(sender_pubkey, SIGNALING_TYPE_ANSWER, Some(0), &content)?;
+            self.create_signaling_event(sender_pubkey, SIGNALING_TYPE_ANSWER, &content)?;
 
         self.client
             .send_event(&event)
@@ -242,17 +234,6 @@ impl NostrSignaling {
                     == TagKind::Custom(std::borrow::Cow::Borrowed("type"))
             })
             .and_then(|t| t.content())?;
-
-        // Get sequence number if present
-        let _seq: Option<u32> = event
-            .tags
-            .iter()
-            .find(|t| {
-                t.kind()
-                    == TagKind::Custom(std::borrow::Cow::Borrowed("seq"))
-            })
-            .and_then(|t| t.content())
-            .and_then(|s| s.parse().ok());
 
         match event_type {
 

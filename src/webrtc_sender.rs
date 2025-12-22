@@ -165,10 +165,12 @@ async fn try_webrtc_transfer(
 
     let receiver_pubkey;
 
-    // Wait loop without timeout (unless user forces fallback)
+    // Wait loop with timeout to prevent hanging indefinitely
     loop {
-        match signal_rx.recv().await {
-            Some(SignalingMessage::Offer { sender_pubkey, sdp }) => {
+        let recv_result = timeout(WEBRTC_CONNECTION_TIMEOUT, signal_rx.recv()).await;
+        
+        match recv_result {
+            Ok(Some(SignalingMessage::Offer { sender_pubkey, sdp })) => {
                 println!("Received offer from: {}", sender_pubkey.to_hex());
                 receiver_pubkey = Some(sender_pubkey);
 
@@ -186,15 +188,23 @@ async fn try_webrtc_transfer(
                         sdp_mline_index: candidate.sdp_m_line_index,
                         username_fragment: None,
                     };
-                     if let Err(e) = rtc_peer.add_ice_candidate(candidate_init).await {
-                         eprintln!("Failed to add bundled ICE candidate: {}", e);
-                     }
+                    if let Err(e) = rtc_peer.add_ice_candidate(candidate_init).await {
+                        eprintln!("Failed to add bundled ICE candidate: {}", e);
+                    }
                 }
                 break;
             }
-            Some(_) => continue,
-            None => {
+            Ok(Some(_)) => continue,
+            Ok(None) => {
                 return Ok(WebRtcResult::Failed("Signaling channel closed".to_string()));
+            }
+            Err(_) => {
+                // Timeout waiting for receiver's offer
+                return Ok(WebRtcResult::Failed(
+                    "Timeout waiting for receiver's offer. \
+                     If receiver is not connecting, try manual signaling mode or check relay connectivity."
+                        .to_string(),
+                ));
             }
         }
     }
@@ -230,20 +240,22 @@ async fn try_webrtc_transfer(
     println!("Waiting for data channel to open...");
     let open_result = timeout(WEBRTC_CONNECTION_TIMEOUT, open_rx).await;
 
-    if open_result.is_err() {
-        // ice_receiver_handle was removed
-        signal_handle.abort();
-        return Ok(WebRtcResult::Failed(
-            "Timeout waiting for data channel".to_string(),
-        ));
-    }
-
-    if open_result.unwrap().is_err() {
-        // ice_receiver_handle was removed
-        signal_handle.abort();
-        return Ok(WebRtcResult::Failed(
-            "Data channel failed to open".to_string(),
-        ));
+    match open_result {
+        Err(_) => {
+            signal_handle.abort();
+            return Ok(WebRtcResult::Failed(
+                "Timeout waiting for data channel".to_string(),
+            ));
+        }
+        Ok(Err(_)) => {
+            signal_handle.abort();
+            return Ok(WebRtcResult::Failed(
+                "Data channel failed to open".to_string(),
+            ));
+        }
+        Ok(Ok(())) => {
+            // Success: data channel opened
+        }
     }
 
     // Display connection info
