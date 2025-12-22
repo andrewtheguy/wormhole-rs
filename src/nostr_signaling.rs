@@ -13,7 +13,6 @@ use anyhow::{Context, Result};
 use base64::{engine::general_purpose::STANDARD, Engine};
 use nostr_sdk::prelude::*;
 use serde::{Deserialize, Serialize};
-use std::sync::atomic::{AtomicU32, Ordering};
 use tokio::sync::mpsc;
 use tokio::time::{timeout, Duration};
 
@@ -24,8 +23,6 @@ use crate::nostr_protocol::{
 // Signaling event types
 const SIGNALING_TYPE_OFFER: &str = "webrtc-offer";
 const SIGNALING_TYPE_ANSWER: &str = "webrtc-answer";
-const SIGNALING_TYPE_CANDIDATE: &str = "webrtc-ice";
-const SIGNALING_TYPE_READY: &str = "webrtc-ready";
 
 
 /// SDP payload for offer/answer exchange
@@ -34,6 +31,7 @@ pub struct SdpPayload {
     pub sdp: String,
     #[serde(rename = "type")]
     pub sdp_type: String,
+    pub candidates: Vec<IceCandidatePayload>,
 }
 
 /// ICE candidate payload
@@ -47,11 +45,9 @@ pub struct IceCandidatePayload {
 }
 
 /// Signaling message types received from Nostr
+/// Signaling message types received from Nostr
 #[derive(Debug, Clone)]
 pub enum SignalingMessage {
-    Ready {
-        sender_pubkey: PublicKey,
-    },
     Offer {
         sender_pubkey: PublicKey,
         sdp: SdpPayload,
@@ -59,11 +55,6 @@ pub enum SignalingMessage {
     Answer {
         sender_pubkey: PublicKey,
         sdp: SdpPayload,
-    },
-    IceCandidate {
-        sender_pubkey: PublicKey,
-        candidate: IceCandidatePayload,
-        seq: u32,
     },
 }
 
@@ -73,7 +64,6 @@ pub struct NostrSignaling {
     pub keys: Keys,
     transfer_id: String,
     relay_urls: Vec<String>,
-    ice_seq: AtomicU32,
 }
 
 impl NostrSignaling {
@@ -114,7 +104,6 @@ impl NostrSignaling {
             keys,
             transfer_id,
             relay_urls,
-            ice_seq: AtomicU32::new(0),
         })
     }
 
@@ -138,10 +127,9 @@ impl NostrSignaling {
         &self,
         peer_pubkey: &PublicKey,
         event_type: &str,
-        seq: Option<u32>,
         content: &str,
     ) -> Result<Event> {
-        let mut tags = vec![
+        let tags = vec![
             Tag::custom(
                 TagKind::SingleLetter(SingleLetterTag::lowercase(Alphabet::T)),
                 vec![self.transfer_id.clone()],
@@ -153,13 +141,6 @@ impl NostrSignaling {
             Tag::custom(TagKind::Custom("type".into()), vec![event_type.to_string()]),
         ];
 
-        if let Some(s) = seq {
-            tags.push(Tag::custom(
-                TagKind::Custom("seq".into()),
-                vec![s.to_string()],
-            ));
-        }
-
         let event = EventBuilder::new(nostr_file_transfer_kind(), content)
             .tags(tags)
             .sign_with_keys(&self.keys)?;
@@ -167,28 +148,24 @@ impl NostrSignaling {
         Ok(event)
     }
 
-    /// Publish a "ready" signal (receiver ready to receive offer)
-    pub async fn publish_ready(&self, sender_pubkey: &PublicKey) -> Result<()> {
-        let event = self.create_signaling_event(sender_pubkey, SIGNALING_TYPE_READY, None, "")?;
 
-        self.client
-            .send_event(&event)
-            .await
-            .context("Failed to publish ready signal")?;
-
-        Ok(())
-    }
 
     /// Publish an SDP offer
-    pub async fn publish_offer(&self, receiver_pubkey: &PublicKey, sdp: &str) -> Result<()> {
+    pub async fn publish_offer(
+        &self,
+        receiver_pubkey: &PublicKey,
+        sdp: &str,
+        candidates: Vec<IceCandidatePayload>,
+    ) -> Result<()> {
         let payload = SdpPayload {
             sdp: sdp.to_string(),
             sdp_type: "offer".to_string(),
+            candidates,
         };
         let content = STANDARD.encode(serde_json::to_string(&payload)?);
 
         let event =
-            self.create_signaling_event(receiver_pubkey, SIGNALING_TYPE_OFFER, Some(0), &content)?;
+            self.create_signaling_event(receiver_pubkey, SIGNALING_TYPE_OFFER, &content)?;
 
         self.client
             .send_event(&event)
@@ -199,15 +176,21 @@ impl NostrSignaling {
     }
 
     /// Publish an SDP answer
-    pub async fn publish_answer(&self, sender_pubkey: &PublicKey, sdp: &str) -> Result<()> {
+    pub async fn publish_answer(
+        &self,
+        sender_pubkey: &PublicKey,
+        sdp: &str,
+        candidates: Vec<IceCandidatePayload>,
+    ) -> Result<()> {
         let payload = SdpPayload {
             sdp: sdp.to_string(),
             sdp_type: "answer".to_string(),
+            candidates,
         };
         let content = STANDARD.encode(serde_json::to_string(&payload)?);
 
         let event =
-            self.create_signaling_event(sender_pubkey, SIGNALING_TYPE_ANSWER, Some(0), &content)?;
+            self.create_signaling_event(sender_pubkey, SIGNALING_TYPE_ANSWER, &content)?;
 
         self.client
             .send_event(&event)
@@ -217,37 +200,7 @@ impl NostrSignaling {
         Ok(())
     }
 
-    /// Publish an ICE candidate
-    pub async fn publish_ice_candidate(
-        &self,
-        peer_pubkey: &PublicKey,
-        candidate: &str,
-        sdp_mid: Option<&str>,
-        sdp_m_line_index: Option<u16>,
-    ) -> Result<()> {
-        let seq = self.ice_seq.fetch_add(1, Ordering::SeqCst);
 
-        let payload = IceCandidatePayload {
-            candidate: candidate.to_string(),
-            sdp_m_line_index,
-            sdp_mid: sdp_mid.map(|s| s.to_string()),
-        };
-        let content = STANDARD.encode(serde_json::to_string(&payload)?);
-
-        let event = self.create_signaling_event(
-            peer_pubkey,
-            SIGNALING_TYPE_CANDIDATE,
-            Some(seq),
-            &content,
-        )?;
-
-        self.client
-            .send_event(&event)
-            .await
-            .context("Failed to publish ICE candidate")?;
-
-        Ok(())
-    }
 
     /// Subscribe to signaling events for our public key
     pub async fn subscribe(&self) -> Result<()> {
@@ -282,21 +235,8 @@ impl NostrSignaling {
             })
             .and_then(|t| t.content())?;
 
-        // Get sequence number if present
-        let seq: Option<u32> = event
-            .tags
-            .iter()
-            .find(|t| {
-                t.kind()
-                    == TagKind::Custom(std::borrow::Cow::Borrowed("seq"))
-            })
-            .and_then(|t| t.content())
-            .and_then(|s| s.parse().ok());
-
         match event_type {
-            SIGNALING_TYPE_READY => Some(SignalingMessage::Ready {
-                sender_pubkey: event.pubkey,
-            }),
+
             SIGNALING_TYPE_OFFER => {
                 let decoded = STANDARD.decode(&event.content).ok()?;
                 let payload: SdpPayload = serde_json::from_slice(&decoded).ok()?;
@@ -311,15 +251,6 @@ impl NostrSignaling {
                 Some(SignalingMessage::Answer {
                     sender_pubkey: event.pubkey,
                     sdp: payload,
-                })
-            }
-            SIGNALING_TYPE_CANDIDATE => {
-                let decoded = STANDARD.decode(&event.content).ok()?;
-                let payload: IceCandidatePayload = serde_json::from_slice(&decoded).ok()?;
-                Some(SignalingMessage::IceCandidate {
-                    sender_pubkey: event.pubkey,
-                    candidate: payload,
-                    seq: seq.unwrap_or(0),
                 })
             }
             _ => None,
@@ -436,7 +367,6 @@ pub async fn create_receiver_signaling(
         keys,
         transfer_id: transfer_id.to_string(),
         relay_urls,
-        ice_seq: AtomicU32::new(0),
     };
 
     signaling.subscribe().await?;
@@ -450,16 +380,30 @@ mod tests {
 
     #[test]
     fn test_sdp_payload_serialization() {
+        let candidate = IceCandidatePayload {
+            candidate: "candidate:1 1 UDP 2122252543 192.168.1.2 54321 typ host".to_string(),
+            sdp_m_line_index: Some(0),
+            sdp_mid: Some("0".to_string()),
+        };
+
         let payload = SdpPayload {
             sdp: "v=0\r\n...".to_string(),
             sdp_type: "offer".to_string(),
+            candidates: vec![candidate.clone()],
         };
 
         let json = serde_json::to_string(&payload).unwrap();
         assert!(json.contains("\"type\":\"offer\""));
+        assert!(json.contains("candidate"));
+        assert!(json.contains("sdpMLineIndex"));
+        assert!(json.contains("sdpMid"));
 
         let decoded: SdpPayload = serde_json::from_str(&json).unwrap();
         assert_eq!(decoded.sdp_type, "offer");
+        assert_eq!(decoded.candidates.len(), 1);
+        assert_eq!(decoded.candidates[0].candidate, candidate.candidate);
+        assert_eq!(decoded.candidates[0].sdp_m_line_index, candidate.sdp_m_line_index);
+        assert_eq!(decoded.candidates[0].sdp_mid, candidate.sdp_mid);
     }
 
     #[test]
@@ -475,5 +419,107 @@ mod tests {
 
         let decoded: IceCandidatePayload = serde_json::from_str(&json).unwrap();
         assert_eq!(decoded.sdp_m_line_index, Some(0));
+    }
+
+    #[test]
+    fn test_ice_candidate_payload_optional_fields() {
+        let payload = IceCandidatePayload {
+            candidate: "candidate:2 1 TCP 12345 10.0.0.5 6000 typ srflx".to_string(),
+            sdp_m_line_index: None,
+            sdp_mid: None,
+        };
+
+        let json = serde_json::to_string(&payload).unwrap();
+        // Optional fields should serialize as null when None
+        assert!(json.contains("\"sdpMLineIndex\":null"));
+        assert!(json.contains("\"sdpMid\":null"));
+
+        let decoded: IceCandidatePayload = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.candidate, payload.candidate);
+        assert_eq!(decoded.sdp_m_line_index, None);
+        assert_eq!(decoded.sdp_mid, None);
+    }
+
+    #[test]
+    fn test_sdp_payload_roundtrip_multiple_candidates() {
+        let c1 = IceCandidatePayload {
+            candidate: "candidate:1 1 UDP 2122252543 192.168.1.2 54321 typ host".to_string(),
+            sdp_m_line_index: Some(0),
+            sdp_mid: Some("0".to_string()),
+        };
+        let c2 = IceCandidatePayload {
+            candidate: "candidate:2 1 TCP 12345 10.0.0.5 6000 typ srflx".to_string(),
+            sdp_m_line_index: Some(1),
+            sdp_mid: Some("1".to_string()),
+        };
+
+        let payload = SdpPayload {
+            sdp: "v=0\r\no=test".to_string(),
+            sdp_type: "answer".to_string(),
+            candidates: vec![c1.clone(), c2.clone()],
+        };
+
+        let json = serde_json::to_string(&payload).unwrap();
+        assert!(json.contains("\"type\":\"answer\""));
+        assert!(json.contains(&c1.candidate));
+        assert!(json.contains(&c2.candidate));
+
+        let decoded: SdpPayload = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.sdp_type, "answer");
+        assert_eq!(decoded.candidates.len(), 2);
+        assert_eq!(decoded.candidates[0].candidate, c1.candidate);
+        assert_eq!(decoded.candidates[0].sdp_m_line_index, c1.sdp_m_line_index);
+        assert_eq!(decoded.candidates[0].sdp_mid, c1.sdp_mid);
+        assert_eq!(decoded.candidates[1].candidate, c2.candidate);
+        assert_eq!(decoded.candidates[1].sdp_m_line_index, c2.sdp_m_line_index);
+        assert_eq!(decoded.candidates[1].sdp_mid, c2.sdp_mid);
+    }
+
+    #[test]
+    fn test_parse_signaling_event_offer_roundtrip() {
+        let payload = SdpPayload {
+            sdp: "v=0\r\n...offer".to_string(),
+            sdp_type: "offer".to_string(),
+            candidates: vec![IceCandidatePayload {
+                candidate: "candidate:3 1 UDP 1111 203.0.113.1 4000 typ relay".to_string(),
+                sdp_m_line_index: Some(0),
+                sdp_mid: Some("data".to_string()),
+            }],
+        };
+
+        let sender_keys = Keys::generate();
+        let receiver_keys = Keys::generate();
+        let transfer_id = "test-transfer-id";
+
+        let content = STANDARD.encode(serde_json::to_string(&payload).unwrap());
+
+        let event = EventBuilder::new(nostr_file_transfer_kind(), content)
+            .tags(vec![
+                Tag::custom(
+                    TagKind::SingleLetter(SingleLetterTag::lowercase(Alphabet::T)),
+                    vec![transfer_id.to_string()],
+                ),
+                Tag::custom(
+                    TagKind::SingleLetter(SingleLetterTag::lowercase(Alphabet::P)),
+                    vec![receiver_keys.public_key().to_hex()],
+                ),
+                Tag::custom(TagKind::Custom("type".into()), vec![SIGNALING_TYPE_OFFER.to_string()]),
+            ])
+            .sign_with_keys(&sender_keys)
+            .unwrap();
+
+        let parsed = NostrSignaling::parse_signaling_event(&event).expect("should parse offer");
+
+        match parsed {
+            SignalingMessage::Offer { sender_pubkey, sdp } => {
+                assert_eq!(sender_pubkey, sender_keys.public_key());
+                assert_eq!(sdp.sdp_type, "offer");
+                assert_eq!(sdp.candidates.len(), 1);
+                assert_eq!(sdp.candidates[0].candidate, payload.candidates[0].candidate);
+                assert_eq!(sdp.candidates[0].sdp_mid, payload.candidates[0].sdp_mid);
+                assert_eq!(sdp.candidates[0].sdp_m_line_index, payload.candidates[0].sdp_m_line_index);
+            }
+            _ => panic!("expected offer message"),
+        }
     }
 }
