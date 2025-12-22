@@ -6,7 +6,6 @@
 //! 3. Manual signaling fallback via copy/paste
 
 use anyhow::{Context, Result};
-use base64::Engine;
 use bytes::Bytes;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -232,7 +231,6 @@ async fn try_webrtc_transfer(
     let open_result = timeout(WEBRTC_CONNECTION_TIMEOUT, open_rx).await;
 
     if open_result.is_err() {
-    if open_result.is_err() {
         // ice_receiver_handle was removed
         signal_handle.abort();
         return Ok(WebRtcResult::Failed(
@@ -240,7 +238,6 @@ async fn try_webrtc_transfer(
         ));
     }
 
-    if open_result.unwrap().is_err() {
     if open_result.unwrap().is_err() {
         // ice_receiver_handle was removed
         signal_handle.abort();
@@ -250,7 +247,7 @@ async fn try_webrtc_transfer(
     }
 
     // Display connection info
-    let conn_info = rtc_peer_arc.get_connection_info().await;
+    let conn_info = rtc_peer.get_connection_info().await;
     println!("WebRTC connection established!");
     println!("   Connection: {}", conn_info.connection_type);
     if let (Some(local), Some(remote)) = (&conn_info.local_address, &conn_info.remote_address) {
@@ -388,7 +385,7 @@ async fn try_webrtc_transfer(
 
     // Close connections and abort background tasks
     // ice_receiver_handle was removed
-    let _ = rtc_peer_arc.close().await;
+    let _ = rtc_peer.close().await;
     signal_handle.abort();
 
     Ok(WebRtcResult::Success)

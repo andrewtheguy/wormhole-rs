@@ -13,7 +13,6 @@ use anyhow::{Context, Result};
 use base64::{engine::general_purpose::STANDARD, Engine};
 use nostr_sdk::prelude::*;
 use serde::{Deserialize, Serialize};
-use std::sync::atomic::{AtomicU32, Ordering};
 use tokio::sync::mpsc;
 use tokio::time::{timeout, Duration};
 
@@ -245,7 +244,7 @@ impl NostrSignaling {
             .and_then(|t| t.content())?;
 
         // Get sequence number if present
-        let seq: Option<u32> = event
+        let _seq: Option<u32> = event
             .tags
             .iter()
             .find(|t| {
@@ -256,7 +255,7 @@ impl NostrSignaling {
             .and_then(|s| s.parse().ok());
 
         match event_type {
-        match event_type {
+
             SIGNALING_TYPE_OFFER => {
                 let decoded = STANDARD.decode(&event.content).ok()?;
                 let payload: SdpPayload = serde_json::from_slice(&decoded).ok()?;

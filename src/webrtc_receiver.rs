@@ -6,7 +6,6 @@
 //! 3. Manual signaling fallback via copy/paste
 
 use anyhow::{Context, Result};
-use base64::Engine;
 use bytes::Bytes;
 use std::io::Write;
 use std::path::PathBuf;
@@ -227,7 +226,7 @@ async fn try_webrtc_receive(
     }
 
     // Display connection info
-    let conn_info = rtc_peer_arc.get_connection_info().await;
+    let conn_info = rtc_peer.get_connection_info().await;
     println!("WebRTC connection established!");
     println!("   Connection: {}", conn_info.connection_type);
     if let (Some(local), Some(remote)) = (&conn_info.local_address, &conn_info.remote_address) {
@@ -281,7 +280,7 @@ async fn try_webrtc_receive(
 
     // Close connections and abort background tasks
     // ice_receiver_handle removed
-    let _ = rtc_peer_arc.close().await;
+    let _ = rtc_peer.close().await;
     signal_handle.abort();
 
     Ok(WebRtcResult::Success)
@@ -648,4 +647,3 @@ impl std::io::Read for WebRtcStreamingReader {
         Ok(to_copy)
     }
 }
-
