@@ -24,7 +24,9 @@ use crate::folder::{
 
 use crate::nostr_signaling::{create_receiver_signaling, NostrSignaling, SignalingMessage};
 use crate::transfer::{format_bytes, num_chunks, FileHeader, TransferType};
+
 use crate::webrtc_common::{setup_data_channel_handlers, WebRtcPeer};
+use crate::webrtc_offline_signaling::ice_candidates_to_payloads;
 use crate::wormhole::{decode_key, parse_code, PROTOCOL_WEBRTC};
 
 /// Connection timeout for WebRTC handshake
@@ -105,7 +107,18 @@ async fn try_webrtc_receive(
     // Create and send offer to sender
     let offer = rtc_peer.create_offer().await?;
     rtc_peer.set_local_description(offer.clone()).await?;
-    signaling.publish_offer(sender_pubkey, &offer.sdp).await?;
+
+    // Gather ICE candidates
+    println!("Gathering ICE candidates...");
+    let candidates = rtc_peer
+        .gather_ice_candidates(Duration::from_secs(10))
+        .await?;
+    let candidate_payloads = ice_candidates_to_payloads(candidates);
+    println!("Gathered {} ICE candidates", candidate_payloads.len());
+
+    signaling
+        .publish_offer(sender_pubkey, &offer.sdp, candidate_payloads)
+        .await?;
     println!("Sent offer to sender");
 
     // Wait for answer with timeout
@@ -117,6 +130,20 @@ async fn try_webrtc_receive(
                     println!("Received answer from sender");
                     let answer_sdp = RTCSessionDescription::answer(sdp.sdp)
                         .context("Failed to create answer SDP");
+                    
+                    // Add bundled ICE candidates
+                    println!("Received {} bundled ICE candidates", sdp.candidates.len());
+                    for candidate in sdp.candidates {
+                        let candidate_init = RTCIceCandidateInit {
+                            candidate: candidate.candidate,
+                            sdp_mid: candidate.sdp_mid,
+                            sdp_mline_index: candidate.sdp_m_line_index,
+                            username_fragment: None,
+                        };
+                         if let Err(e) = rtc_peer.add_ice_candidate(candidate_init).await {
+                             eprintln!("Failed to add bundled ICE candidate: {}", e);
+                         }
+                    }
 
                     match answer_sdp {
                         Ok(sdp) => {
@@ -128,17 +155,7 @@ async fn try_webrtc_receive(
                         Err(e) => break Err(e),
                     }
                 }
-                Some(SignalingMessage::IceCandidate { candidate, seq, .. }) => {
-                    // Handle early ICE candidates
-                    println!("Received early ICE candidate (seq: {})", seq);
-                    let candidate_init = RTCIceCandidateInit {
-                        candidate: candidate.candidate,
-                        sdp_mid: candidate.sdp_mid,
-                        sdp_mline_index: candidate.sdp_m_line_index,
-                        username_fragment: None,
-                    };
-                    let _ = rtc_peer.add_ice_candidate(candidate_init).await;
-                }
+
                 Some(_) => continue,
                 None => {
                     break Err(anyhow::anyhow!("Signaling channel closed"));
@@ -169,94 +186,12 @@ async fn try_webrtc_receive(
         }
     }
 
-    // Take ownership of receivers before wrapping rtc_peer in Arc
-    let mut ice_rx = rtc_peer
-        .take_ice_candidate_rx()
-        .expect("ICE candidate receiver already taken");
+
+
+    // Take data channel receiver from peer
     let mut data_channel_rx = rtc_peer
         .take_data_channel_rx()
         .expect("Data channel receiver already taken");
-
-    // Spawn task to send our ICE candidates
-    let signaling_client = signaling.client.clone();
-    let signaling_keys = signaling.keys.clone();
-    let transfer_id = signaling.transfer_id().to_string();
-    let sender_pubkey_clone = *sender_pubkey;
-
-    let ice_seq = Arc::new(std::sync::atomic::AtomicU32::new(0));
-    let ice_seq_clone = ice_seq.clone();
-
-    let ice_sender_handle = tokio::spawn(async move {
-        while let Some(candidate) = ice_rx.recv().await {
-            let candidate_json = match candidate.to_json() {
-                Ok(json) => json,
-                Err(_) => continue,
-            };
-
-            let seq = ice_seq_clone.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-
-            // Create ICE candidate event manually
-            let payload = crate::nostr_signaling::IceCandidatePayload {
-                candidate: candidate_json.candidate,
-                sdp_m_line_index: candidate_json.sdp_mline_index,
-                sdp_mid: candidate_json.sdp_mid,
-            };
-
-            let content = base64::engine::general_purpose::STANDARD
-                .encode(serde_json::to_string(&payload).unwrap());
-
-            let tags = vec![
-                nostr_sdk::Tag::custom(
-                    nostr_sdk::TagKind::SingleLetter(nostr_sdk::SingleLetterTag::lowercase(
-                        nostr_sdk::Alphabet::T,
-                    )),
-                    vec![transfer_id.clone()],
-                ),
-                nostr_sdk::Tag::custom(
-                    nostr_sdk::TagKind::SingleLetter(nostr_sdk::SingleLetterTag::lowercase(
-                        nostr_sdk::Alphabet::P,
-                    )),
-                    vec![sender_pubkey_clone.to_hex()],
-                ),
-                nostr_sdk::Tag::custom(
-                    nostr_sdk::TagKind::Custom("type".into()),
-                    vec!["webrtc-ice".to_string()],
-                ),
-                nostr_sdk::Tag::custom(
-                    nostr_sdk::TagKind::Custom("seq".into()),
-                    vec![seq.to_string()],
-                ),
-            ];
-
-            if let Ok(event) = nostr_sdk::EventBuilder::new(
-                crate::nostr_protocol::nostr_file_transfer_kind(),
-                &content,
-            )
-            .tags(tags)
-            .sign_with_keys(&signaling_keys)
-            {
-                let _ = signaling_client.send_event(&event).await;
-            }
-        }
-    });
-
-    // Process incoming ICE candidates in background
-    let rtc_peer_arc = Arc::new(rtc_peer);
-    let rtc_peer_clone = rtc_peer_arc.clone();
-
-    let ice_receiver_handle = tokio::spawn(async move {
-        while let Some(msg) = signal_rx.recv().await {
-            if let SignalingMessage::IceCandidate { candidate, .. } = msg {
-                let candidate_init = RTCIceCandidateInit {
-                    candidate: candidate.candidate,
-                    sdp_mid: candidate.sdp_mid,
-                    sdp_mline_index: candidate.sdp_m_line_index,
-                    username_fragment: None,
-                };
-                let _ = rtc_peer_clone.add_ice_candidate(candidate_init).await;
-            }
-        }
-    });
 
     // Wait for data channel from sender
     println!("Waiting for data channel from sender...");
@@ -276,16 +211,14 @@ async fn try_webrtc_receive(
             println!("Data channel opened successfully");
         }
         Ok(Err(_)) => {
-            ice_sender_handle.abort();
-            ice_receiver_handle.abort();
+            // ice_receiver_handle removed
             signal_handle.abort();
             return Ok(WebRtcResult::Failed(
                 "Data channel failed to open".to_string(),
             ));
         }
         Err(_) => {
-            ice_sender_handle.abort();
-            ice_receiver_handle.abort();
+            // ice_receiver_handle removed
             signal_handle.abort();
             return Ok(WebRtcResult::Failed(
                 "Timeout waiting for data channel to open".to_string(),
@@ -347,8 +280,7 @@ async fn try_webrtc_receive(
     }
 
     // Close connections and abort background tasks
-    ice_sender_handle.abort();
-    ice_receiver_handle.abort();
+    // ice_receiver_handle removed
     let _ = rtc_peer_arc.close().await;
     signal_handle.abort();
 
@@ -401,9 +333,9 @@ pub async fn receive_webrtc(code: &str, output_dir: Option<PathBuf>) -> Result<(
 
     println!("Receiver pubkey: {}", signaling.public_key().to_hex());
 
-    // Send ready signal to sender
-    signaling.publish_ready(&sender_pubkey).await?;
-    println!("Sent ready signal to sender");
+    // Send ready signal to sender - REMOVED (No backward compatibility)
+    // signaling.publish_ready(&sender_pubkey).await?;
+    // println!("Sent ready signal to sender"); -- REMOVED
 
     // Try WebRTC transfer
     match try_webrtc_receive(&signaling, &sender_pubkey, &key, output_dir.clone()).await? {

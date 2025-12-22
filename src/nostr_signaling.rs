@@ -24,8 +24,6 @@ use crate::nostr_protocol::{
 // Signaling event types
 const SIGNALING_TYPE_OFFER: &str = "webrtc-offer";
 const SIGNALING_TYPE_ANSWER: &str = "webrtc-answer";
-const SIGNALING_TYPE_CANDIDATE: &str = "webrtc-ice";
-const SIGNALING_TYPE_READY: &str = "webrtc-ready";
 
 
 /// SDP payload for offer/answer exchange
@@ -34,6 +32,7 @@ pub struct SdpPayload {
     pub sdp: String,
     #[serde(rename = "type")]
     pub sdp_type: String,
+    pub candidates: Vec<IceCandidatePayload>,
 }
 
 /// ICE candidate payload
@@ -47,11 +46,9 @@ pub struct IceCandidatePayload {
 }
 
 /// Signaling message types received from Nostr
+/// Signaling message types received from Nostr
 #[derive(Debug, Clone)]
 pub enum SignalingMessage {
-    Ready {
-        sender_pubkey: PublicKey,
-    },
     Offer {
         sender_pubkey: PublicKey,
         sdp: SdpPayload,
@@ -59,11 +56,6 @@ pub enum SignalingMessage {
     Answer {
         sender_pubkey: PublicKey,
         sdp: SdpPayload,
-    },
-    IceCandidate {
-        sender_pubkey: PublicKey,
-        candidate: IceCandidatePayload,
-        seq: u32,
     },
 }
 
@@ -73,7 +65,6 @@ pub struct NostrSignaling {
     pub keys: Keys,
     transfer_id: String,
     relay_urls: Vec<String>,
-    ice_seq: AtomicU32,
 }
 
 impl NostrSignaling {
@@ -114,7 +105,6 @@ impl NostrSignaling {
             keys,
             transfer_id,
             relay_urls,
-            ice_seq: AtomicU32::new(0),
         })
     }
 
@@ -167,23 +157,19 @@ impl NostrSignaling {
         Ok(event)
     }
 
-    /// Publish a "ready" signal (receiver ready to receive offer)
-    pub async fn publish_ready(&self, sender_pubkey: &PublicKey) -> Result<()> {
-        let event = self.create_signaling_event(sender_pubkey, SIGNALING_TYPE_READY, None, "")?;
 
-        self.client
-            .send_event(&event)
-            .await
-            .context("Failed to publish ready signal")?;
-
-        Ok(())
-    }
 
     /// Publish an SDP offer
-    pub async fn publish_offer(&self, receiver_pubkey: &PublicKey, sdp: &str) -> Result<()> {
+    pub async fn publish_offer(
+        &self,
+        receiver_pubkey: &PublicKey,
+        sdp: &str,
+        candidates: Vec<IceCandidatePayload>,
+    ) -> Result<()> {
         let payload = SdpPayload {
             sdp: sdp.to_string(),
             sdp_type: "offer".to_string(),
+            candidates,
         };
         let content = STANDARD.encode(serde_json::to_string(&payload)?);
 
@@ -199,10 +185,16 @@ impl NostrSignaling {
     }
 
     /// Publish an SDP answer
-    pub async fn publish_answer(&self, sender_pubkey: &PublicKey, sdp: &str) -> Result<()> {
+    pub async fn publish_answer(
+        &self,
+        sender_pubkey: &PublicKey,
+        sdp: &str,
+        candidates: Vec<IceCandidatePayload>,
+    ) -> Result<()> {
         let payload = SdpPayload {
             sdp: sdp.to_string(),
             sdp_type: "answer".to_string(),
+            candidates,
         };
         let content = STANDARD.encode(serde_json::to_string(&payload)?);
 
@@ -217,37 +209,7 @@ impl NostrSignaling {
         Ok(())
     }
 
-    /// Publish an ICE candidate
-    pub async fn publish_ice_candidate(
-        &self,
-        peer_pubkey: &PublicKey,
-        candidate: &str,
-        sdp_mid: Option<&str>,
-        sdp_m_line_index: Option<u16>,
-    ) -> Result<()> {
-        let seq = self.ice_seq.fetch_add(1, Ordering::SeqCst);
 
-        let payload = IceCandidatePayload {
-            candidate: candidate.to_string(),
-            sdp_m_line_index,
-            sdp_mid: sdp_mid.map(|s| s.to_string()),
-        };
-        let content = STANDARD.encode(serde_json::to_string(&payload)?);
-
-        let event = self.create_signaling_event(
-            peer_pubkey,
-            SIGNALING_TYPE_CANDIDATE,
-            Some(seq),
-            &content,
-        )?;
-
-        self.client
-            .send_event(&event)
-            .await
-            .context("Failed to publish ICE candidate")?;
-
-        Ok(())
-    }
 
     /// Subscribe to signaling events for our public key
     pub async fn subscribe(&self) -> Result<()> {
@@ -294,9 +256,7 @@ impl NostrSignaling {
             .and_then(|s| s.parse().ok());
 
         match event_type {
-            SIGNALING_TYPE_READY => Some(SignalingMessage::Ready {
-                sender_pubkey: event.pubkey,
-            }),
+        match event_type {
             SIGNALING_TYPE_OFFER => {
                 let decoded = STANDARD.decode(&event.content).ok()?;
                 let payload: SdpPayload = serde_json::from_slice(&decoded).ok()?;
@@ -311,15 +271,6 @@ impl NostrSignaling {
                 Some(SignalingMessage::Answer {
                     sender_pubkey: event.pubkey,
                     sdp: payload,
-                })
-            }
-            SIGNALING_TYPE_CANDIDATE => {
-                let decoded = STANDARD.decode(&event.content).ok()?;
-                let payload: IceCandidatePayload = serde_json::from_slice(&decoded).ok()?;
-                Some(SignalingMessage::IceCandidate {
-                    sender_pubkey: event.pubkey,
-                    candidate: payload,
-                    seq: seq.unwrap_or(0),
                 })
             }
             _ => None,
@@ -436,7 +387,6 @@ pub async fn create_receiver_signaling(
         keys,
         transfer_id: transfer_id.to_string(),
         relay_urls,
-        ice_seq: AtomicU32::new(0),
     };
 
     signaling.subscribe().await?;
@@ -453,6 +403,7 @@ mod tests {
         let payload = SdpPayload {
             sdp: "v=0\r\n...".to_string(),
             sdp_type: "offer".to_string(),
+            candidates: vec![],
         };
 
         let json = serde_json::to_string(&payload).unwrap();

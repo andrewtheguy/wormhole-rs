@@ -20,25 +20,7 @@ mod tests {
         assert!(hex::decode(&id2).is_ok());
     }
 
-    #[test]
-    fn test_ready_event_creation() {
-        let receiver_keys = Keys::generate();
-        let sender_keys = Keys::generate();
-        let transfer_id = generate_transfer_id();
 
-        // Create ready event
-        let event =
-            create_ready_event(&receiver_keys, &sender_keys.public_key(), &transfer_id).unwrap();
-
-        // Verify event properties
-        assert_eq!(event.kind, nostr_file_transfer_kind());
-        assert_eq!(event.pubkey, receiver_keys.public_key());
-        assert!(is_ready_event(&event));
-        assert!(!is_completion_event(&event));
-
-        // Verify transfer ID
-        assert_eq!(get_transfer_id(&event).unwrap(), transfer_id);
-    }
 
     #[test]
     fn test_completion_event_creation() {
@@ -55,7 +37,7 @@ mod tests {
         assert_eq!(event.kind, nostr_file_transfer_kind());
         assert_eq!(event.pubkey, receiver_keys.public_key());
         assert!(is_completion_event(&event));
-        assert!(!is_ready_event(&event));
+
 
         // Verify transfer ID
         assert_eq!(get_transfer_id(&event).unwrap(), transfer_id);

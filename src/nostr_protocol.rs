@@ -323,7 +323,6 @@ pub async fn get_best_relays() -> Vec<String> {
 }
 
 /// Event type tag values for signaling
-pub const EVENT_TYPE_READY: &str = "ready";
 pub const EVENT_TYPE_COMPLETION: &str = "completion";
 
 /// Tag names for file transfer metadata
@@ -363,39 +362,7 @@ fn get_event_type(event: &Event) -> Option<String> {
         .map(|s| s.to_string())
 }
 
-/// Create a ready event (receiver signals it's ready to receive)
-///
-/// # Arguments
-/// * `keys` - Receiver's keys for signing
-/// * `sender_pubkey` - Sender's public key
-/// * `transfer_id` - Unique transfer session ID
-pub fn create_ready_event(
-    keys: &Keys,
-    sender_pubkey: &PublicKey,
-    transfer_id: &str,
-) -> Result<Event> {
-    let event = EventBuilder::new(nostr_file_transfer_kind(), "")
-        .tags(vec![
-            Tag::public_key(*sender_pubkey),
-            Tag::custom(
-                TagKind::Custom(TAG_TRANSFER_ID.into()),
-                vec![transfer_id.to_string()],
-            ),
-            Tag::custom(
-                TagKind::Custom(TAG_TYPE.into()),
-                vec![EVENT_TYPE_READY.to_string()],
-            ),
-        ])
-        .sign_with_keys(keys)
-        .context("Failed to sign ready event")?;
 
-    Ok(event)
-}
-
-/// Check if event is a ready event
-pub fn is_ready_event(event: &Event) -> bool {
-    get_event_type(event).as_deref() == Some(EVENT_TYPE_READY)
-}
 
 /// Create a completion event (receiver confirms download complete)
 ///
