@@ -93,12 +93,12 @@ pub async fn receive(code: &str, output_dir: Option<PathBuf>, relay_urls: Vec<St
     // Print connection info
     let remote_id = conn.remote_id();
     log::info!("✅ Connected!");
-    log::info!("Remote ID"; "remote_id" => remote_id.to_string());
+    log::info!("Remote ID: {}", remote_id);
 
     // Get connection type (Direct, Relay, Mixed, None)
     if let Some(mut conn_type_watcher) = endpoint.conn_type(remote_id) {
         let conn_type = conn_type_watcher.get();
-        log::info!("Connection type"; "connection_type" => format!("{:?}", conn_type));
+        log::info!("Connection type: {:?}", conn_type);
 
         // NOTE: Relay-only rejection disabled - uncomment below to re-enable
         // // Abort if we only have relay/none while using the default relay (no custom relay supplied)
