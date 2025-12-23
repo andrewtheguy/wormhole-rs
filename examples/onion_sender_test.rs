@@ -2,23 +2,28 @@ use arti_client::{config::TorClientConfigBuilder, TorClient};
 use futures::StreamExt;
 use rand::Rng;
 use safelog::DisplayRedacted;
+use std::io::Write;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tor_cell::relaycell::msg::Connected;
 use tor_hsservice::{config::OnionServiceConfigBuilder, handle_rend_requests};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+        .format(|buf, record| writeln!(buf, "{}", record.args()))
+        .init();
+
     // Create a temporary directory for ephemeral state (new keys each run)
     let temp_dir = tempfile::tempdir()?;
     let state_dir = temp_dir.path().join("state");
     let cache_dir = temp_dir.path().join("cache");
 
-    println!("Bootstrapping Tor client (ephemeral mode)...");
+    log::info!("Bootstrapping Tor client (ephemeral mode)...");
 
     let config = TorClientConfigBuilder::from_directories(state_dir, cache_dir).build()?;
     let tor_client = TorClient::create_bootstrapped(config).await?;
 
-    println!("Tor client bootstrapped!");
+    log::info!("Tor client bootstrapped!");
 
     // Generate a random nickname for truly ephemeral service (new address each time)
     let random_suffix: u64 = rand::thread_rng().gen();
@@ -39,10 +44,10 @@ async fn main() -> anyhow::Result<()> {
         .onion_address()
         .ok_or_else(|| anyhow::anyhow!("No onion address available yet"))?;
 
-    println!("\n=== ONION SERVICE READY ===");
+    log::info!("\n=== ONION SERVICE READY ===");
     // Display the full .onion address
-    println!("Address: {}", onion_addr.display_unredacted());
-    println!("Waiting for receiver...\n");
+    log::info!("Address: {}", onion_addr.display_unredacted());
+    log::info!("Waiting for receiver...\n");
 
     // Convert RendRequest stream to StreamRequest stream
     let mut stream_requests = handle_rend_requests(rend_requests);
@@ -51,7 +56,7 @@ async fn main() -> anyhow::Result<()> {
     // For a production server, wrap this in `while let Some(...) = stream_requests.next().await`
     // to handle multiple sequential connections.
     if let Some(stream_req) = stream_requests.next().await {
-        println!("Receiver connected! Accepting stream...");
+        log::info!("Receiver connected! Accepting stream...");
 
         // Accept the stream request
         let mut stream = stream_req.accept(Connected::new_empty()).await?;
@@ -63,17 +68,17 @@ async fn main() -> anyhow::Result<()> {
         stream.write_all(message).await?;
         stream.flush().await?;
 
-        println!("Message sent! Waiting for receiver to close connection...");
+        log::info!("Message sent! Waiting for receiver to close connection...");
 
         // Wait for receiver to close their end (read will return 0 bytes when closed)
         let mut buf = [0u8; 1];
         match stream.read(&mut buf).await {
-            Ok(0) => println!("Connection closed normally."),
-            Ok(_) => println!("Received unexpected data before close."),
-            Err(e) => eprintln!("Read error while waiting for close: {}", e),
+            Ok(0) => log::info!("Connection closed normally."),
+            Ok(_) => log::info!("Received unexpected data before close."),
+            Err(e) => log::error!("Read error while waiting for close: {}", e),
         }
 
-        println!("Done!");
+        log::info!("Done!");
     }
 
     Ok(())

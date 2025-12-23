@@ -59,7 +59,7 @@ fn setup_file_cleanup_handler(cleanup_path: TempFileCleanup) {
         if tokio::signal::ctrl_c().await.is_ok() {
             if let Some(path) = cleanup_path.lock().await.take() {
                 let _ = tokio::fs::remove_file(&path).await;
-                eprintln!("\nInterrupted. Cleaned up temp file.");
+                log::info!("Interrupted. Cleaned up temp file.");
             }
             std::process::exit(130);
         }
@@ -72,7 +72,7 @@ fn setup_dir_cleanup_handler(cleanup_path: ExtractDirCleanup) {
         if tokio::signal::ctrl_c().await.is_ok() {
             if let Some(path) = cleanup_path.lock().await.take() {
                 let _ = tokio::fs::remove_dir_all(&path).await;
-                eprintln!("\nInterrupted. Cleaned up extraction directory.");
+                log::info!("Interrupted. Cleaned up extraction directory.");
             }
             std::process::exit(130);
         }
@@ -92,7 +92,7 @@ async fn try_webrtc_receive(
     key: &[u8; 32],
     output_dir: Option<PathBuf>,
 ) -> Result<WebRtcResult> {
-    println!("Attempting WebRTC connection...");
+    log::info!("Attempting WebRTC connection...");
 
     // Create WebRTC peer
     let mut rtc_peer = WebRtcPeer::new().await?;
@@ -108,7 +108,7 @@ async fn try_webrtc_receive(
     rtc_peer.set_local_description(offer.clone()).await?;
 
     // Gather ICE candidates with retry logic
-    println!("Gathering ICE candidates...");
+    log::info!("Gathering ICE candidates...");
     let mut candidate_payloads;
     let mut attempt_count = 0;
     const MAX_ICE_GATHER_ATTEMPTS: usize = 2;
@@ -120,14 +120,14 @@ async fn try_webrtc_receive(
         candidate_payloads = ice_candidates_to_payloads(candidates);
 
         if !candidate_payloads.is_empty() {
-            println!("Gathered {} ICE candidates", candidate_payloads.len());
+            log::info!("Gathered {} ICE candidates", candidate_payloads.len());
             break;
         }
 
         // No ICE candidates gathered
         attempt_count += 1;
         if attempt_count < MAX_ICE_GATHER_ATTEMPTS {
-            eprintln!(
+            log::warn!(
                 "Warning: No ICE candidates gathered on attempt {}. Retrying...",
                 attempt_count
             );
@@ -136,7 +136,7 @@ async fn try_webrtc_receive(
         } else {
             // After all attempts exhausted, log and continue anyway
             // (relay fallback or STUN might still work with empty candidates)
-            eprintln!(
+            log::warn!(
                 "Warning: Failed to gather any ICE candidates after {} attempts. \
                  Proceeding with empty candidate list - connection may fall back to relay servers.",
                 MAX_ICE_GATHER_ATTEMPTS
@@ -148,15 +148,15 @@ async fn try_webrtc_receive(
     signaling
         .publish_offer(sender_pubkey, &offer.sdp, candidate_payloads)
         .await?;
-    println!("Sent offer to sender");
+    log::info!("Sent offer to sender");
 
     // Wait for answer with timeout
-    println!("Waiting for answer from sender...");
+    log::info!("Waiting for answer from sender...");
     let answer_result: Result<Option<WebRtcResult>> = timeout(WEBRTC_CONNECTION_TIMEOUT, async {
         loop {
             match signal_rx.recv().await {
                 Some(SignalingMessage::Answer { sdp, .. }) => {
-                    println!("Received answer from sender");
+                    log::info!("Received answer from sender");
                     let answer_sdp = RTCSessionDescription::answer(sdp.sdp)
                         .context("Failed to create answer SDP");
                     
@@ -171,7 +171,7 @@ async fn try_webrtc_receive(
                     }
 
                     // Then add bundled ICE candidates with error propagation
-                    println!("Received {} bundled ICE candidates", sdp.candidates.len());
+                    log::info!("Received {} bundled ICE candidates", sdp.candidates.len());
                     let mut candidate_error: Option<anyhow::Error> = None;
                     for candidate in sdp.candidates {
                         let candidate_init = RTCIceCandidateInit {
@@ -231,7 +231,7 @@ async fn try_webrtc_receive(
         .expect("Data channel receiver already taken");
 
     // Wait for data channel from sender
-    println!("Waiting for data channel from sender...");
+    log::info!("Waiting for data channel from sender...");
     let data_channel = timeout(WEBRTC_CONNECTION_TIMEOUT, data_channel_rx.recv())
         .await
         .map_err(|_| anyhow::anyhow!("Timeout waiting for data channel"))?
@@ -245,7 +245,7 @@ async fn try_webrtc_receive(
     // Wait for data channel to be confirmed open
     match timeout(Duration::from_secs(10), open_rx).await {
         Ok(Ok(())) => {
-            println!("Data channel opened successfully");
+            log::info!("Data channel opened successfully");
         }
         Ok(Err(_)) => {
             // ice_receiver_handle removed
@@ -265,14 +265,14 @@ async fn try_webrtc_receive(
 
     // Display connection info
     let conn_info = rtc_peer.get_connection_info().await;
-    println!("WebRTC connection established!");
-    println!("   Connection: {}", conn_info.connection_type);
+    log::info!("WebRTC connection established!");
+    log::info!("   Connection: {}", conn_info.connection_type);
     if let (Some(local), Some(remote)) = (&conn_info.local_address, &conn_info.remote_address) {
-        println!("   Local: {} -> Remote: {}", local, remote);
+        log::info!("   Local: {} -> Remote: {}", local, remote);
     }
 
     // Receive header message
-    println!("Receiving file information...");
+    log::info!("Receiving file information...");
     let header_msg = timeout(Duration::from_secs(30), async {
         while let Some(msg) = message_rx.recv().await {
             if !msg.is_empty() && msg[0] == 0 {
@@ -300,7 +300,7 @@ async fn try_webrtc_receive(
     let header_bytes = decrypt_chunk(key, 0, encrypted_header)?;
     let header = FileHeader::from_bytes(&header_bytes)?;
 
-    println!(
+    log::info!(
         "Receiving: {} ({})",
         header.filename,
         format_bytes(header.file_size)
@@ -328,7 +328,7 @@ async fn try_webrtc_receive(
 
 /// Receive a file or folder via webrtc transport
 pub async fn receive_webrtc(code: &str, output_dir: Option<PathBuf>) -> Result<()> {
-    println!("Parsing wormhole code...");
+    log::info!("Parsing wormhole code...");
 
     // Parse the wormhole code
     let token = parse_code(code).context("Failed to parse wormhole code")?;
@@ -361,24 +361,24 @@ pub async fn receive_webrtc(code: &str, output_dir: Option<PathBuf>) -> Result<(
         .parse()
         .context("Failed to parse sender public key")?;
 
-    println!("Encryption enabled");
-    println!("Connecting to sender: {}", sender_pubkey_hex);
+    log::info!("Encryption enabled");
+    log::info!("Connecting to sender: {}", sender_pubkey_hex);
 
     // Create Nostr signaling client
-    println!("Connecting to Nostr relays for signaling...");
+    log::info!("Connecting to Nostr relays for signaling...");
     let signaling = create_receiver_signaling(&transfer_id, relays.clone()).await?;
 
-    println!("Receiver pubkey: {}", signaling.public_key().to_hex());
+    log::info!("Receiver pubkey: {}", signaling.public_key().to_hex());
 
     // Send ready signal to sender - REMOVED (No backward compatibility)
     // signaling.publish_ready(&sender_pubkey).await?;
-    // println!("Sent ready signal to sender"); -- REMOVED
+    // log::info!("Sent ready signal to sender"); -- REMOVED
 
     // Try WebRTC transfer
     match try_webrtc_receive(&signaling, &sender_pubkey, &key, output_dir.clone()).await? {
         WebRtcResult::Success => {
             signaling.disconnect().await;
-            println!("Connection closed.");
+            log::info!("Connection closed.");
             Ok(())
         }
         WebRtcResult::Failed(reason) => {
@@ -445,7 +445,7 @@ async fn receive_file_impl(
     let total_chunks = num_chunks(header.file_size);
     let mut bytes_received = 0u64;
 
-    println!("Receiving {} chunks...", total_chunks);
+    log::info!("Receiving {} chunks...", total_chunks);
 
     while bytes_received < header.file_size {
         let msg = timeout(Duration::from_secs(30), message_rx.recv())
@@ -490,7 +490,7 @@ async fn receive_file_impl(
             }
             2 => {
                 // Done message
-                println!("\nTransfer complete signal received");
+                log::info!("\nTransfer complete signal received");
                 break;
             }
             _ => {
@@ -508,8 +508,8 @@ async fn receive_file_impl(
         .persist(&output_path)
         .map_err(|e| anyhow::anyhow!("Failed to persist temp file: {}", e))?;
 
-    println!("\nFile received successfully!");
-    println!("Saved to: {}", output_path.display());
+    log::info!("\nFile received successfully!");
+    log::info!("Saved to: {}", output_path.display());
 
     // Send ACK
     let ack_msg = vec![3u8]; // Message type: ACK
@@ -517,7 +517,7 @@ async fn receive_file_impl(
         .send(&Bytes::from(ack_msg))
         .await
         .context("Failed to send ACK")?;
-    println!("Sent confirmation to sender");
+    log::info!("Sent confirmation to sender");
 
     Ok(())
 }
@@ -530,7 +530,7 @@ async fn receive_folder_impl(
     output_dir: Option<PathBuf>,
     data_channel: &Arc<webrtc::data_channel::RTCDataChannel>,
 ) -> Result<()> {
-    println!(
+    log::info!(
         "Receiving folder archive: {} ({})",
         header.filename,
         format_bytes(header.file_size)
@@ -544,7 +544,7 @@ async fn receive_folder_impl(
     let cleanup_path: ExtractDirCleanup = Arc::new(Mutex::new(Some(extract_dir.clone())));
     setup_dir_cleanup_handler(cleanup_path.clone());
 
-    println!("Extracting to: {}", extract_dir.display());
+    log::info!("Extracting to: {}", extract_dir.display());
     print_tar_extraction_info();
 
     // Create streaming reader
@@ -572,8 +572,8 @@ async fn receive_folder_impl(
     // Clear cleanup path
     cleanup_path.lock().await.take();
 
-    println!("\nFolder received successfully!");
-    println!("Extracted to: {}", extract_dir.display());
+    log::info!("\nFolder received successfully!");
+    log::info!("Extracted to: {}", extract_dir.display());
 
     // Send ACK
     let ack_msg = vec![3u8]; // Message type: ACK
@@ -581,7 +581,7 @@ async fn receive_folder_impl(
         .send(&Bytes::from(ack_msg))
         .await
         .context("Failed to send ACK")?;
-    println!("Sent confirmation to sender");
+    log::info!("Sent confirmation to sender");
 
     Ok(())
 }

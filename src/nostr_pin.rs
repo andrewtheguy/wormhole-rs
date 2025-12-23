@@ -243,7 +243,7 @@ pub async fn publish_wormhole_code_via_pin(
     let event = create_pin_exchange_event(keys, wormhole_code, transfer_id, &pin)
         .context("Failed to create PIN exchange event")?;
 
-    println!("Connecting to Nostr relays for PIN exchange...");
+    log::info!("Connecting to Nostr relays for PIN exchange...");
     
     // Connect to relays
     let client = Client::new(keys.clone());
@@ -278,7 +278,7 @@ pub async fn fetch_wormhole_code_via_pin(pin: &str) -> Result<String> {
 
     let pin_hint = compute_pin_hint(pin);
     
-    println!("Connecting to Nostr relays...");
+    log::info!("Connecting to Nostr relays...");
     let client = Client::default();
     for relay in DEFAULT_NOSTR_RELAYS {
         let _ = client.add_relay(relay.to_string()).await;

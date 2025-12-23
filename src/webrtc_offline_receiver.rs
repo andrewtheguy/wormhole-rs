@@ -42,7 +42,7 @@ fn setup_file_cleanup_handler(cleanup_path: TempFileCleanup) {
         if tokio::signal::ctrl_c().await.is_ok() {
             if let Some(path) = cleanup_path.lock().await.take() {
                 let _ = tokio::fs::remove_file(&path).await;
-                eprintln!("\nInterrupted. Cleaned up temp file.");
+                log::info!("\nInterrupted. Cleaned up temp file.");
             }
             std::process::exit(130);
         }
@@ -55,7 +55,7 @@ fn setup_dir_cleanup_handler(cleanup_path: ExtractDirCleanup) {
         if tokio::signal::ctrl_c().await.is_ok() {
             if let Some(path) = cleanup_path.lock().await.take() {
                 let _ = tokio::fs::remove_dir_all(&path).await;
-                eprintln!("\nInterrupted. Cleaned up extraction directory.");
+                log::info!("\nInterrupted. Cleaned up extraction directory.");
             }
             std::process::exit(130);
         }
@@ -85,19 +85,19 @@ fn print_progress(bytes_received: u64, total_bytes: u64) {
 
 /// Receive a file via offline WebRTC (copy/paste JSON signaling)
 pub async fn receive_file_offline(output_dir: Option<PathBuf>) -> Result<()> {
-    println!("Offline WebRTC Receiver");
-    println!("=======================\n");
+    log::info!("Offline WebRTC Receiver");
+    log::info!("=======================\n");
 
     // Read offer from user
     let offer = read_offer_json()?;
 
     let transfer_info = &offer.transfer_info;
-    println!(
+    log::info!(
         "\nPreparing to receive: {} ({})",
         transfer_info.filename,
         format_bytes(transfer_info.file_size)
     );
-    println!("Transfer type: {}", transfer_info.transfer_type);
+    log::info!("Transfer type: {}", transfer_info.transfer_type);
 
     // Create WebRTC peer with STUN for NAT traversal
     let mut rtc_peer = WebRtcPeer::new().await?;
@@ -118,17 +118,17 @@ pub async fn receive_file_offline(output_dir: Option<PathBuf>) -> Result<()> {
         rtc_peer.add_ice_candidate(candidate_init).await?;
     }
 
-    println!("Added {} remote ICE candidates", offer.ice_candidates.len());
+    log::info!("Added {} remote ICE candidates", offer.ice_candidates.len());
 
     // Create answer
     let answer = rtc_peer.create_answer().await?;
     rtc_peer.set_local_description(answer.clone()).await?;
 
-    println!("Gathering connection info...");
+    log::info!("Gathering connection info...");
 
     // Wait for ICE gathering to complete
     let candidates = rtc_peer.gather_ice_candidates(ICE_GATHERING_TIMEOUT).await?;
-    println!("Collected {} ICE candidates", candidates.len());
+    log::info!("Collected {} ICE candidates", candidates.len());
 
     if candidates.is_empty() {
         anyhow::bail!("No ICE candidates gathered. Check your network connection.");
@@ -142,7 +142,7 @@ pub async fn receive_file_offline(output_dir: Option<PathBuf>) -> Result<()> {
 
     display_answer_json(&offline_answer)?;
 
-    println!("Connecting...");
+    log::info!("Connecting...");
 
     // Take data channel receiver before wrapping in Arc
     let mut data_channel_rx = rtc_peer
@@ -168,7 +168,7 @@ pub async fn receive_file_offline(output_dir: Option<PathBuf>) -> Result<()> {
     // Wait for data channel to be confirmed open
     match tokio::time::timeout(Duration::from_secs(10), open_rx).await {
         Ok(Ok(())) => {
-            println!("Data channel opened!");
+            log::info!("Data channel opened!");
         }
         Ok(Err(_)) => {
             anyhow::bail!("Data channel failed to open");
@@ -190,10 +190,10 @@ pub async fn receive_file_offline(output_dir: Option<PathBuf>) -> Result<()> {
 
     // Display connection info
     let conn_info = rtc_peer_arc.get_connection_info().await;
-    println!("WebRTC connection established!");
-    println!("   Connection: {}", conn_info.connection_type);
+    log::info!("WebRTC connection established!");
+    log::info!("   Connection: {}", conn_info.connection_type);
     if let (Some(local), Some(remote)) = (&conn_info.local_address, &conn_info.remote_address) {
-        println!("   Local: {} -> Remote: {}", local, remote);
+        log::info!("   Local: {} -> Remote: {}", local, remote);
     }
 
     // Extract encryption key from offer
@@ -204,7 +204,7 @@ pub async fn receive_file_offline(output_dir: Option<PathBuf>) -> Result<()> {
         .map_err(|_| anyhow::anyhow!("Invalid encryption key length"))?;
 
     // Receive header message
-    println!("Receiving file information...");
+    log::info!("Receiving file information...");
     let header_msg = tokio::time::timeout(Duration::from_secs(30), async {
         while let Some(msg) = message_rx.recv().await {
             if !msg.is_empty() && msg[0] == 0 {
@@ -232,7 +232,7 @@ pub async fn receive_file_offline(output_dir: Option<PathBuf>) -> Result<()> {
     let header_bytes = decrypt_chunk(&key, 0, encrypted_header)?;
     let header = FileHeader::from_bytes(&header_bytes)?;
 
-    println!(
+    log::info!(
         "Receiving: {} ({})",
         header.filename,
         format_bytes(header.file_size)
@@ -251,7 +251,7 @@ pub async fn receive_file_offline(output_dir: Option<PathBuf>) -> Result<()> {
     // Close connections
     let _ = rtc_peer_arc.close().await;
 
-    println!("Connection closed.");
+    log::info!("Connection closed.");
     Ok(())
 }
 
@@ -306,7 +306,7 @@ async fn receive_file_impl(
     let total_chunks = num_chunks(header.file_size);
     let mut bytes_received = 0u64;
 
-    println!("Receiving {} chunks...", total_chunks);
+    log::info!("Receiving {} chunks...", total_chunks);
 
     while bytes_received < header.file_size {
         let msg = tokio::time::timeout(Duration::from_secs(30), message_rx.recv())
@@ -351,7 +351,7 @@ async fn receive_file_impl(
             }
             2 => {
                 // Done message
-                println!("\nTransfer complete signal received");
+                log::info!("\nTransfer complete signal received");
                 break;
             }
             _ => {
@@ -369,8 +369,8 @@ async fn receive_file_impl(
         .persist(&output_path)
         .map_err(|e| anyhow::anyhow!("Failed to persist temp file: {}", e))?;
 
-    println!("\nFile received successfully!");
-    println!("Saved to: {}", output_path.display());
+    log::info!("\nFile received successfully!");
+    log::info!("Saved to: {}", output_path.display());
 
     // Send ACK
     let ack_msg = vec![3u8]; // Message type: ACK
@@ -378,7 +378,7 @@ async fn receive_file_impl(
         .send(&Bytes::from(ack_msg))
         .await
         .context("Failed to send ACK")?;
-    println!("Sent confirmation to sender");
+    log::info!("Sent confirmation to sender");
 
     Ok(())
 }
@@ -504,7 +504,7 @@ async fn receive_folder_impl(
     output_dir: Option<PathBuf>,
     data_channel: &Arc<RTCDataChannel>,
 ) -> Result<()> {
-    println!(
+    log::info!(
         "Receiving folder archive: {} ({})",
         header.filename,
         format_bytes(header.file_size)
@@ -518,7 +518,7 @@ async fn receive_folder_impl(
     let cleanup_path: ExtractDirCleanup = Arc::new(Mutex::new(Some(extract_dir.clone())));
     setup_dir_cleanup_handler(cleanup_path.clone());
 
-    println!("Extracting to: {}", extract_dir.display());
+    log::info!("Extracting to: {}", extract_dir.display());
     print_tar_extraction_info();
 
     // Create streaming reader
@@ -535,17 +535,17 @@ async fn receive_folder_impl(
 
     // Report skipped entries
     if !skipped_entries.is_empty() {
-        println!("\nSkipped entries (outside target directory):");
+        log::info!("\nSkipped entries (outside target directory):");
         for entry in &skipped_entries {
-            println!("  - {}", entry);
+            log::info!("  - {}", entry);
         }
     }
 
     // Clear cleanup path
     cleanup_path.lock().await.take();
 
-    println!("\nFolder received successfully!");
-    println!("Extracted to: {}", extract_dir.display());
+    log::info!("\nFolder received successfully!");
+    log::info!("Extracted to: {}", extract_dir.display());
 
     // Send ACK
     let ack_msg = vec![3u8];
@@ -553,7 +553,7 @@ async fn receive_folder_impl(
         .send(&Bytes::from(ack_msg))
         .await
         .context("Failed to send ACK")?;
-    println!("Sent confirmation to sender");
+    log::info!("Sent confirmation to sender");
 
     Ok(())
 }

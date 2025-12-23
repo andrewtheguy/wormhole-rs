@@ -116,16 +116,16 @@ impl WebRtcPeer {
             Box::pin(async move {
                 match state {
                     RTCPeerConnectionState::Connected => {
-                        println!("WebRTC connection established!");
+                        log::info!("WebRTC connection established!");
                     }
                     RTCPeerConnectionState::Disconnected => {
-                        println!("WebRTC connection disconnected");
+                        log::info!("WebRTC connection disconnected");
                     }
                     RTCPeerConnectionState::Failed => {
-                        eprintln!("WebRTC connection failed");
+                        log::error!("WebRTC connection failed");
                     }
                     RTCPeerConnectionState::Closed => {
-                        println!("WebRTC connection closed");
+                        log::info!("WebRTC connection closed");
                     }
                     _ => {}
                 }
@@ -136,7 +136,7 @@ impl WebRtcPeer {
         let dc_tx = data_channel_tx.clone();
         peer_connection.on_data_channel(Box::new(move |dc| {
             let dc_tx = dc_tx.clone();
-            println!("New data channel: {}", dc.label());
+            log::info!("New data channel: {}", dc.label());
             Box::pin(async move {
                 let _ = dc_tx.send(dc).await;
             })
@@ -186,7 +186,7 @@ impl WebRtcPeer {
         tokio::select! {
             _ = tokio::time::sleep(timeout) => {
                 // Timeout reached, return what we have
-                println!("ICE gathering timeout, collected {} candidates", candidates.len());
+                log::info!("ICE gathering timeout, collected {} candidates", candidates.len());
             }
             _ = async {
                 loop {
@@ -227,7 +227,7 @@ impl WebRtcPeer {
             .create_data_channel(label, None)
             .await
             .context("Failed to create data channel")?;
-        println!("Created data channel: {}", label);
+        log::info!("Created data channel: {}", label);
         Ok(dc)
     }
 
@@ -375,10 +375,10 @@ pub struct WebRtcConnectionInfo {
 impl WebRtcConnectionInfo {
     /// Print connection info in a format similar to iroh
     pub fn print(&self, remote_peer_id: &str) {
-        println!("   Remote Peer: {}", remote_peer_id);
-        println!("   Connection: {}", self.connection_type);
+        log::info!("   Remote Peer: {}", remote_peer_id);
+        log::info!("   Connection: {}", self.connection_type);
         if let (Some(local), Some(remote)) = (&self.local_address, &self.remote_address) {
-            println!("   Local: {} -> Remote: {}", local, remote);
+            log::info!("   Local: {} -> Remote: {}", local, remote);
         }
     }
 }
@@ -395,7 +395,7 @@ pub fn setup_data_channel_handlers(
     if let Some(open_tx) = open_tx {
         let label = dc_label.clone();
         dc.on_open(Box::new(move || {
-            println!("Data channel '{}' opened", label);
+            log::info!("Data channel '{}' opened", label);
             let _ = open_tx.send(());
             Box::pin(async {})
         }));
@@ -414,13 +414,13 @@ pub fn setup_data_channel_handlers(
     // On error
     let label = dc_label.clone();
     dc.on_error(Box::new(move |err| {
-        eprintln!("Data channel '{}' error: {}", label, err);
+        log::error!("Data channel '{}' error: {}", label, err);
         Box::pin(async {})
     }));
 
     // On close
     dc.on_close(Box::new(move || {
-        println!("Data channel '{}' closed", dc_label);
+        log::info!("Data channel '{}' closed", dc_label);
         Box::pin(async {})
     }));
 }

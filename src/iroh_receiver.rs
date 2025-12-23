@@ -36,7 +36,7 @@ fn setup_file_cleanup_handler(cleanup_path: TempFileCleanup) {
         if tokio::signal::ctrl_c().await.is_ok() {
             if let Some(path) = cleanup_path.lock().await.take() {
                 let _ = tokio::fs::remove_file(&path).await;
-                eprintln!("\nInterrupted. Cleaned up temp file.");
+                log::error!("Interrupted. Cleaned up temp file.");
             }
             std::process::exit(130);
         }
@@ -50,7 +50,7 @@ fn setup_dir_cleanup_handler(cleanup_path: ExtractDirCleanup) {
         if tokio::signal::ctrl_c().await.is_ok() {
             if let Some(path) = cleanup_path.lock().await.take() {
                 let _ = tokio::fs::remove_dir_all(&path).await;
-                eprintln!("\nInterrupted. Cleaned up extraction directory.");
+                log::error!("Interrupted. Cleaned up extraction directory.");
             }
             std::process::exit(130);
         }
@@ -60,7 +60,7 @@ fn setup_dir_cleanup_handler(cleanup_path: ExtractDirCleanup) {
 /// Receive a file or folder using a wormhole code.
 /// Auto-detects whether it's a file or folder transfer based on the header.
 pub async fn receive(code: &str, output_dir: Option<PathBuf>, relay_urls: Vec<String>) -> Result<()> {
-    println!("🔮 Parsing wormhole code...");
+    log::info!("🔮 Parsing wormhole code...");
 
     // Parse the wormhole code
     let token = parse_code(code).context("Failed to parse wormhole code")?;
@@ -72,7 +72,7 @@ pub async fn receive(code: &str, output_dir: Option<PathBuf>, relay_urls: Vec<St
         .to_endpoint_addr()
         .context("Failed to parse endpoint address")?;
 
-    println!("✅ Code valid. Connecting to sender...");
+    log::info!("✅ Code valid. Connecting to sender...");
 
     // Track whether we're using the default relay (no overrides provided)
     let _is_default_relay = relay_urls.is_empty();
@@ -92,13 +92,13 @@ pub async fn receive(code: &str, output_dir: Option<PathBuf>, relay_urls: Vec<St
 
     // Print connection info
     let remote_id = conn.remote_id();
-    println!("✅ Connected!");
-    println!("   📡 Remote ID: {}", remote_id);
+    log::info!("✅ Connected!");
+    log::info!("Remote ID: {}", remote_id);
 
     // Get connection type (Direct, Relay, Mixed, None)
     if let Some(mut conn_type_watcher) = endpoint.conn_type(remote_id) {
         let conn_type = conn_type_watcher.get();
-        println!("   🔗 Connection: {:?}", conn_type);
+        log::info!("Connection type: {:?}", conn_type);
 
         // NOTE: Relay-only rejection disabled - uncomment below to re-enable
         // // Abort if we only have relay/none while using the default relay (no custom relay supplied)
@@ -172,7 +172,7 @@ pub async fn receive(code: &str, output_dir: Option<PathBuf>, relay_urls: Vec<St
     conn.closed().await;
     endpoint.close().await;
 
-    println!("👋 Connection closed.");
+    log::info!("👋 Connection closed.");
 
     Ok(())
 }
@@ -187,7 +187,7 @@ async fn receive_file_impl<R>(
 where
     R: tokio::io::AsyncReadExt + Unpin,
 {
-    println!(
+    log::info!(
         "📁 Receiving: {} ({})",
         header.filename,
         format_bytes(header.file_size)
@@ -236,7 +236,7 @@ where
     let mut chunk_num = 1u64; // Start at 1, header used 0
     let mut bytes_received = 0u64;
 
-    println!("📥 Receiving {} chunks...", total_chunks);
+    log::info!("📥 Receiving {} chunks...", total_chunks);
 
     while bytes_received < header.file_size {
         let chunk = recv_encrypted_chunk(recv_stream, &key, chunk_num)
@@ -273,8 +273,8 @@ where
         .persist(&output_path)
         .map_err(|e| anyhow::anyhow!("Failed to persist temp file: {}", e))?;
 
-    println!("\n✅ File received successfully!");
-    println!("📁 Saved to: {}", output_path.display());
+    log::info!("✅ File received successfully!");
+    log::info!("📁 Saved to: {}", output_path.display());
 
     Ok(())
 }
@@ -289,7 +289,7 @@ async fn receive_folder_impl<R>(
 where
     R: tokio::io::AsyncReadExt + Unpin + Send + 'static,
 {
-    println!(
+    log::info!(
         "📁 Receiving folder archive: {} ({})",
         header.filename,
         format_bytes(header.file_size)
@@ -303,7 +303,7 @@ where
     let cleanup_path: ExtractDirCleanup = Arc::new(Mutex::new(Some(extract_dir.clone())));
     setup_dir_cleanup_handler(cleanup_path.clone());
 
-    println!("📂 Extracting to: {}", extract_dir.display());
+    log::info!("📂 Extracting to: {}", extract_dir.display());
     print_tar_extraction_info();
 
     // Get runtime handle for blocking in Read impl
@@ -326,8 +326,8 @@ where
     // Clear cleanup path before success (transfer succeeded)
     cleanup_path.lock().await.take();
 
-    println!("\n✅ Folder received successfully!");
-    println!("📂 Extracted to: {}", extract_dir.display());
+    log::info!("✅ Folder received successfully!");
+    log::info!("📂 Extracted to: {}", extract_dir.display());
 
     Ok(())
 }

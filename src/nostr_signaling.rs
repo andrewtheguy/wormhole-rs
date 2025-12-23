@@ -86,10 +86,19 @@ impl NostrSignaling {
         let client = Client::new(keys.clone());
 
         // Add relays
+        let mut added_relays = 0usize;
         for relay_url in &relay_urls {
-            if let Err(e) = client.add_relay(relay_url).await {
-                eprintln!("Failed to add relay {}: {}", relay_url, e);
+            match client.add_relay(relay_url).await {
+                Ok(_) => {
+                    added_relays += 1;
+                }
+                Err(e) => {
+                    log::error!("Failed to add relay {}: {}", relay_url, e);
+                }
             }
+        }
+        if added_relays == 0 {
+            anyhow::bail!("Failed to add any Nostr relays; cannot continue without relays.");
         }
 
         // Connect
@@ -352,10 +361,19 @@ pub async fn create_receiver_signaling(
     let client = Client::new(keys.clone());
 
     // Add relays
+    let mut added_relays = 0usize;
     for relay_url in &relay_urls {
-        if let Err(e) = client.add_relay(relay_url).await {
-            eprintln!("Failed to add relay {}: {}", relay_url, e);
+        match client.add_relay(relay_url).await {
+            Ok(_) => {
+                added_relays += 1;
+            }
+            Err(e) => {
+                log::error!("Failed to add relay {}: {}", relay_url, e);
+            }
         }
+    }
+    if added_relays == 0 {
+        anyhow::bail!("Failed to add any Nostr relays; cannot continue without relays.");
     }
 
     // Connect

@@ -249,22 +249,22 @@ pub fn extract_tar_archive_returning_reader<R: Read>(
 /// Print folder creation info messages.
 pub fn print_tar_creation_info() {
     #[cfg(unix)]
-    println!("   File modes (e.g., 0755) will be preserved; owner/group will not.");
+    log::info!("   File modes (e.g., 0755) will be preserved; owner/group will not.");
     #[cfg(windows)]
-    println!("   Note: Windows does not support Unix file modes.");
-    println!("   Symlinks are included; special files (devices, FIFOs) are skipped.");
+    log::info!("   Note: Windows does not support Unix file modes.");
+    log::info!("   Symlinks are included; special files (devices, FIFOs) are skipped.");
 }
 
 /// Print folder extraction info messages.
 pub fn print_tar_extraction_info() {
     #[cfg(unix)]
-    println!("   File modes (e.g., 0755) will be preserved; owner/group will not.");
+    log::info!("   File modes (e.g., 0755) will be preserved; owner/group will not.");
     #[cfg(windows)]
     {
-        println!("   Note: Unix file modes are not supported on Windows.");
-        println!("   Symlinks require admin privileges and may be skipped.");
+        log::info!("   Note: Unix file modes are not supported on Windows.");
+        log::info!("   Symlinks require admin privileges and may be skipped.");
     }
-    println!("   Special files (devices, FIFOs) will be skipped if present.");
+    log::info!("   Special files (devices, FIFOs) will be skipped if present.");
 }
 
 /// Determine the extraction directory for a folder transfer.
@@ -294,12 +294,12 @@ pub fn get_extraction_dir(output_dir: Option<PathBuf>) -> PathBuf {
 /// Print skipped entries warning if any were skipped during extraction.
 pub fn print_skipped_entries(skipped_entries: &[String]) {
     if !skipped_entries.is_empty() {
-        println!(
+        log::info!(
             "\n⚠️  Skipped {} entries (not supported on this platform):",
             skipped_entries.len()
         );
         for entry in skipped_entries {
-            println!("   - {}", entry);
+            log::info!("   - {}", entry);
         }
     }
 }

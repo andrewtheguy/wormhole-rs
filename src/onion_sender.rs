@@ -35,12 +35,12 @@ async fn transfer_data_tor_internal(
     let state_dir = temp_dir.path().join("state");
     let cache_dir = temp_dir.path().join("cache");
 
-    println!("Bootstrapping Tor client (ephemeral mode)...");
+    log::info!("Bootstrapping Tor client (ephemeral mode)...");
 
     let config = TorClientConfigBuilder::from_directories(state_dir, cache_dir).build()?;
     let tor_client = TorClient::create_bootstrapped(config).await?;
 
-    println!("Tor client bootstrapped!");
+    log::info!("Tor client bootstrapped!");
 
     // Generate a random nickname for ephemeral service
     let random_suffix: u64 = rand::thread_rng().gen();
@@ -89,14 +89,14 @@ async fn transfer_data_tor_internal(
         println!("Then enter the code above when prompted.\n");
     }
 
-    println!("Waiting for receiver to connect via Tor...");
+    log::info!("Waiting for receiver to connect via Tor...");
 
     // Convert RendRequest stream to StreamRequest stream
     let mut stream_requests = handle_rend_requests(rend_requests);
 
     // Wait for incoming stream request
     if let Some(stream_req) = stream_requests.next().await {
-        println!("Receiver connected! Accepting stream...");
+        log::info!("Receiver connected! Accepting stream...");
 
         // Accept the stream request
         let mut stream = stream_req.accept(Connected::new_empty()).await?;
@@ -113,7 +113,7 @@ async fn transfer_data_tor_internal(
         let mut chunk_num = 1u64; // Start at 1, header used 0
         let mut bytes_sent = 0u64;
 
-        println!("Sending {} chunks...", total_chunks);
+        log::info!("Sending {} chunks...", total_chunks);
 
         loop {
             let bytes_read = file.read(&mut buffer).await.context("Failed to read data")?;
@@ -148,10 +148,10 @@ async fn transfer_data_tor_internal(
         // Flush the stream
         stream.flush().await.context("Failed to flush stream")?;
 
-        println!("\nTransfer complete!");
+        log::info!("Transfer complete!");
 
         // Wait for receiver ACK (best-effort, Tor streams may close abruptly)
-        println!("Waiting for receiver to confirm...");
+        log::info!("Waiting for receiver to confirm...");
         let mut ack_buf = [0u8; 3];
         match tokio::time::timeout(
             std::time::Duration::from_secs(10),
@@ -160,17 +160,17 @@ async fn transfer_data_tor_internal(
         .await
         {
             Ok(Ok(_)) if &ack_buf == b"ACK" => {
-                println!("Receiver confirmed!");
+                log::info!("Receiver confirmed!");
             }
             Ok(Ok(_)) => {
-                println!("Received unexpected response (transfer likely succeeded)");
+                log::info!("Received unexpected response (transfer likely succeeded)");
             }
             Ok(Err(_)) | Err(_) => {
                 // Tor streams may close without proper END cell - this is normal
-                println!("Connection closed (transfer completed)");
+                log::info!("Connection closed (transfer completed)");
             }
         }
-        println!("Done.");
+        log::info!("Done.");
     } else {
         anyhow::bail!("No connection received");
     }

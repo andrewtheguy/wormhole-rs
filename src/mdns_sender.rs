@@ -29,8 +29,8 @@ use crate::transfer::{
 /// Display receiver instructions and PIN to the user.
 fn display_receiver_instructions(pin: &str) {
     print_receiver_command("wormhole-rs receive-local");
-    println!("🔢 PIN: {}\n", pin);
-    println!("Then enter the PIN above when prompted.\n");
+    log::info!("🔢 PIN: {}", pin);
+    log::info!("Then enter the PIN above when prompted.");
 }
 
 /// Find an available TCP port in the configured range.
@@ -134,7 +134,7 @@ async fn transfer_data_internal(
     // Start TCP listener
     let listener = find_available_port()?;
     let port = listener.local_addr()?.port();
-    println!("Listening on TCP port {}", port);
+    log::info!("Listening on TCP port {}", port);
 
     // Generate random hostname for mDNS (don't expose real hostname)
     let random_host = format!("wormhole-{}", &transfer_id[..8]);
@@ -173,11 +173,11 @@ async fn transfer_data_internal(
     mdns.register(service_info)
         .context("Failed to register mDNS service")?;
 
-    println!("\nmDNS service registered: {}", instance_name);
-    println!("Transfer ID: {}", transfer_id);
-    println!("Filename: {}", filename);
-    println!("Size: {}", format_bytes(file_size));
-    println!("\nWaiting for receiver to connect...");
+    log::info!("mDNS service registered: {}", instance_name);
+    log::info!("Transfer ID: {}", transfer_id);
+    log::info!("Filename: {}", filename);
+    log::info!("Size: {}", format_bytes(file_size));
+    log::info!("Waiting for receiver to connect...");
 
     // Accept connection (using tokio's TcpListener for async)
     // We need to convert std TcpListener to tokio TcpListener
@@ -191,7 +191,7 @@ async fn transfer_data_internal(
             .await
             .context("Failed to accept connection")?;
 
-        println!("Connection from: {}", peer_addr);
+        log::info!("Connection from: {}", peer_addr);
 
         use tokio::time::timeout;
 
@@ -205,18 +205,18 @@ async fn transfer_data_internal(
 
         match handshake_result {
             Ok(Ok(key)) => {
-                println!("SPAKE2 handshake successful with: {}", peer_addr);
+                log::info!("SPAKE2 handshake successful with: {}", peer_addr);
                 // Send data over TCP using SPAKE2-derived key
                 send_data_over_tcp(stream, &mut file, filename.clone(), file_size, transfer_type, &key).await?;
                 break;
             }
             Ok(Err(e)) => {
-                println!("SPAKE2 handshake failed from {}: {}", peer_addr, e);
+                log::info!("SPAKE2 handshake failed from {}: {}", peer_addr, e);
                 drop(stream);
                 continue;
             }
             Err(_) => {
-                println!("Handshake timeout from {}, closing connection", peer_addr);
+                log::info!("Handshake timeout from {}, closing connection", peer_addr);
                 drop(stream);
                 continue;
             }
@@ -227,7 +227,7 @@ async fn transfer_data_internal(
     let _ = mdns.unregister(&fullname);
     let _ = mdns.shutdown();
 
-    println!("Transfer complete!");
+    log::info!("Transfer complete!");
     Ok(())
 }
 
@@ -246,7 +246,7 @@ async fn send_data_over_tcp(
         .await
         .context("Failed to send header")?;
 
-    println!("Sent file header");
+    log::info!("Sent file header");
 
     // Send chunks
     let total_chunks = num_chunks(file_size);
@@ -254,7 +254,7 @@ async fn send_data_over_tcp(
     let mut chunk_num = 1u64;
     let mut bytes_sent = 0u64;
 
-    println!("Sending {} chunks...", total_chunks);
+    log::info!("Sending {} chunks...", total_chunks);
 
     loop {
         let bytes_read = file.read(&mut buffer).await.context("Failed to read data")?;
@@ -287,10 +287,10 @@ async fn send_data_over_tcp(
         }
     }
 
-    println!("\nAll data sent!");
+    log::info!("All data sent!");
 
     // Wait for ACK with timeout (same as handshake timeout)
-    println!("Waiting for receiver confirmation...");
+    log::info!("Waiting for receiver confirmation...");
     let mut ack_buf = [0u8; 3];
     use tokio::io::AsyncReadExt;
     use tokio::time::timeout;
@@ -315,7 +315,7 @@ async fn send_data_over_tcp(
         }
     }
 
-    println!("Receiver confirmed!");
+    log::info!("Receiver confirmed!");
     Ok(())
 }
 
@@ -325,7 +325,7 @@ fn setup_cleanup_handler(cleanup_path: Arc<Mutex<Option<std::path::PathBuf>>>) {
         if tokio::signal::ctrl_c().await.is_ok() {
             if let Some(path) = cleanup_path.lock().await.take() {
                 let _ = tokio::fs::remove_file(&path).await;
-                eprintln!("\nInterrupted. Cleaned up temp file.");
+                log::error!("Interrupted. Cleaned up temp file.");
             }
             std::process::exit(130);
         }
