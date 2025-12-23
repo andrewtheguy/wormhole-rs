@@ -1,4 +1,5 @@
 use arti_client::{config::TorClientConfigBuilder, ErrorKind, HasKind, TorClient};
+use std::io::Write;
 use tokio::io::AsyncReadExt;
 
 const MAX_RETRIES: u32 = 5;
@@ -19,9 +20,13 @@ fn is_retryable(e: &arti_client::Error) -> bool {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+        .format(|buf, record| writeln!(buf, "{}", record.args()))
+        .init();
+
     let args: Vec<String> = std::env::args().collect();
     if args.len() != 2 {
-        eprintln!("Usage: {} <onion_address.onion>", args[0]);
+        log::error!("Usage: {} <onion_address.onion>", args[0]);
         std::process::exit(1);
     }
 
@@ -32,19 +37,19 @@ async fn main() -> anyhow::Result<()> {
     let state_dir = temp_dir.path().join("state");
     let cache_dir = temp_dir.path().join("cache");
 
-    println!("Bootstrapping Tor client (ephemeral mode)...");
+    log::info!("Bootstrapping Tor client (ephemeral mode)...");
 
     let config = TorClientConfigBuilder::from_directories(state_dir, cache_dir).build()?;
     let tor_client = TorClient::create_bootstrapped(config).await?;
 
-    println!("Tor client bootstrapped!");
+    log::info!("Tor client bootstrapped!");
 
     // Retry connection only for temporary errors
     let mut stream = None;
     let mut last_error = None;
 
     for attempt in 1..=MAX_RETRIES {
-        println!("Connecting to {} (attempt {}/{})...", onion_addr, attempt, MAX_RETRIES);
+        log::info!("Connecting to {} (attempt {}/{})...", onion_addr, attempt, MAX_RETRIES);
 
         match tor_client.connect((onion_addr.as_str(), 80)).await {
             Ok(s) => {
@@ -52,7 +57,7 @@ async fn main() -> anyhow::Result<()> {
                 break;
             }
             Err(e) => {
-                eprintln!("Connection failed: {}", e);
+                log::error!("Connection failed: {}", e);
 
                 // Only retry on temporary/retryable errors
                 if !is_retryable(&e) {
@@ -61,7 +66,7 @@ async fn main() -> anyhow::Result<()> {
 
                 last_error = Some(e);
                 if attempt < MAX_RETRIES {
-                    println!("Retrying in {} seconds...", RETRY_DELAY_SECS);
+                    log::info!("Retrying in {} seconds...", RETRY_DELAY_SECS);
                     tokio::time::sleep(tokio::time::Duration::from_secs(RETRY_DELAY_SECS)).await;
                 }
             }
@@ -76,7 +81,7 @@ async fn main() -> anyhow::Result<()> {
         )
     })?;
 
-    println!("Connected!");
+    log::info!("Connected!");
 
     // Read length prefix (4 bytes, big-endian u32)
     let mut len_buf = [0u8; 4];
@@ -100,8 +105,8 @@ async fn main() -> anyhow::Result<()> {
     stream.read_exact(&mut buffer).await?;
 
     let message = String::from_utf8_lossy(&buffer);
-    println!("\n=== RECEIVED MESSAGE ===");
-    println!("{}", message);
+    log::info!("\n=== RECEIVED MESSAGE ===");
+    log::info!("{}", message);
 
     Ok(())
 }

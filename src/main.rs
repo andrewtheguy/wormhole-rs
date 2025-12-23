@@ -235,6 +235,10 @@ async fn do_send_webrtc(
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+        .format(|buf, record| writeln!(buf, "{}", record.args()))
+        .init();
+
     let cli = Cli::parse();
 
     match cli.command {
@@ -320,11 +324,11 @@ async fn main() -> Result<()> {
             if pin {
                 let pin_str = wormhole_rs::pin::prompt_pin()?;
 
-                println!("Searching for wormhole token via Nostr...");
+                log::info!("Searching for wormhole token via Nostr...");
 
                 // Fetch encrypted token from Nostr
                 let token_str = wormhole_rs::nostr_pin::fetch_wormhole_code_via_pin(&pin_str).await?;
-                println!("Token found and decrypted!");
+                log::info!("Token found and decrypted!");
                 code = Some(token_str);
             }
 
@@ -352,11 +356,11 @@ async fn main() -> Result<()> {
             if pin {
                 let pin_str = wormhole_rs::pin::prompt_pin()?;
 
-                println!("Searching for wormhole token via Nostr...");
+                log::info!("Searching for wormhole token via Nostr...");
 
                 // Fetch encrypted token from Nostr
                 let token_str = wormhole_rs::nostr_pin::fetch_wormhole_code_via_pin(&pin_str).await?;
-                println!("Token found and decrypted!");
+                log::info!("Token found and decrypted!");
                 code = Some(token_str);
             }
 

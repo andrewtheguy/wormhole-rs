@@ -28,7 +28,7 @@ fn setup_cleanup_handler(cleanup_path: TempFileCleanup) {
         if tokio::signal::ctrl_c().await.is_ok() {
             if let Some(path) = cleanup_path.lock().await.take() {
                 let _ = tokio::fs::remove_file(&path).await;
-                eprintln!("\nInterrupted. Cleaned up temp file.");
+                log::error!("\nInterrupted. Cleaned up temp file.");
             }
             std::process::exit(130);
         }
@@ -80,7 +80,7 @@ async fn transfer_data_internal(
         println!("Then enter the code above when prompted.\n");
     }
 
-    println!("⏳ Waiting for receiver to connect...");
+    log::info!("⏳ Waiting for receiver to connect...");
 
     // Wait for connection
     let conn = endpoint
@@ -98,13 +98,13 @@ async fn transfer_data_internal(
         ))?;
 
     let remote_id = conn.remote_id();
-    println!("✅ Receiver connected!");
-    println!("   📡 Remote ID: {}", remote_id);
+    log::info!("✅ Receiver connected!");
+    log::info!("   📡 Remote ID: {}", remote_id);
 
     // Get connection type (Direct, Relay, Mixed, None)
     if let Some(mut conn_type_watcher) = endpoint.conn_type(remote_id) {
         let conn_type = conn_type_watcher.get();
-        println!("   🔗 Connection: {:?}", conn_type);
+        log::info!("   🔗 Connection: {:?}", conn_type);
     }
 
     // Open bi-directional stream
@@ -122,7 +122,7 @@ async fn transfer_data_internal(
     let mut chunk_num = 1u64; // Start at 1, header used 0
     let mut bytes_sent = 0u64;
 
-    println!("📤 Sending {} chunks...", total_chunks);
+    log::info!("📤 Sending {} chunks...", total_chunks);
 
     loop {
         let bytes_read = file.read(&mut buffer).await.context("Failed to read data")?;
@@ -154,13 +154,13 @@ async fn transfer_data_internal(
         }
     }
 
-    println!("\n✅ Transfer complete!");
+    log::info!("\n✅ Transfer complete!");
 
     // Finish the send stream to signal we're done sending
     send_stream.finish().context("Failed to finish stream")?;
 
     // Wait for receiver to acknowledge completion
-    println!("⏳ Waiting for receiver to confirm...");
+    log::info!("⏳ Waiting for receiver to confirm...");
     let mut ack_buf = [0u8; 3];
     recv_stream
         .read_exact(&mut ack_buf)
@@ -171,13 +171,13 @@ async fn transfer_data_internal(
         anyhow::bail!("Invalid acknowledgment from receiver");
     }
 
-    println!("✅ Receiver confirmed!");
+    log::info!("✅ Receiver confirmed!");
 
     // Close connection gracefully
     conn.close(0u32.into(), b"done");
     endpoint.close().await;
 
-    println!("👋 Connection closed.");
+    log::info!("👋 Connection closed.");
 
     Ok(())
 }

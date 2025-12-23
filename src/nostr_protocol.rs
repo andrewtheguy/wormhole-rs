@@ -269,7 +269,7 @@ async fn discover_best_relays() -> Vec<String> {
 
     let relay_count = discovered.len();
     if relay_count > DEFAULT_NOSTR_RELAYS.len() {
-        println!(
+        log::info!(
             "📡 Discovered {} relays from {} seeds",
             relay_count,
             DEFAULT_NOSTR_RELAYS.len()
@@ -310,10 +310,10 @@ pub async fn get_best_relays() -> Vec<String> {
     let relays = discover_best_relays().await;
 
     if !relays.is_empty() {
-        println!("📡 Using {} fastest responding relays", relays.len());
+        log::info!("📡 Using {} fastest responding relays", relays.len());
         relays
     } else {
-        println!("📡 Using default relays (discovery failed)");
+        log::info!("📡 Using default relays (discovery failed)");
         DEFAULT_NOSTR_RELAYS
             .iter()
             .take(TOP_RELAYS_COUNT)

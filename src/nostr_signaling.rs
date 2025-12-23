@@ -88,7 +88,7 @@ impl NostrSignaling {
         // Add relays
         for relay_url in &relay_urls {
             if let Err(e) = client.add_relay(relay_url).await {
-                eprintln!("Failed to add relay {}: {}", relay_url, e);
+                log::error!("Failed to add relay {}: {}", relay_url, e);
             }
         }
 
@@ -354,7 +354,7 @@ pub async fn create_receiver_signaling(
     // Add relays
     for relay_url in &relay_urls {
         if let Err(e) = client.add_relay(relay_url).await {
-            eprintln!("Failed to add relay {}: {}", relay_url, e);
+            log::error!("Failed to add relay {}: {}", relay_url, e);
         }
     }
 

@@ -40,7 +40,7 @@ fn setup_cleanup_handler(cleanup_path: TempFileCleanup) {
         if tokio::signal::ctrl_c().await.is_ok() {
             if let Some(path) = cleanup_path.lock().await.take() {
                 let _ = tokio::fs::remove_file(&path).await;
-                eprintln!("\nInterrupted. Cleaned up temp file.");
+                log::error!("\nInterrupted. Cleaned up temp file.");
             }
             std::process::exit(130);
         }
@@ -59,7 +59,7 @@ fn setup_data_channel_close_handler(
             if let Some(tx) = close_tx.lock().await.take() {
                 let _ = tx.send(());
             }
-            println!("Data channel closed");
+            log::info!("Data channel closed");
         })
     }));
 }
@@ -142,7 +142,7 @@ async fn try_webrtc_transfer(
     key: &[u8; 32],
     signaling: &NostrSignaling,
 ) -> Result<WebRtcResult> {
-    println!("Attempting WebRTC connection...");
+    log::info!("Attempting WebRTC connection...");
 
     // Create WebRTC peer
     let mut rtc_peer = WebRtcPeer::new().await?;
@@ -161,7 +161,7 @@ async fn try_webrtc_transfer(
     let (mut signal_rx, signal_handle) = signaling.start_message_receiver();
 
     // Wait for receiver's offer
-    println!("Waiting for receiver to connect via Nostr signaling...");
+    log::info!("Waiting for receiver to connect via Nostr signaling...");
 
     let receiver_pubkey;
 
@@ -171,7 +171,7 @@ async fn try_webrtc_transfer(
         
         match recv_result {
             Ok(Some(SignalingMessage::Offer { sender_pubkey, sdp })) => {
-                println!("Received offer from: {}", sender_pubkey.to_hex());
+                log::info!("Received offer from: {}", sender_pubkey.to_hex());
                 receiver_pubkey = Some(sender_pubkey);
 
                 // Set remote description
@@ -180,7 +180,7 @@ async fn try_webrtc_transfer(
                 rtc_peer.set_remote_description(offer_sdp).await?;
 
                 // Add bundled ICE candidates
-                println!("Received {} bundled ICE candidates", sdp.candidates.len());
+                log::info!("Received {} bundled ICE candidates", sdp.candidates.len());
                 for candidate in sdp.candidates {
                     let candidate_init = RTCIceCandidateInit {
                         candidate: candidate.candidate,
@@ -189,7 +189,7 @@ async fn try_webrtc_transfer(
                         username_fragment: None,
                     };
                     if let Err(e) = rtc_peer.add_ice_candidate(candidate_init).await {
-                        eprintln!("Failed to add bundled ICE candidate: {}", e);
+                        log::error!("Failed to add bundled ICE candidate: {}", e);
                     }
                 }
                 break;
@@ -216,22 +216,22 @@ async fn try_webrtc_transfer(
     rtc_peer.set_local_description(answer.clone()).await?;
 
     // Gather ICE candidates
-    println!("Gathering ICE candidates...");
+    log::info!("Gathering ICE candidates...");
     let candidates = rtc_peer
         .gather_ice_candidates(Duration::from_secs(10))
         .await?;
     let candidate_payloads = ice_candidates_to_payloads(candidates);
-    println!("Gathered {} ICE candidates", candidate_payloads.len());
+    log::info!("Gathered {} ICE candidates", candidate_payloads.len());
 
     signaling
         .publish_answer(&remote_pubkey, &answer.sdp, candidate_payloads)
         .await?;
-    println!("Sent answer to receiver");
+    log::info!("Sent answer to receiver");
 
 
 
     // Wait for data channel to open
-    println!("Waiting for data channel to open...");
+    log::info!("Waiting for data channel to open...");
     let open_result = timeout(WEBRTC_CONNECTION_TIMEOUT, open_rx).await;
 
     match open_result {
@@ -254,10 +254,10 @@ async fn try_webrtc_transfer(
 
     // Display connection info
     let conn_info = rtc_peer.get_connection_info().await;
-    println!("WebRTC connection established!");
-    println!("   Connection: {}", conn_info.connection_type);
+    log::info!("WebRTC connection established!");
+    log::info!("   Connection: {}", conn_info.connection_type);
     if let (Some(local), Some(remote)) = (&conn_info.local_address, &conn_info.remote_address) {
-        println!("   Local: {} -> Remote: {}", local, remote);
+        log::info!("   Local: {} -> Remote: {}", local, remote);
     }
 
     // Small delay to ensure connection is stable
@@ -278,7 +278,7 @@ async fn try_webrtc_transfer(
         .await
         .context("Failed to send header")?;
 
-    println!(
+    log::info!(
         "Sent file header: {} ({})",
         filename,
         format_bytes(file_size)
@@ -290,7 +290,7 @@ async fn try_webrtc_transfer(
     let mut chunk_num = 1u64;
     let mut bytes_sent = 0u64;
 
-    println!("Sending {} chunks...", total_chunks);
+    log::info!("Sending {} chunks...", total_chunks);
 
     loop {
         let bytes_read = file.read(&mut buffer).await.context("Failed to read data")?;
@@ -332,7 +332,7 @@ async fn try_webrtc_transfer(
         }
     }
 
-    println!("\nTransfer complete!");
+    log::info!("\nTransfer complete!");
 
     // Send done message
     let done_msg = vec![2u8];
@@ -342,7 +342,7 @@ async fn try_webrtc_transfer(
         .context("Failed to send done message")?;
 
     // Wait for ACK from receiver (or data channel close, which means receiver is done)
-    println!("Waiting for receiver to confirm...");
+    log::info!("Waiting for receiver to confirm...");
 
     // Wrap close_rx in a Mutex so it can be used in async block
     let close_rx = Arc::new(Mutex::new(Some(close_rx)));
@@ -378,14 +378,14 @@ async fn try_webrtc_transfer(
 
     match ack_result {
         Ok(true) => {
-            println!("Receiver confirmed!");
+            log::info!("Receiver confirmed!");
         }
         Ok(false) => {
             // Data channel closed - receiver got the data and disconnected
-            println!("Transfer complete (receiver disconnected)");
+            log::info!("Transfer complete (receiver disconnected)");
         }
         Err(_) => {
-            println!("Warning: Did not receive confirmation from receiver (timeout)");
+            log::info!("Warning: Did not receive confirmation from receiver (timeout)");
         }
     }
 
@@ -409,14 +409,14 @@ async fn transfer_data_webrtc_internal(
 ) -> Result<()> {
     // Generate encryption key (always required)
     let key = generate_key();
-    println!("Encryption enabled for transfer");
+    log::info!("Encryption enabled for transfer");
 
     // Create Nostr signaling client
-    println!("Connecting to Nostr relays for signaling...");
+    log::info!("Connecting to Nostr relays for signaling...");
     let signaling = create_sender_signaling(custom_relays.clone(), use_default_relays).await?;
 
-    println!("Sender pubkey: {}", signaling.public_key().to_hex());
-    println!("Transfer ID: {}", signaling.transfer_id());
+    log::info!("Sender pubkey: {}", signaling.public_key().to_hex());
+    log::info!("Transfer ID: {}", signaling.transfer_id());
 
     // Generate wormhole code
     let code = generate_webrtc_code(
@@ -448,7 +448,7 @@ async fn transfer_data_webrtc_internal(
     {
         WebRtcResult::Success => {
             signaling.disconnect().await;
-            println!("Connection closed.");
+            log::info!("Connection closed.");
             Ok(())
         }
         WebRtcResult::Failed(reason) => {

@@ -49,6 +49,8 @@ sha2 = "0.10"
 spake2 = "0.4"
 rustyline = "15"
 crc32fast = "1.4"
+log = "0.4"
+env_logger = "0.11"
 
 # mDNS - enabled by default for local network transfers
 mdns-sd = "0.15"
@@ -67,4 +69,3 @@ webrtc = { version = "0.11", optional = true }
 tokio-tungstenite = { version = "0.21", features = ["native-tls"], optional = true }
 uuid = { version = "1", features = ["v4"], optional = true }
 bytes = { version = "1", optional = true }
-
