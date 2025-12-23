@@ -36,7 +36,7 @@ fn setup_file_cleanup_handler(cleanup_path: TempFileCleanup) {
         if tokio::signal::ctrl_c().await.is_ok() {
             if let Some(path) = cleanup_path.lock().await.take() {
                 let _ = tokio::fs::remove_file(&path).await;
-                log::error!("\nInterrupted. Cleaned up temp file.");
+                log::error!("Interrupted. Cleaned up temp file.");
             }
             std::process::exit(130);
         }
@@ -50,7 +50,7 @@ fn setup_dir_cleanup_handler(cleanup_path: ExtractDirCleanup) {
         if tokio::signal::ctrl_c().await.is_ok() {
             if let Some(path) = cleanup_path.lock().await.take() {
                 let _ = tokio::fs::remove_dir_all(&path).await;
-                log::error!("\nInterrupted. Cleaned up extraction directory.");
+                log::error!("Interrupted. Cleaned up extraction directory.");
             }
             std::process::exit(130);
         }
@@ -93,12 +93,12 @@ pub async fn receive(code: &str, output_dir: Option<PathBuf>, relay_urls: Vec<St
     // Print connection info
     let remote_id = conn.remote_id();
     log::info!("✅ Connected!");
-    log::info!("   📡 Remote ID: {}", remote_id);
+    log::info!("Remote ID"; "remote_id" => remote_id.to_string());
 
     // Get connection type (Direct, Relay, Mixed, None)
     if let Some(mut conn_type_watcher) = endpoint.conn_type(remote_id) {
         let conn_type = conn_type_watcher.get();
-        log::info!("   🔗 Connection: {:?}", conn_type);
+        log::info!("Connection type"; "connection_type" => format!("{:?}", conn_type));
 
         // NOTE: Relay-only rejection disabled - uncomment below to re-enable
         // // Abort if we only have relay/none while using the default relay (no custom relay supplied)
@@ -273,7 +273,7 @@ where
         .persist(&output_path)
         .map_err(|e| anyhow::anyhow!("Failed to persist temp file: {}", e))?;
 
-    log::info!("\n✅ File received successfully!");
+    log::info!("✅ File received successfully!");
     log::info!("📁 Saved to: {}", output_path.display());
 
     Ok(())
@@ -326,7 +326,7 @@ where
     // Clear cleanup path before success (transfer succeeded)
     cleanup_path.lock().await.take();
 
-    log::info!("\n✅ Folder received successfully!");
+    log::info!("✅ Folder received successfully!");
     log::info!("📂 Extracted to: {}", extract_dir.display());
 
     Ok(())

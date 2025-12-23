@@ -148,7 +148,7 @@ async fn transfer_data_tor_internal(
         // Flush the stream
         stream.flush().await.context("Failed to flush stream")?;
 
-        log::info!("\nTransfer complete!");
+        log::info!("Transfer complete!");
 
         // Wait for receiver ACK (best-effort, Tor streams may close abruptly)
         log::info!("Waiting for receiver to confirm...");

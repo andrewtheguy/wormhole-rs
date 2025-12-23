@@ -59,7 +59,7 @@ fn setup_file_cleanup_handler(cleanup_path: TempFileCleanup) {
         if tokio::signal::ctrl_c().await.is_ok() {
             if let Some(path) = cleanup_path.lock().await.take() {
                 let _ = tokio::fs::remove_file(&path).await;
-                log::error!("\nInterrupted. Cleaned up temp file.");
+                log::info!("Interrupted. Cleaned up temp file.");
             }
             std::process::exit(130);
         }
@@ -72,7 +72,7 @@ fn setup_dir_cleanup_handler(cleanup_path: ExtractDirCleanup) {
         if tokio::signal::ctrl_c().await.is_ok() {
             if let Some(path) = cleanup_path.lock().await.take() {
                 let _ = tokio::fs::remove_dir_all(&path).await;
-                log::error!("\nInterrupted. Cleaned up extraction directory.");
+                log::info!("Interrupted. Cleaned up extraction directory.");
             }
             std::process::exit(130);
         }
@@ -127,7 +127,7 @@ async fn try_webrtc_receive(
         // No ICE candidates gathered
         attempt_count += 1;
         if attempt_count < MAX_ICE_GATHER_ATTEMPTS {
-            log::error!(
+            log::warn!(
                 "Warning: No ICE candidates gathered on attempt {}. Retrying...",
                 attempt_count
             );
@@ -136,7 +136,7 @@ async fn try_webrtc_receive(
         } else {
             // After all attempts exhausted, log and continue anyway
             // (relay fallback or STUN might still work with empty candidates)
-            log::error!(
+            log::warn!(
                 "Warning: Failed to gather any ICE candidates after {} attempts. \
                  Proceeding with empty candidate list - connection may fall back to relay servers.",
                 MAX_ICE_GATHER_ATTEMPTS

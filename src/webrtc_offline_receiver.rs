@@ -42,7 +42,7 @@ fn setup_file_cleanup_handler(cleanup_path: TempFileCleanup) {
         if tokio::signal::ctrl_c().await.is_ok() {
             if let Some(path) = cleanup_path.lock().await.take() {
                 let _ = tokio::fs::remove_file(&path).await;
-                log::error!("\nInterrupted. Cleaned up temp file.");
+                log::info!("\nInterrupted. Cleaned up temp file.");
             }
             std::process::exit(130);
         }
@@ -55,7 +55,7 @@ fn setup_dir_cleanup_handler(cleanup_path: ExtractDirCleanup) {
         if tokio::signal::ctrl_c().await.is_ok() {
             if let Some(path) = cleanup_path.lock().await.take() {
                 let _ = tokio::fs::remove_dir_all(&path).await;
-                log::error!("\nInterrupted. Cleaned up extraction directory.");
+                log::info!("\nInterrupted. Cleaned up extraction directory.");
             }
             std::process::exit(130);
         }

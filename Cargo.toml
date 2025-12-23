@@ -49,7 +49,7 @@ sha2 = "0.10"
 spake2 = "0.4"
 rustyline = "15"
 crc32fast = "1.4"
-log = "0.4"
+log = { version = "0.4", features = ["kv"] }
 env_logger = "0.11"
 
 # mDNS - enabled by default for local network transfers

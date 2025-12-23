@@ -29,8 +29,8 @@ use crate::transfer::{
 /// Display receiver instructions and PIN to the user.
 fn display_receiver_instructions(pin: &str) {
     print_receiver_command("wormhole-rs receive-local");
-    log::info!("🔢 PIN: {}\n", pin);
-    log::info!("Then enter the PIN above when prompted.\n");
+    log::info!("🔢 PIN: {}", pin);
+    log::info!("Then enter the PIN above when prompted.");
 }
 
 /// Find an available TCP port in the configured range.
@@ -173,11 +173,11 @@ async fn transfer_data_internal(
     mdns.register(service_info)
         .context("Failed to register mDNS service")?;
 
-    log::info!("\nmDNS service registered: {}", instance_name);
+    log::info!("mDNS service registered: {}", instance_name);
     log::info!("Transfer ID: {}", transfer_id);
     log::info!("Filename: {}", filename);
     log::info!("Size: {}", format_bytes(file_size));
-    log::info!("\nWaiting for receiver to connect...");
+    log::info!("Waiting for receiver to connect...");
 
     // Accept connection (using tokio's TcpListener for async)
     // We need to convert std TcpListener to tokio TcpListener
@@ -287,7 +287,7 @@ async fn send_data_over_tcp(
         }
     }
 
-    log::info!("\nAll data sent!");
+    log::info!("All data sent!");
 
     // Wait for ACK with timeout (same as handshake timeout)
     log::info!("Waiting for receiver confirmation...");
@@ -325,7 +325,7 @@ fn setup_cleanup_handler(cleanup_path: Arc<Mutex<Option<std::path::PathBuf>>>) {
         if tokio::signal::ctrl_c().await.is_ok() {
             if let Some(path) = cleanup_path.lock().await.take() {
                 let _ = tokio::fs::remove_file(&path).await;
-                log::error!("\nInterrupted. Cleaned up temp file.");
+                log::error!("Interrupted. Cleaned up temp file.");
             }
             std::process::exit(130);
         }
