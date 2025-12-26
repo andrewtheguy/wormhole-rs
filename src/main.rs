@@ -243,7 +243,7 @@ async fn main() -> Result<()> {
     // Set up tracing subscriber with filters for noisy iroh internals
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
         EnvFilter::new("info")
-            // Suppress noisy iroh internal logs (they log at info but should be trace)
+            // Suppress noisy iroh internal logs
             .add_directive("iroh=warn".parse().unwrap())
             .add_directive("iroh_net=warn".parse().unwrap())
             .add_directive("iroh_relay=warn".parse().unwrap())
@@ -254,6 +254,18 @@ async fn main() -> Result<()> {
             .add_directive("pkarr=warn".parse().unwrap())
             .add_directive("quinn=warn".parse().unwrap())
             .add_directive("quinn_proto=warn".parse().unwrap())
+            // Suppress noisy arti/tor internal logs
+            .add_directive("arti=warn".parse().unwrap())
+            .add_directive("arti_client=warn".parse().unwrap())
+            .add_directive("tor_proto=warn".parse().unwrap())
+            .add_directive("tor_chanmgr=warn".parse().unwrap())
+            .add_directive("tor_circmgr=warn".parse().unwrap())
+            .add_directive("tor_guardmgr=warn".parse().unwrap())
+            .add_directive("tor_netdir=warn".parse().unwrap())
+            .add_directive("tor_dirmgr=warn".parse().unwrap())
+            .add_directive("tor_hsservice=warn".parse().unwrap())
+            .add_directive("tor_hsclient=warn".parse().unwrap())
+            .add_directive("tor_rtcompat=warn".parse().unwrap())
     });
 
     tracing_subscriber::fmt()
