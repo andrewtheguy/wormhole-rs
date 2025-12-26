@@ -412,8 +412,8 @@ pub enum FileExistsChoice {
     Cancel,
 }
 
-/// Find next available filename by appending .2, .3, etc.
-/// Example: file.txt -> file.2.txt -> file.3.txt
+/// Find next available filename by appending _2, _3, etc.
+/// Example: file.txt -> file_2.txt -> file_3.txt
 pub fn find_available_filename(path: &Path) -> PathBuf {
     if !path.exists() {
         return path.to_path_buf();
@@ -431,7 +431,7 @@ pub fn find_available_filename(path: &Path) -> PathBuf {
     let parent = path.parent().unwrap_or(Path::new("."));
 
     for i in 2..=999 {
-        let new_name = format!("{}.{}{}", stem, i, ext);
+        let new_name = format!("{}_{}{}", stem, i, ext);
         let new_path = parent.join(&new_name);
         if !new_path.exists() {
             return new_path;
@@ -443,7 +443,7 @@ pub fn find_available_filename(path: &Path) -> PathBuf {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
-    parent.join(format!("{}.{}{}", stem, timestamp, ext))
+    parent.join(format!("{}_{}{}", stem, timestamp, ext))
 }
 
 /// Prompt user for choice when file already exists.
