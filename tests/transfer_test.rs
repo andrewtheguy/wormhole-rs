@@ -480,7 +480,6 @@ async fn test_encrypted_different_keys_produce_different_payloads() {
 #[tokio::test]
 async fn test_encrypted_different_keys_produce_different_headers() {
     use wormhole_rs::core::crypto::encrypt_chunk;
-    use wormhole_rs::core::transfer::FileHeader;
 
     // Same file metadata
     let header = FileHeader::new(TransferType::File, "same_file.txt".to_string(), 12345);

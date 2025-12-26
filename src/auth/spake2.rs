@@ -49,6 +49,9 @@ where
 
     // Send: transfer_id_len (2 bytes BE) + transfer_id + spake2_msg (33 bytes)
     let transfer_id_bytes = transfer_id.as_bytes();
+    if transfer_id_bytes.len() > u16::MAX as usize {
+        anyhow::bail!("Transfer ID too long: {} bytes (max: {})", transfer_id_bytes.len(), u16::MAX);
+    }
     let mut msg = Vec::with_capacity(2 + transfer_id_bytes.len() + SPAKE2_MSG_LEN);
     msg.extend_from_slice(&(transfer_id_bytes.len() as u16).to_be_bytes());
     msg.extend_from_slice(transfer_id_bytes);
@@ -72,6 +75,9 @@ where
         .map_err(|_| anyhow::anyhow!("SPAKE2 key derivation failed"))?;
 
     let mut key = [0u8; 32];
+    if key_bytes.len() != 32 {
+        anyhow::bail!("Unexpected key length: {} (expected 32)", key_bytes.len());
+    }
     key.copy_from_slice(&key_bytes);
     Ok(key)
 }

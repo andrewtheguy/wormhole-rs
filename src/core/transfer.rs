@@ -49,6 +49,11 @@ impl FileHeader {
     /// Serialize header for transmission
     pub fn to_bytes(&self) -> Vec<u8> {
         let filename_bytes = self.filename.as_bytes();
+        assert!(
+            filename_bytes.len() <= u16::MAX as usize,
+            "Filename too long for protocol (max {} bytes)",
+            u16::MAX
+        );
         let mut bytes = Vec::with_capacity(1 + 2 + filename_bytes.len() + 8);
 
         bytes.push(self.transfer_type as u8);
@@ -206,6 +211,9 @@ pub async fn send_encrypted_chunk<W: AsyncWriteExt + Unpin>(
     Ok(())
 }
 
+// Maximum chunk size (CHUNK_SIZE + reasonable overhead for encryption tags/nonce)
+const MAX_CHUNK_SIZE: usize = CHUNK_SIZE + 256;
+
 /// Receive a chunk from the stream (unencrypted, relies on QUIC/TLS)
 pub async fn recv_chunk<R: AsyncReadExt + Unpin>(reader: &mut R) -> Result<Vec<u8>> {
     // Read length prefix
@@ -215,6 +223,10 @@ pub async fn recv_chunk<R: AsyncReadExt + Unpin>(reader: &mut R) -> Result<Vec<u
         .await
         .context("Failed to read chunk length")?;
     let len = u32::from_be_bytes(len_buf) as usize;
+    
+    if len > MAX_CHUNK_SIZE {
+        anyhow::bail!("Chunk size {} exceeds maximum {}", len, MAX_CHUNK_SIZE);
+    }
 
     // Read data
     let mut data = vec![0u8; len];

@@ -247,9 +247,16 @@ pub async fn publish_wormhole_code_via_pin(
     
     // Connect to relays
     let client = Client::new(keys.clone());
+    let mut relays_added = 0;
     for relay in DEFAULT_NOSTR_RELAYS {
-        let _ = client.add_relay(relay.to_string()).await;
+        if client.add_relay(relay.to_string()).await.is_ok() {
+            relays_added += 1;
+        }
     }
+    if relays_added == 0 {
+        anyhow::bail!("Failed to add any relays");
+    }
+    client.connect().await;
     client.connect().await;
 
     // Publish event

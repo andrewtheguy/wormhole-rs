@@ -74,7 +74,7 @@ fn get_extraction_dir(output_dir: Option<PathBuf>) -> PathBuf {
 /// Print progress during transfer
 fn print_progress(bytes_received: u64, total_bytes: u64) {
     let percent = if total_bytes == 0 {
-        100
+        0
     } else {
         (bytes_received as f64 / total_bytes as f64 * 100.0) as u32
     };
@@ -383,8 +383,16 @@ async fn receive_file_impl(
             }
             2 => {
                 // Done message
-                eprintln!("\nTransfer complete signal received");
-                break;
+                if bytes_received == header.file_size {
+                    eprintln!("\nTransfer complete signal received");
+                    break;
+                } else {
+                    anyhow::bail!(
+                        "Received Done signal but only got {}/{} bytes",
+                        bytes_received,
+                        header.file_size
+                    );
+                }
             }
             _ => {
                 // Ignore other messages

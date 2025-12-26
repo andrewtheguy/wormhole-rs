@@ -64,12 +64,16 @@ pub fn create_tar_archive(folder_path: &Path) -> Result<TarArchive> {
             // Create archive path with folder name as root
             let archive_path = Path::new(folder_name).join(rel_path);
 
-            if path.is_dir() {
+            if path.is_symlink() {
+                // Handle symlinks explicitly before is_dir()/is_file() which follow symlinks
+                builder
+                    .append_path_with_name(path, &archive_path)
+                    .with_context(|| format!("Failed to add symlink: {}", path.display()))?;
+            } else if path.is_dir() {
                 builder
                     .append_dir(&archive_path, path)
                     .with_context(|| format!("Failed to add directory: {}", path.display()))?;
-            } else if path.is_file() || path.is_symlink() {
-                // append_path_with_name handles both regular files and symlinks
+            } else if path.is_file() {
                 builder
                     .append_path_with_name(path, &archive_path)
                     .with_context(|| format!("Failed to add file: {}", path.display()))?;

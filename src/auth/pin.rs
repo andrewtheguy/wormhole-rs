@@ -20,10 +20,11 @@ pub const PIN_CHARSET: &[u8] = b"23456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpq
 /// The checksum is computed by summing the charset index of each character,
 /// then taking modulo charset length to get the checksum character index.
 pub fn compute_checksum(pin_prefix: &str) -> Option<char> {
-    let sum: usize = pin_prefix
-        .chars()
-        .filter_map(|c| PIN_CHARSET.iter().position(|&ch| ch == c as u8))
-        .sum();
+    let mut sum: usize = 0;
+    for c in pin_prefix.chars() {
+        let idx = PIN_CHARSET.iter().position(|&ch| ch == c as u8)?;
+        sum += idx;
+    }
     Some(PIN_CHARSET[sum % PIN_CHARSET.len()] as char)
 }
 

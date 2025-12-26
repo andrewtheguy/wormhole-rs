@@ -100,14 +100,18 @@ impl WebRtcPeer {
             let ice_tx = ice_tx.clone();
             Box::pin(async move {
                 if let Some(candidate) = candidate {
-                    let _ = ice_tx.send(candidate).await;
+                    if ice_tx.send(candidate).await.is_err() {
+                        log::warn!("Failed to send ICE candidate - receiver dropped");
+                    }
                 }
             })
         }));
 
         // Set up ICE gathering state handler (for vanilla ICE / offline mode)
         peer_connection.on_ice_gathering_state_change(Box::new(move |state| {
-            let _ = ice_gathering_tx.send(state);
+            if ice_gathering_tx.send(state).is_err() {
+                log::warn!("Failed to send ICE gathering state - receiver dropped");
+            }
             Box::pin(async {})
         }));
 
@@ -136,9 +140,11 @@ impl WebRtcPeer {
         let dc_tx = data_channel_tx.clone();
         peer_connection.on_data_channel(Box::new(move |dc| {
             let dc_tx = dc_tx.clone();
-            eprintln!("New data channel: {}", dc.label());
+            let label = dc.label().to_string();
             Box::pin(async move {
-                let _ = dc_tx.send(dc).await;
+                if dc_tx.send(dc).await.is_err() {
+                    log::warn!("Failed to forward data channel '{}' - receiver dropped", label);
+                }
             })
         }));
 

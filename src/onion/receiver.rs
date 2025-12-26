@@ -225,7 +225,6 @@ pub async fn receive_file_tor(code: &str, output_dir: Option<PathBuf>) -> Result
             .context("Failed to receive chunk")?;
 
         bytes_received += chunk.len() as u64;
-        chunk_num += 1;
         chunk_buffer.push(chunk);
 
         // Write batch to file using spawn_blocking when buffer is full or transfer complete
@@ -246,7 +245,7 @@ pub async fn receive_file_tor(code: &str, output_dir: Option<PathBuf>) -> Result
         }
 
         // Progress update
-        if chunk_num % 10 == 0 || bytes_received == header.file_size {
+        if (chunk_num - 1) % 10 == 9 || bytes_received == header.file_size {
             let percent = (bytes_received as f64 / header.file_size as f64 * 100.0) as u32;
             print!(
                 "\r   Progress: {}% ({}/{})",
@@ -256,6 +255,8 @@ pub async fn receive_file_tor(code: &str, output_dir: Option<PathBuf>) -> Result
             );
             let _ = std::io::stdout().flush();
         }
+
+        chunk_num += 1;
     }
 
     // Clear cleanup path before persist (transfer succeeded)
