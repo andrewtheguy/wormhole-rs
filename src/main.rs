@@ -166,7 +166,6 @@ enum Commands {
     },
 }
 
-
 /// Validate path exists and matches folder flag
 fn validate_path(path: &PathBuf, folder: bool) -> Result<()> {
     if !path.exists() {
@@ -296,7 +295,15 @@ async fn main() -> Result<()> {
             use_default_relays,
             manual_signaling,
         } => {
-            do_send_webrtc(path, folder, pin, nostr_relay, use_default_relays, manual_signaling).await?;
+            do_send_webrtc(
+                path,
+                folder,
+                pin,
+                nostr_relay,
+                use_default_relays,
+                manual_signaling,
+            )
+            .await?;
         }
 
         #[cfg(feature = "webrtc")]
@@ -308,7 +315,15 @@ async fn main() -> Result<()> {
             use_default_relays,
             manual_signaling,
         } => {
-            do_send_webrtc(path, folder, pin, nostr_relay, use_default_relays, manual_signaling).await?;
+            do_send_webrtc(
+                path,
+                folder,
+                pin,
+                nostr_relay,
+                use_default_relays,
+                manual_signaling,
+            )
+            .await?;
         }
 
         #[cfg(feature = "iroh")]
@@ -327,11 +342,7 @@ async fn main() -> Result<()> {
         }
 
         #[cfg(feature = "onion")]
-        Commands::SendTor {
-            path,
-            folder,
-            pin,
-        } => {
+        Commands::SendTor { path, folder, pin } => {
             validate_path(&path, folder)?;
             if folder {
                 onion_sender::send_folder_tor(&path, pin).await?;
@@ -355,7 +366,13 @@ async fn main() -> Result<()> {
         }
 
         #[cfg(feature = "webrtc")]
-        Commands::Receive { mut code, output, relay_url, pin, manual_signaling } => {
+        Commands::Receive {
+            mut code,
+            output,
+            relay_url,
+            pin,
+            manual_signaling,
+        } => {
             // Validate output directory if provided
             validate_output_dir(&output)?;
 
@@ -372,7 +389,8 @@ async fn main() -> Result<()> {
                 eprintln!("Searching for wormhole token via Nostr...");
 
                 // Fetch encrypted token from Nostr
-                let token_str = wormhole_rs::auth::nostr_pin::fetch_wormhole_code_via_pin(&pin_str).await?;
+                let token_str =
+                    wormhole_rs::auth::nostr_pin::fetch_wormhole_code_via_pin(&pin_str).await?;
                 eprintln!("Token found and decrypted!");
                 code = Some(token_str);
             }
@@ -393,7 +411,12 @@ async fn main() -> Result<()> {
         }
 
         #[cfg(not(feature = "webrtc"))]
-        Commands::Receive { mut code, output, relay_url, pin } => {
+        Commands::Receive {
+            mut code,
+            output,
+            relay_url,
+            pin,
+        } => {
             // Validate output directory if provided
             validate_output_dir(&output)?;
 
@@ -404,7 +427,8 @@ async fn main() -> Result<()> {
                 eprintln!("Searching for wormhole token via Nostr...");
 
                 // Fetch encrypted token from Nostr
-                let token_str = wormhole_rs::auth::nostr_pin::fetch_wormhole_code_via_pin(&pin_str).await?;
+                let token_str =
+                    wormhole_rs::auth::nostr_pin::fetch_wormhole_code_via_pin(&pin_str).await?;
                 eprintln!("Token found and decrypted!");
                 code = Some(token_str);
             }

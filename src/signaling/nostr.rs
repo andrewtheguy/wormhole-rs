@@ -24,7 +24,6 @@ use crate::signaling::nostr_protocol::{
 const SIGNALING_TYPE_OFFER: &str = "webrtc-offer";
 const SIGNALING_TYPE_ANSWER: &str = "webrtc-answer";
 
-
 /// SDP payload for offer/answer exchange
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SdpPayload {
@@ -75,10 +74,7 @@ impl NostrSignaling {
         let relay_urls = if let Some(relays) = custom_relays {
             relays
         } else if use_default_relays {
-            DEFAULT_NOSTR_RELAYS
-                .iter()
-                .map(|s| s.to_string())
-                .collect()
+            DEFAULT_NOSTR_RELAYS.iter().map(|s| s.to_string()).collect()
         } else {
             get_best_relays().await
         };
@@ -157,8 +153,6 @@ impl NostrSignaling {
         Ok(event)
     }
 
-
-
     /// Publish an SDP offer
     pub async fn publish_offer(
         &self,
@@ -173,8 +167,7 @@ impl NostrSignaling {
         };
         let content = STANDARD.encode(serde_json::to_string(&payload)?);
 
-        let event =
-            self.create_signaling_event(receiver_pubkey, SIGNALING_TYPE_OFFER, &content)?;
+        let event = self.create_signaling_event(receiver_pubkey, SIGNALING_TYPE_OFFER, &content)?;
 
         self.client
             .send_event(&event)
@@ -198,8 +191,7 @@ impl NostrSignaling {
         };
         let content = STANDARD.encode(serde_json::to_string(&payload)?);
 
-        let event =
-            self.create_signaling_event(sender_pubkey, SIGNALING_TYPE_ANSWER, &content)?;
+        let event = self.create_signaling_event(sender_pubkey, SIGNALING_TYPE_ANSWER, &content)?;
 
         self.client
             .send_event(&event)
@@ -208,8 +200,6 @@ impl NostrSignaling {
 
         Ok(())
     }
-
-
 
     /// Subscribe to signaling events for our public key
     pub async fn subscribe(&self) -> Result<()> {
@@ -238,14 +228,10 @@ impl NostrSignaling {
         let event_type = event
             .tags
             .iter()
-            .find(|t| {
-                t.kind()
-                    == TagKind::Custom(std::borrow::Cow::Borrowed("type"))
-            })
+            .find(|t| t.kind() == TagKind::Custom(std::borrow::Cow::Borrowed("type")))
             .and_then(|t| t.content())?;
 
         match event_type {
-
             SIGNALING_TYPE_OFFER => {
                 let decoded = STANDARD.decode(&event.content).ok()?;
                 let payload: SdpPayload = serde_json::from_slice(&decoded).ok()?;
@@ -267,10 +253,7 @@ impl NostrSignaling {
     }
 
     /// Wait for a specific signaling message type with timeout
-    pub async fn wait_for_message(
-        &self,
-        timeout_secs: u64,
-    ) -> Result<Option<SignalingMessage>> {
+    pub async fn wait_for_message(&self, timeout_secs: u64) -> Result<Option<SignalingMessage>> {
         let mut notifications = self.client.notifications();
         let deadline = tokio::time::Instant::now() + Duration::from_secs(timeout_secs);
 
@@ -301,7 +284,10 @@ impl NostrSignaling {
     /// Start a message receiver task that sends messages to a channel
     pub fn start_message_receiver(
         &self,
-    ) -> (mpsc::Receiver<SignalingMessage>, tokio::task::JoinHandle<()>) {
+    ) -> (
+        mpsc::Receiver<SignalingMessage>,
+        tokio::task::JoinHandle<()>,
+    ) {
         let (tx, rx) = mpsc::channel(100);
         let client = self.client.clone();
         let transfer_id = self.transfer_id.clone();
@@ -420,7 +406,10 @@ mod tests {
         assert_eq!(decoded.sdp_type, "offer");
         assert_eq!(decoded.candidates.len(), 1);
         assert_eq!(decoded.candidates[0].candidate, candidate.candidate);
-        assert_eq!(decoded.candidates[0].sdp_m_line_index, candidate.sdp_m_line_index);
+        assert_eq!(
+            decoded.candidates[0].sdp_m_line_index,
+            candidate.sdp_m_line_index
+        );
         assert_eq!(decoded.candidates[0].sdp_mid, candidate.sdp_mid);
     }
 
@@ -521,7 +510,10 @@ mod tests {
                     TagKind::SingleLetter(SingleLetterTag::lowercase(Alphabet::P)),
                     vec![receiver_keys.public_key().to_hex()],
                 ),
-                Tag::custom(TagKind::Custom("type".into()), vec![SIGNALING_TYPE_OFFER.to_string()]),
+                Tag::custom(
+                    TagKind::Custom("type".into()),
+                    vec![SIGNALING_TYPE_OFFER.to_string()],
+                ),
             ])
             .sign_with_keys(&sender_keys)
             .unwrap();
@@ -535,7 +527,10 @@ mod tests {
                 assert_eq!(sdp.candidates.len(), 1);
                 assert_eq!(sdp.candidates[0].candidate, payload.candidates[0].candidate);
                 assert_eq!(sdp.candidates[0].sdp_mid, payload.candidates[0].sdp_mid);
-                assert_eq!(sdp.candidates[0].sdp_m_line_index, payload.candidates[0].sdp_m_line_index);
+                assert_eq!(
+                    sdp.candidates[0].sdp_m_line_index,
+                    payload.candidates[0].sdp_m_line_index
+                );
             }
             _ => panic!("expected offer message"),
         }

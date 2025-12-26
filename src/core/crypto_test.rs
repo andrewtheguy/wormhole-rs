@@ -36,7 +36,11 @@ mod tests {
 
         // Same plaintext and chunk number but different keys should produce different nonces
         // (first 12 bytes are the nonce)
-        assert_ne!(&enc1[..12], &enc2[..12], "Different keys must produce different nonces");
+        assert_ne!(
+            &enc1[..12],
+            &enc2[..12],
+            "Different keys must produce different nonces"
+        );
     }
 
     #[test]

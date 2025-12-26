@@ -17,8 +17,8 @@ use rand::RngCore;
 use sha2::{Digest, Sha256};
 use tokio::time::Duration;
 
-use crate::signaling::nostr_protocol::DEFAULT_NOSTR_RELAYS;
 use crate::auth::pin::{generate_pin, PIN_LENGTH};
+use crate::signaling::nostr_protocol::DEFAULT_NOSTR_RELAYS;
 
 /// Nostr event kind for PIN exchange (24243)
 pub const PIN_EXCHANGE_KIND: u16 = 24243;
@@ -159,7 +159,10 @@ pub fn create_pin_exchange_event(
             Tag::custom(TagKind::Custom("h".into()), vec![pin_hint]),
             Tag::custom(TagKind::Custom("s".into()), vec![salt_b64]),
             Tag::custom(TagKind::Custom("t".into()), vec![transfer_id.to_string()]),
-            Tag::custom(TagKind::Custom("type".into()), vec!["pin_exchange".to_string()]),
+            Tag::custom(
+                TagKind::Custom("type".into()),
+                vec!["pin_exchange".to_string()],
+            ),
             Tag::expiration(Timestamp::from(expiration)),
         ])
         .sign_with_keys(keys)
@@ -190,7 +193,10 @@ pub fn parse_pin_exchange_event(event: &Event) -> Result<(Vec<u8>, Vec<u8>)> {
         .context("Missing type tag")?;
 
     if event_type != "pin_exchange" {
-        anyhow::bail!("Invalid event type: expected pin_exchange, got {}", event_type);
+        anyhow::bail!(
+            "Invalid event type: expected pin_exchange, got {}",
+            event_type
+        );
     }
 
     // Extract salt from "s" tag
@@ -201,12 +207,14 @@ pub fn parse_pin_exchange_event(event: &Event) -> Result<(Vec<u8>, Vec<u8>)> {
         .and_then(|t| t.content())
         .context("Missing salt tag")?;
 
-    let salt = STANDARD
-        .decode(salt_b64)
-        .context("Failed to decode salt")?;
+    let salt = STANDARD.decode(salt_b64).context("Failed to decode salt")?;
 
     if salt.len() != ARGON2_SALT_LEN {
-        anyhow::bail!("Invalid salt length: expected {}, got {}", ARGON2_SALT_LEN, salt.len());
+        anyhow::bail!(
+            "Invalid salt length: expected {}, got {}",
+            ARGON2_SALT_LEN,
+            salt.len()
+        );
     }
 
     // Decode encrypted content
@@ -238,13 +246,13 @@ pub async fn publish_wormhole_code_via_pin(
 ) -> Result<String> {
     // Generate PIN
     let pin = generate_pin();
-    
+
     // Create event
     let event = create_pin_exchange_event(keys, wormhole_code, transfer_id, &pin)
         .context("Failed to create PIN exchange event")?;
 
     eprintln!("Connecting to Nostr relays for PIN exchange...");
-    
+
     // Connect to relays
     let client = Client::new(keys.clone());
     let mut relays_added = 0;
@@ -256,7 +264,6 @@ pub async fn publish_wormhole_code_via_pin(
     if relays_added == 0 {
         anyhow::bail!("Failed to add any relays");
     }
-    client.connect().await;
     client.connect().await;
 
     // Publish event
@@ -284,17 +291,17 @@ pub async fn fetch_wormhole_code_via_pin(pin: &str) -> Result<String> {
     }
 
     let pin_hint = compute_pin_hint(pin);
-    
+
     eprintln!("Connecting to Nostr relays...");
     let client = Client::default();
     for relay in DEFAULT_NOSTR_RELAYS {
         let _ = client.add_relay(relay.to_string()).await;
     }
     client.connect().await;
-    
+
     // Wait for connection
     tokio::time::sleep(Duration::from_secs(2)).await;
-    
+
     // Query
     let filter = Filter::new()
         .kind(pin_exchange_kind())
@@ -309,28 +316,26 @@ pub async fn fetch_wormhole_code_via_pin(pin: &str) -> Result<String> {
 
     // Handle fetch result
     let events = events_res.context("Failed to fetch events")?;
-    
+
     if events.is_empty() {
         anyhow::bail!("No PIN exchange event found. Check if sender is ready.");
     }
-    
+
     // Try decrypting each event
     for (index, event) in events.iter().enumerate() {
         let event_id = event.id.to_hex();
         match parse_pin_exchange_event(event) {
-            Ok((encrypted, salt)) => {
-                match decrypt_wormhole_code(&encrypted, pin, &salt) {
-                    Ok(code) => return Ok(code),
-                    Err(e) => {
-                        log::debug!(
-                            "Failed to decrypt event {} (index {}): {}",
-                            event_id,
-                            index,
-                            e
-                        );
-                    }
+            Ok((encrypted, salt)) => match decrypt_wormhole_code(&encrypted, pin, &salt) {
+                Ok(code) => return Ok(code),
+                Err(e) => {
+                    log::debug!(
+                        "Failed to decrypt event {} (index {}): {}",
+                        event_id,
+                        index,
+                        e
+                    );
                 }
-            }
+            },
             Err(e) => {
                 log::debug!(
                     "Failed to parse event {} (index {}): {}",
@@ -344,7 +349,6 @@ pub async fn fetch_wormhole_code_via_pin(pin: &str) -> Result<String> {
 
     anyhow::bail!("Failed to decrypt wormhole code with the provided PIN.")
 }
-
 
 #[cfg(test)]
 mod tests {

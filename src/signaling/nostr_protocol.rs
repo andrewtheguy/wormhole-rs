@@ -217,23 +217,16 @@ async fn discover_relays_from_seeds() -> HashSet<String> {
 
     // Query for NIP-66 relay discovery events (kind 30166)
     // These are published by relay monitors
-    let nip66_filter = Filter::new()
-        .kind(relay_discovery_kind())
-        .limit(100);
+    let nip66_filter = Filter::new().kind(relay_discovery_kind()).limit(100);
 
     // Query for NIP-65 relay list events (kind 10002)
     // These are published by users listing their preferred relays
-    let nip65_filter = Filter::new()
-        .kind(relay_list_kind())
-        .limit(100);
+    let nip65_filter = Filter::new().kind(relay_list_kind()).limit(100);
 
     let timeout = Duration::from_secs(RELAY_DISCOVERY_TIMEOUT_SECS);
 
     // Fetch NIP-66 events
-    if let Ok(nip66_events) = client
-        .fetch_events(nip66_filter, timeout)
-        .await
-    {
+    if let Ok(nip66_events) = client.fetch_events(nip66_filter, timeout).await {
         for event in nip66_events.iter() {
             if let Some(relay_url) = extract_relay_from_nip66(event) {
                 discovered.insert(relay_url);
@@ -242,10 +235,7 @@ async fn discover_relays_from_seeds() -> HashSet<String> {
     }
 
     // Fetch NIP-65 events
-    if let Ok(nip65_events) = client
-        .fetch_events(nip65_filter, timeout)
-        .await
-    {
+    if let Ok(nip65_events) = client.fetch_events(nip65_filter, timeout).await {
         for event in nip65_events.iter() {
             for relay_url in extract_relays_from_nip65(event) {
                 discovered.insert(relay_url);
@@ -277,16 +267,10 @@ async fn discover_best_relays() -> Vec<String> {
     }
 
     // Limit number of relays to probe to avoid too many connections
-    let relays_to_probe: Vec<_> = discovered
-        .into_iter()
-        .take(MAX_RELAYS_TO_PROBE)
-        .collect();
+    let relays_to_probe: Vec<_> = discovered.into_iter().take(MAX_RELAYS_TO_PROBE).collect();
 
     // Probe relays in parallel: NIP-11 capability check + WebSocket connectivity test
-    let futures: Vec<_> = relays_to_probe
-        .iter()
-        .map(|url| probe_relay(url))
-        .collect();
+    let futures: Vec<_> = relays_to_probe.iter().map(|url| probe_relay(url)).collect();
 
     let results = join_all(futures).await;
 
@@ -361,8 +345,6 @@ fn get_event_type(event: &Event) -> Option<String> {
         .and_then(|t| t.content())
         .map(|s| s.to_string())
 }
-
-
 
 /// Create a completion event (receiver confirms download complete)
 ///
@@ -486,9 +468,7 @@ pub async fn publish_relay_list_event(
     // so the event may only be published to a subset of bridge relays. This is acceptable for
     // NIP-65 since receivers only need to find the event from any one bridge relay, and the
     // event will propagate across relays over time.
-    client
-        .wait_for_connection(Duration::from_secs(5))
-        .await;
+    client.wait_for_connection(Duration::from_secs(5)).await;
 
     // Publish NIP-65 event to all connected bridge relays
     client
@@ -531,9 +511,7 @@ pub async fn discover_sender_relays(sender_pubkey: &PublicKey) -> Result<Vec<Str
     // Note: wait_for_connection returns when at least one relay connects or timeout is reached,
     // so we may only query a subset of bridge relays. This is acceptable since we only need to
     // find the sender's NIP-65 event from any one relay.
-    client
-        .wait_for_connection(Duration::from_secs(5))
-        .await;
+    client.wait_for_connection(Duration::from_secs(5)).await;
 
     // Query for sender's NIP-65 event (kind 10002)
     let filter = Filter::new()

@@ -15,17 +15,16 @@ use tokio::io::AsyncReadExt;
 use tokio::net::TcpStream;
 use tokio::sync::Mutex;
 
-use crate::core::crypto::CHUNK_SIZE;
+use crate::auth::spake2::handshake_as_responder;
 use crate::cli::instructions::print_receiver_command;
+use crate::core::crypto::CHUNK_SIZE;
+use crate::core::transfer::{
+    format_bytes, num_chunks, prepare_file_for_send, prepare_folder_for_send, recv_control,
+    send_encrypted_chunk, send_encrypted_header, ControlSignal, FileHeader, TransferType,
+};
 use crate::mdns::common::{
     generate_pin, generate_transfer_id, PORT_RANGE_END, PORT_RANGE_START, SERVICE_TYPE,
     TXT_FILENAME, TXT_FILE_SIZE, TXT_TRANSFER_ID, TXT_TRANSFER_TYPE,
-};
-use crate::auth::spake2::handshake_as_responder;
-use crate::core::transfer::{
-    format_bytes, num_chunks, prepare_file_for_send, prepare_folder_for_send,
-    recv_control, send_encrypted_chunk, send_encrypted_header, ControlSignal,
-    FileHeader, TransferType,
 };
 
 /// Display receiver instructions and PIN to the user.
@@ -209,7 +208,15 @@ async fn transfer_data_internal(
             Ok(Ok(key)) => {
                 eprintln!("SPAKE2 handshake successful with: {}", peer_addr);
                 // Send data over TCP using SPAKE2-derived key
-                send_data_over_tcp(stream, &mut file, filename.clone(), file_size, transfer_type, &key).await?;
+                send_data_over_tcp(
+                    stream,
+                    &mut file,
+                    filename.clone(),
+                    file_size,
+                    transfer_type,
+                    &key,
+                )
+                .await?;
                 break;
             }
             Ok(Err(e)) => {
@@ -274,7 +281,10 @@ async fn send_data_over_tcp(
     eprintln!("Sending {} chunks...", total_chunks);
 
     loop {
-        let bytes_read = file.read(&mut buffer).await.context("Failed to read data")?;
+        let bytes_read = file
+            .read(&mut buffer)
+            .await
+            .context("Failed to read data")?;
         if bytes_read == 0 {
             break;
         }

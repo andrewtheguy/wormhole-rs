@@ -23,10 +23,10 @@ use crate::core::transfer::{
     make_webrtc_proceed_msg, num_chunks, parse_webrtc_control_msg, prompt_file_exists,
     ControlSignal, FileExistsChoice, FileHeader, TransferType,
 };
-use crate::webrtc::common::{setup_data_channel_handlers, WebRtcPeer};
 use crate::signaling::offline::{
     display_answer_json, ice_candidates_to_payloads, read_offer_json, OfflineAnswer,
 };
+use crate::webrtc::common::{setup_data_channel_handlers, WebRtcPeer};
 
 /// Timeout for ICE gathering
 const ICE_GATHERING_TIMEOUT: Duration = Duration::from_secs(10);
@@ -131,7 +131,9 @@ pub async fn receive_file_offline(output_dir: Option<PathBuf>) -> Result<()> {
     eprintln!("Gathering connection info...");
 
     // Wait for ICE gathering to complete
-    let candidates = rtc_peer.gather_ice_candidates(ICE_GATHERING_TIMEOUT).await?;
+    let candidates = rtc_peer
+        .gather_ice_candidates(ICE_GATHERING_TIMEOUT)
+        .await?;
     eprintln!("Collected {} ICE candidates", candidates.len());
 
     if candidates.is_empty() {
@@ -159,9 +161,7 @@ pub async fn receive_file_offline(output_dir: Option<PathBuf>) -> Result<()> {
     // Wait for data channel from sender
     let data_channel = tokio::time::timeout(CONNECTION_TIMEOUT, data_channel_rx.recv())
         .await
-        .map_err(|_| {
-            anyhow::anyhow!("Connection timeout. NAT traversal may have failed.")
-        })?
+        .map_err(|_| anyhow::anyhow!("Connection timeout. NAT traversal may have failed."))?
         .context("Failed to receive data channel")?;
 
     // Set up message receiving
@@ -298,7 +298,14 @@ pub async fn receive_file_offline(output_dir: Option<PathBuf>) -> Result<()> {
     // Dispatch based on transfer type
     match header.transfer_type {
         TransferType::File => {
-            receive_file_impl(&mut message_rx, &header, &key, final_output_path, &data_channel).await?;
+            receive_file_impl(
+                &mut message_rx,
+                &header,
+                &key,
+                final_output_path,
+                &data_channel,
+            )
+            .await?;
         }
         TransferType::Folder => {
             receive_folder_impl(message_rx, &header, &key, Some(output_dir), &data_channel).await?;
@@ -324,8 +331,7 @@ async fn receive_file_impl(
     let output_dir = output_path.parent().unwrap_or(std::path::Path::new("."));
 
     // Create temp file in same directory
-    let temp_file =
-        NamedTempFile::new_in(output_dir).context("Failed to create temporary file")?;
+    let temp_file = NamedTempFile::new_in(output_dir).context("Failed to create temporary file")?;
     let temp_path = temp_file.path().to_path_buf();
 
     // Set up cleanup handler
@@ -478,7 +484,8 @@ impl std::io::Read for WebRtcStreamingReader {
         if self.buffer_pos < self.buffer.len() {
             let available = self.buffer.len() - self.buffer_pos;
             let to_copy = std::cmp::min(available, buf.len());
-            buf[..to_copy].copy_from_slice(&self.buffer[self.buffer_pos..self.buffer_pos + to_copy]);
+            buf[..to_copy]
+                .copy_from_slice(&self.buffer[self.buffer_pos..self.buffer_pos + to_copy]);
             self.buffer_pos += to_copy;
             return Ok(to_copy);
         }
@@ -550,8 +557,8 @@ impl std::io::Read for WebRtcStreamingReader {
                 // Encrypted Done message
                 match parse_webrtc_control_msg(&msg, &self.key) {
                     Ok(Some(ControlSignal::Done)) => Ok(0), // EOF
-                    Ok(_) => Ok(0), // Unexpected signal, treat as EOF
-                    Err(_) => Ok(0), // Failed to decrypt, treat as EOF
+                    Ok(_) => Ok(0),                         // Unexpected signal, treat as EOF
+                    Err(_) => Ok(0),                        // Failed to decrypt, treat as EOF
                 }
             }
             _ => Ok(0),
@@ -590,11 +597,10 @@ async fn receive_folder_impl(
 
     // Extract tar archive in a blocking task
     let extract_dir_clone = extract_dir.clone();
-    let skipped_entries = tokio::task::spawn_blocking(move || {
-        extract_tar_archive(reader, &extract_dir_clone)
-    })
-    .await
-    .context("Extraction task panicked")??;
+    let skipped_entries =
+        tokio::task::spawn_blocking(move || extract_tar_archive(reader, &extract_dir_clone))
+            .await
+            .context("Extraction task panicked")??;
 
     // Report skipped entries
     if !skipped_entries.is_empty() {

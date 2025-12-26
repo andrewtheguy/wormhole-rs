@@ -40,7 +40,10 @@ pub async fn create_sender_endpoint(relay_urls: Vec<String>) -> Result<Endpoint>
         if relay_urls.len() == 1 {
             eprintln!("Using custom relay server");
         } else {
-            eprintln!("Using {} custom relay servers (with failover)", relay_urls.len());
+            eprintln!(
+                "Using {} custom relay servers (with failover)",
+                relay_urls.len()
+            );
         }
     }
 
@@ -71,7 +74,10 @@ pub async fn create_receiver_endpoint(relay_urls: Vec<String>) -> Result<Endpoin
         if relay_urls.len() == 1 {
             eprintln!("Using custom relay server");
         } else {
-            eprintln!("Using {} custom relay servers (with failover)", relay_urls.len());
+            eprintln!(
+                "Using {} custom relay servers (with failover)",
+                relay_urls.len()
+            );
         }
     }
 

@@ -20,8 +20,6 @@ mod tests {
         assert!(hex::decode(&id2).is_ok());
     }
 
-
-
     #[test]
     fn test_completion_event_creation() {
         let receiver_keys = Keys::generate();
@@ -37,7 +35,6 @@ mod tests {
         assert_eq!(event.kind, nostr_file_transfer_kind());
         assert_eq!(event.pubkey, receiver_keys.public_key());
         assert!(is_completion_event(&event));
-
 
         // Verify transfer ID
         assert_eq!(get_transfer_id(&event).unwrap(), transfer_id);

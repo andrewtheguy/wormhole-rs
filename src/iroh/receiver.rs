@@ -10,12 +10,12 @@ use crate::core::folder::{
     extract_tar_archive, get_extraction_dir, print_skipped_entries, print_tar_extraction_info,
     StreamingReader,
 };
-use crate::iroh::common::{create_receiver_endpoint, ALPN};
 use crate::core::transfer::{
     find_available_filename, format_bytes, num_chunks, prompt_file_exists, recv_encrypted_chunk,
     recv_encrypted_header, send_abort, send_ack, send_proceed, FileExistsChoice, TransferType,
 };
 use crate::core::wormhole::parse_code;
+use crate::iroh::common::{create_receiver_endpoint, ALPN};
 
 /// Shared state for temp file cleanup on interrupt
 type TempFileCleanup = Arc<Mutex<Option<PathBuf>>>;
@@ -60,13 +60,17 @@ fn setup_dir_cleanup_handler(cleanup_path: ExtractDirCleanup) {
 
 /// Receive a file or folder using a wormhole code.
 /// Auto-detects whether it's a file or folder transfer based on the header.
-pub async fn receive(code: &str, output_dir: Option<PathBuf>, relay_urls: Vec<String>) -> Result<()> {
+pub async fn receive(
+    code: &str,
+    output_dir: Option<PathBuf>,
+    relay_urls: Vec<String>,
+) -> Result<()> {
     eprintln!("Parsing wormhole code...");
 
     // Parse the wormhole code
     let token = parse_code(code).context("Failed to parse wormhole code")?;
-    let key = crate::core::wormhole::decode_key(&token.key)
-        .context("Failed to decode encryption key")?;
+    let key =
+        crate::core::wormhole::decode_key(&token.key).context("Failed to decode encryption key")?;
     let addr = token
         .addr
         .context("No iroh endpoint address in wormhole code")?
@@ -79,14 +83,13 @@ pub async fn receive(code: &str, output_dir: Option<PathBuf>, relay_urls: Vec<St
     let endpoint = create_receiver_endpoint(relay_urls).await?;
 
     // Connect to sender
-    let conn = endpoint
-        .connect(addr, ALPN)
-        .await
-        .map_err(|e| anyhow::anyhow!(
+    let conn = endpoint.connect(addr, ALPN).await.map_err(|e| {
+        anyhow::anyhow!(
             "Failed to connect to sender: {}\n\n\
              If relay connection fails, try Tor mode: wormhole-rs send-tor <file>",
             e
-        ))?;
+        )
+    })?;
 
     // Print connection info
     let remote_id = conn.remote_id();
@@ -100,10 +103,8 @@ pub async fn receive(code: &str, output_dir: Option<PathBuf>, relay_urls: Vec<St
     }
 
     // Accept bi-directional stream
-    let (mut send_stream, mut recv_stream) = conn
-        .accept_bi()
-        .await
-        .context("Failed to accept stream")?;
+    let (mut send_stream, mut recv_stream) =
+        conn.accept_bi().await.context("Failed to accept stream")?;
 
     // Read header (determines file vs folder)
     let header = recv_encrypted_header(&mut recv_stream, &key)
@@ -168,22 +169,10 @@ pub async fn receive(code: &str, output_dir: Option<PathBuf>, relay_urls: Vec<St
     // Dispatch based on transfer type
     match header.transfer_type {
         TransferType::File => {
-            receive_file_impl(
-                &mut recv_stream,
-                &header,
-                key,
-                final_output_path,
-            )
-            .await?;
+            receive_file_impl(&mut recv_stream, &header, key, final_output_path).await?;
         }
         TransferType::Folder => {
-            receive_folder_impl(
-                recv_stream,
-                &header,
-                key,
-                Some(final_output_path),
-            )
-            .await?;
+            receive_folder_impl(recv_stream, &header, key, Some(final_output_path)).await?;
         }
     }
 
@@ -312,11 +301,10 @@ where
 
     // Use spawn_blocking to run tar extraction in a blocking context
     let extract_dir_clone = extract_dir.clone();
-    let skipped_entries = tokio::task::spawn_blocking(move || {
-        extract_tar_archive(reader, &extract_dir_clone)
-    })
-    .await
-    .context("Extraction task panicked")??;
+    let skipped_entries =
+        tokio::task::spawn_blocking(move || extract_tar_archive(reader, &extract_dir_clone))
+            .await
+            .context("Extraction task panicked")??;
 
     // Report skipped entries
     print_skipped_entries(&skipped_entries);

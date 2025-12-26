@@ -80,8 +80,7 @@ impl FileHeader {
             .context("Invalid filename encoding")?;
 
         let size_start = 3 + filename_len;
-        let file_size =
-            u64::from_be_bytes(data[size_start..size_start + 8].try_into().unwrap());
+        let file_size = u64::from_be_bytes(data[size_start..size_start + 8].try_into().unwrap());
 
         Ok(Self {
             transfer_type,
@@ -250,7 +249,7 @@ pub async fn recv_chunk<R: AsyncReadExt + Unpin>(reader: &mut R) -> Result<Vec<u
         .await
         .context("Failed to read chunk length")?;
     let len = u32::from_be_bytes(len_buf) as usize;
-    
+
     if len > MAX_CHUNK_SIZE {
         anyhow::bail!("Chunk size {} exceeds maximum {}", len, MAX_CHUNK_SIZE);
     }
@@ -367,9 +366,7 @@ pub async fn prepare_file_for_send(file_path: &Path) -> Result<Option<PreparedFi
     }
 
     // Open file
-    let file = File::open(file_path)
-        .await
-        .context("Failed to open file")?;
+    let file = File::open(file_path).await.context("Failed to open file")?;
 
     Ok(Some(PreparedFile {
         file,

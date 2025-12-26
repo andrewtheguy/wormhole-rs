@@ -115,10 +115,7 @@ fn current_timestamp() -> u64 {
 /// * `addr` - The endpoint address to connect to
 /// * `key` - The encryption key (required)
 #[cfg(feature = "iroh")]
-pub fn generate_code(
-    addr: &EndpointAddr,
-    key: &[u8; 32],
-) -> Result<String> {
+pub fn generate_code(addr: &EndpointAddr, key: &[u8; 32]) -> Result<String> {
     // Use MinimalAddr to strip IP addresses - they're auto-discovered by iroh
     let minimal_addr = MinimalAddr::from_endpoint_addr(addr);
 
@@ -136,8 +133,7 @@ pub fn generate_code(
         webrtc_filename: None,
     };
 
-    let serialized =
-        serde_json::to_vec(&token).context("Failed to serialize wormhole token")?;
+    let serialized = serde_json::to_vec(&token).context("Failed to serialize wormhole token")?;
 
     Ok(URL_SAFE_NO_PAD.encode(&serialized))
 }
@@ -148,10 +144,7 @@ pub fn generate_code(
 /// # Arguments
 /// * `onion_address` - The .onion address of the hidden service
 /// * `key` - The encryption key (required)
-pub fn generate_tor_code(
-    onion_address: String,
-    key: &[u8; 32],
-) -> Result<String> {
+pub fn generate_tor_code(onion_address: String, key: &[u8; 32]) -> Result<String> {
     let token = WormholeToken {
         version: CURRENT_VERSION,
         protocol: PROTOCOL_TOR.to_string(),
@@ -166,8 +159,7 @@ pub fn generate_tor_code(
         webrtc_filename: None,
     };
 
-    let serialized =
-        serde_json::to_vec(&token).context("Failed to serialize wormhole token")?;
+    let serialized = serde_json::to_vec(&token).context("Failed to serialize wormhole token")?;
 
     Ok(URL_SAFE_NO_PAD.encode(&serialized))
 }
@@ -204,8 +196,7 @@ pub fn generate_webrtc_code(
         webrtc_filename: Some(filename),
     };
 
-    let serialized =
-        serde_json::to_vec(&token).context("Failed to serialize wormhole token")?;
+    let serialized = serde_json::to_vec(&token).context("Failed to serialize wormhole token")?;
 
     Ok(URL_SAFE_NO_PAD.encode(&serialized))
 }
@@ -259,9 +250,8 @@ pub fn parse_code(code: &str) -> Result<WormholeToken> {
         .decode(code.trim())
         .context("Failed to decode wormhole code")?;
 
-    let token: WormholeToken = serde_json::from_slice(&serialized).context(
-        "Invalid wormhole code: failed to parse token. Make sure the code is correct.",
-    )?;
+    let token: WormholeToken = serde_json::from_slice(&serialized)
+        .context("Invalid wormhole code: failed to parse token. Make sure the code is correct.")?;
 
     // Validate version
     if token.version != CURRENT_VERSION {
@@ -290,9 +280,7 @@ pub fn parse_code(code: &str) -> Result<WormholeToken> {
     let now = current_timestamp();
     if token.created_at > now + 60 {
         // Allow 60s clock skew into future
-        anyhow::bail!(
-            "Invalid token: created_at is in the future. Check system clock."
-        );
+        anyhow::bail!("Invalid token: created_at is in the future. Check system clock.");
     }
     let age = now.saturating_sub(token.created_at);
     if age > CODE_TTL_SECS {

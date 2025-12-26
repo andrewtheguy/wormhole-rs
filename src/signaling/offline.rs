@@ -11,8 +11,8 @@ use std::io::{BufRead, Write};
 use std::time::{SystemTime, UNIX_EPOCH};
 use webrtc::ice_transport::ice_candidate::RTCIceCandidate;
 
-use crate::signaling::nostr::IceCandidatePayload;
 use crate::core::wormhole::CODE_TTL_SECS;
+use crate::signaling::nostr::IceCandidatePayload;
 
 /// Line width for wrapped output (safe for most terminals)
 const LINE_WIDTH: usize = 76;
@@ -115,7 +115,9 @@ pub fn display_offer_json(offer: &OfflineOffer) -> Result<()> {
     println!("{}", wrapped);
     println!("{}", OFFER_END_MARKER);
     println!();
-    println!("Copy the code above and send to receiver, then wait for their response code for STEP 3...");
+    println!(
+        "Copy the code above and send to receiver, then wait for their response code for STEP 3..."
+    );
     println!();
 
     Ok(())
@@ -361,8 +363,7 @@ mod tests {
             "def".to_string(),
             OFFER_END_MARKER.to_string(),
         ];
-        let payload =
-            extract_marked_payload(lines, OFFER_BEGIN_MARKER, OFFER_END_MARKER).unwrap();
+        let payload = extract_marked_payload(lines, OFFER_BEGIN_MARKER, OFFER_END_MARKER).unwrap();
         assert_eq!(payload, "abcdef");
     }
 

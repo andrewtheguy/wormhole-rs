@@ -22,11 +22,11 @@ use crate::core::transfer::{
     format_bytes, make_webrtc_done_msg, num_chunks, parse_webrtc_control_msg,
     prepare_file_for_send, prepare_folder_for_send, ControlSignal, FileHeader, TransferType,
 };
-use crate::webrtc::common::{setup_data_channel_handlers, WebRtcPeer};
 use crate::signaling::offline::{
     display_offer_json, ice_candidates_to_payloads, read_answer_json, OfflineAnswer, OfflineOffer,
     TransferInfo,
 };
+use crate::webrtc::common::{setup_data_channel_handlers, WebRtcPeer};
 
 /// Timeout for ICE gathering
 const ICE_GATHERING_TIMEOUT: Duration = Duration::from_secs(10);
@@ -146,7 +146,9 @@ async fn transfer_offline_internal(
     eprintln!("Gathering connection info...");
 
     // Wait for ICE gathering to complete
-    let candidates = rtc_peer.gather_ice_candidates(ICE_GATHERING_TIMEOUT).await?;
+    let candidates = rtc_peer
+        .gather_ice_candidates(ICE_GATHERING_TIMEOUT)
+        .await?;
     eprintln!("Collected {} ICE candidates", candidates.len());
 
     if candidates.is_empty() {

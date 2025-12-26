@@ -71,9 +71,8 @@ pub fn generate_pin() -> String {
 pub fn prompt_pin() -> std::io::Result<String> {
     use rustyline::DefaultEditor;
 
-    let mut rl = DefaultEditor::new().map_err(|e| {
-        std::io::Error::new(std::io::ErrorKind::Other, e.to_string())
-    })?;
+    let mut rl = DefaultEditor::new()
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
 
     let mut last_input: Option<String> = None;
 

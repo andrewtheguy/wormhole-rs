@@ -83,7 +83,7 @@ pub fn decrypt_chunk(key: &[u8; 32], chunk_num: u64, encrypted: &[u8]) -> Result
     if nonce_bytes != expected_nonce {
         anyhow::bail!("Nonce mismatch - possible replay attack or corruption");
     }
-    
+
     let nonce = Nonce::from_slice(nonce_bytes);
     let ciphertext = &encrypted[NONCE_SIZE..];
 

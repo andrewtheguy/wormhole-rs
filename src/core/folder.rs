@@ -218,7 +218,10 @@ pub fn extract_tar_archive_returning_reader<R: Read>(
 
     for entry in archive.entries().context("Failed to read tar entries")? {
         let mut entry = entry.context("Failed to read tar entry")?;
-        let path = entry.path().context("Failed to get entry path")?.into_owned();
+        let path = entry
+            .path()
+            .context("Failed to get entry path")?
+            .into_owned();
 
         // Check entry type
         let entry_type = entry.header().entry_type();

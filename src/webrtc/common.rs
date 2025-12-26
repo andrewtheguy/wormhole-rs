@@ -143,7 +143,10 @@ impl WebRtcPeer {
             let label = dc.label().to_string();
             Box::pin(async move {
                 if dc_tx.send(dc).await.is_err() {
-                    log::warn!("Failed to forward data channel '{}' - receiver dropped", label);
+                    log::warn!(
+                        "Failed to forward data channel '{}' - receiver dropped",
+                        label
+                    );
                 }
             })
         }));

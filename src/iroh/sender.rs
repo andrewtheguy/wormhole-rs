@@ -1,21 +1,20 @@
 use anyhow::{Context, Result};
+use iroh::Watcher;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use iroh::Watcher;
 use tokio::fs::File;
 use tokio::io::AsyncReadExt;
 use tokio::sync::Mutex;
 
-use crate::core::crypto::{generate_key, CHUNK_SIZE};
 use crate::cli::instructions::print_receiver_command;
-use crate::iroh::common::{create_sender_endpoint};
+use crate::core::crypto::{generate_key, CHUNK_SIZE};
 use crate::core::transfer::{
-    format_bytes, num_chunks, prepare_file_for_send, prepare_folder_for_send,
-    recv_control, send_encrypted_chunk, send_encrypted_header, ControlSignal,
-    FileHeader, TransferType,
+    format_bytes, num_chunks, prepare_file_for_send, prepare_folder_for_send, recv_control,
+    send_encrypted_chunk, send_encrypted_header, ControlSignal, FileHeader, TransferType,
 };
 use crate::core::wormhole::generate_code;
+use crate::iroh::common::create_sender_endpoint;
 
 /// Shared state for temp file cleanup on interrupt
 type TempFileCleanup = Arc<Mutex<Option<PathBuf>>>;
@@ -73,7 +72,8 @@ async fn transfer_data_internal(
             &keys,
             &code,
             "iroh-transfer", // Transfer id not critical for iroh, just needs to be non-empty
-        ).await?;
+        )
+        .await?;
 
         println!("🔢 PIN: {}\n", pin);
         println!("Then enter the PIN above when prompted.\n");
@@ -87,16 +87,20 @@ async fn transfer_data_internal(
     let conn = endpoint
         .accept()
         .await
-        .ok_or_else(|| anyhow::anyhow!(
-            "No incoming connection.\n\n\
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "No incoming connection.\n\n\
              If relay connection fails, try Tor mode: wormhole-rs send-tor <file>"
-        ))?
+            )
+        })?
         .await
-        .map_err(|e| anyhow::anyhow!(
-            "Failed to accept connection: {}\n\n\
+        .map_err(|e| {
+            anyhow::anyhow!(
+                "Failed to accept connection: {}\n\n\
              If relay connection fails, try Tor mode: wormhole-rs send-tor <file>",
-            e
-        ))?;
+                e
+            )
+        })?;
 
     let remote_id = conn.remote_id();
     eprintln!("Receiver connected!");
@@ -109,7 +113,8 @@ async fn transfer_data_internal(
     }
 
     // Open bi-directional stream
-    let (mut send_stream, mut recv_stream) = conn.open_bi().await.context("Failed to open stream")?;
+    let (mut send_stream, mut recv_stream) =
+        conn.open_bi().await.context("Failed to open stream")?;
 
     // Send file header
     let header = FileHeader::new(transfer_type, filename, file_size);
@@ -144,7 +149,10 @@ async fn transfer_data_internal(
     eprintln!("Sending {} chunks...", total_chunks);
 
     loop {
-        let bytes_read = file.read(&mut buffer).await.context("Failed to read data")?;
+        let bytes_read = file
+            .read(&mut buffer)
+            .await
+            .context("Failed to read data")?;
         if bytes_read == 0 {
             break;
         }

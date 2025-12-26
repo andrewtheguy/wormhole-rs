@@ -17,16 +17,16 @@ use tokio::time::{timeout, Duration};
 use webrtc::ice_transport::ice_candidate::RTCIceCandidateInit;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 
+use crate::cli::instructions::print_receiver_command;
 use crate::core::crypto::{encrypt_chunk, generate_key, CHUNK_SIZE};
-use crate::signaling::nostr::{create_sender_signaling, NostrSignaling, SignalingMessage};
 use crate::core::transfer::{
     format_bytes, make_webrtc_done_msg, num_chunks, parse_webrtc_control_msg,
     prepare_file_for_send, prepare_folder_for_send, ControlSignal, FileHeader, TransferType,
 };
-use crate::webrtc::common::{setup_data_channel_handlers, WebRtcPeer};
-use crate::signaling::offline::ice_candidates_to_payloads;
 use crate::core::wormhole::generate_webrtc_code;
-use crate::cli::instructions::print_receiver_command;
+use crate::signaling::nostr::{create_sender_signaling, NostrSignaling, SignalingMessage};
+use crate::signaling::offline::ice_candidates_to_payloads;
+use crate::webrtc::common::{setup_data_channel_handlers, WebRtcPeer};
 
 /// Connection timeout for WebRTC handshake
 const WEBRTC_CONNECTION_TIMEOUT: Duration = Duration::from_secs(30);
@@ -168,15 +168,15 @@ async fn try_webrtc_transfer(
     // Wait loop with timeout to prevent hanging indefinitely
     loop {
         let recv_result = timeout(WEBRTC_CONNECTION_TIMEOUT, signal_rx.recv()).await;
-        
+
         match recv_result {
             Ok(Some(SignalingMessage::Offer { sender_pubkey, sdp })) => {
                 println!("Received offer from: {}", sender_pubkey.to_hex());
                 receiver_pubkey = Some(sender_pubkey);
 
                 // Set remote description
-                let offer_sdp = RTCSessionDescription::offer(sdp.sdp)
-                    .context("Failed to create offer SDP")?;
+                let offer_sdp =
+                    RTCSessionDescription::offer(sdp.sdp).context("Failed to create offer SDP")?;
                 rtc_peer.set_remote_description(offer_sdp).await?;
 
                 // Add bundled ICE candidates
@@ -209,7 +209,8 @@ async fn try_webrtc_transfer(
         }
     }
 
-    let remote_pubkey = receiver_pubkey.expect("receiver_pubkey must be Some after receiving Offer");
+    let remote_pubkey =
+        receiver_pubkey.expect("receiver_pubkey must be Some after receiving Offer");
 
     // Create and send answer
     let answer = rtc_peer.create_answer().await?;
@@ -227,8 +228,6 @@ async fn try_webrtc_transfer(
         .publish_answer(&remote_pubkey, &answer.sdp, candidate_payloads)
         .await?;
     println!("Sent answer to receiver");
-
-
 
     // Wait for data channel to open
     println!("Waiting for data channel to open...");
@@ -338,7 +337,10 @@ async fn try_webrtc_transfer(
     println!("Sending {} chunks...", total_chunks);
 
     loop {
-        let bytes_read = file.read(&mut buffer).await.context("Failed to read data")?;
+        let bytes_read = file
+            .read(&mut buffer)
+            .await
+            .context("Failed to read data")?;
         if bytes_read == 0 {
             break;
         }
@@ -482,7 +484,13 @@ async fn transfer_data_webrtc_internal(
 
     let code_str = code.clone();
 
-    display_transfer_code(use_pin, &signaling.keys, &code_str, &signaling.transfer_id()).await?;
+    display_transfer_code(
+        use_pin,
+        &signaling.keys,
+        &code_str,
+        &signaling.transfer_id(),
+    )
+    .await?;
 
     // Try WebRTC transfer
     match try_webrtc_transfer(
@@ -528,14 +536,7 @@ pub async fn send_file_webrtc(
     }
 
     // Try normal Nostr signaling path
-    match send_file_webrtc_internal(
-        file_path,
-        custom_relays,
-        use_default_relays,
-        use_pin,
-    )
-    .await
-    {
+    match send_file_webrtc_internal(file_path, custom_relays, use_default_relays, use_pin).await {
         Ok(()) => Ok(()),
         Err(e) => {
             let path = file_path.to_path_buf();
@@ -585,13 +586,7 @@ pub async fn send_folder_webrtc(
     }
 
     // Try normal Nostr signaling path
-    match send_folder_webrtc_internal(
-        folder_path,
-        custom_relays,
-        use_default_relays,
-        use_pin,
-    )
-    .await
+    match send_folder_webrtc_internal(folder_path, custom_relays, use_default_relays, use_pin).await
     {
         Ok(()) => Ok(()),
         Err(e) => {

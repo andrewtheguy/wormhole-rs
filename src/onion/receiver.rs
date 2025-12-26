@@ -67,8 +67,7 @@ pub async fn receive_file_tor(code: &str, output_dir: Option<PathBuf>) -> Result
         );
     }
 
-    let key = decode_key(&token.key)
-        .context("Failed to decode encryption key")?;
+    let key = decode_key(&token.key).context("Failed to decode encryption key")?;
 
     let onion_addr = token
         .onion_address
@@ -195,7 +194,9 @@ pub async fn receive_file_tor(code: &str, output_dir: Option<PathBuf>) -> Result
     }
 
     // Get output directory from path for temp file
-    let output_dir_for_temp = final_output_path.parent().unwrap_or(std::path::Path::new("."));
+    let output_dir_for_temp = final_output_path
+        .parent()
+        .unwrap_or(std::path::Path::new("."));
 
     // Create temp file in same directory
     let temp_file =

@@ -21,16 +21,16 @@ use crate::core::folder::{
     extract_tar_archive, get_extraction_dir, print_skipped_entries, print_tar_extraction_info,
 };
 
-use crate::signaling::nostr::{create_receiver_signaling, NostrSignaling, SignalingMessage};
 use crate::core::transfer::{
     find_available_filename, format_bytes, make_webrtc_abort_msg, make_webrtc_ack_msg,
     make_webrtc_proceed_msg, num_chunks, parse_webrtc_control_msg, prompt_file_exists,
     ControlSignal, FileExistsChoice, FileHeader, TransferType,
 };
+use crate::signaling::nostr::{create_receiver_signaling, NostrSignaling, SignalingMessage};
 
-use crate::webrtc::common::{setup_data_channel_handlers, WebRtcPeer};
-use crate::signaling::offline::ice_candidates_to_payloads;
 use crate::core::wormhole::{decode_key, parse_code, PROTOCOL_WEBRTC};
+use crate::signaling::offline::ice_candidates_to_payloads;
+use crate::webrtc::common::{setup_data_channel_handlers, WebRtcPeer};
 
 /// Connection timeout for WebRTC handshake
 const WEBRTC_CONNECTION_TIMEOUT: Duration = Duration::from_secs(30);
@@ -163,14 +163,17 @@ async fn try_webrtc_receive(
                     eprintln!("Received answer from sender");
                     let answer_sdp = RTCSessionDescription::answer(sdp.sdp)
                         .context("Failed to create answer SDP");
-                    
+
                     // Set remote description first
                     match answer_sdp {
                         Ok(sdp) => {
-                             if let Err(e) = rtc_peer.set_remote_description(sdp).await {
-                                 break Err(anyhow::anyhow!("Failed to set remote description: {}", e));
-                             }
-                        },
+                            if let Err(e) = rtc_peer.set_remote_description(sdp).await {
+                                break Err(anyhow::anyhow!(
+                                    "Failed to set remote description: {}",
+                                    e
+                                ));
+                            }
+                        }
                         Err(e) => break Err(e),
                     }
 
@@ -184,10 +187,13 @@ async fn try_webrtc_receive(
                             sdp_mline_index: candidate.sdp_m_line_index,
                             username_fragment: None,
                         };
-                         if let Err(e) = rtc_peer.add_ice_candidate(candidate_init).await {
-                             candidate_error = Some(anyhow::anyhow!("Failed to add bundled ICE candidate: {}", e));
-                             break;
-                         }
+                        if let Err(e) = rtc_peer.add_ice_candidate(candidate_init).await {
+                            candidate_error = Some(anyhow::anyhow!(
+                                "Failed to add bundled ICE candidate: {}",
+                                e
+                            ));
+                            break;
+                        }
                     }
 
                     if let Some(err) = candidate_error {
@@ -226,8 +232,6 @@ async fn try_webrtc_receive(
             )));
         }
     }
-
-
 
     // Take data channel receiver from peer
     let mut data_channel_rx = rtc_peer
@@ -366,7 +370,14 @@ async fn try_webrtc_receive(
     // Dispatch based on transfer type
     match header.transfer_type {
         TransferType::File => {
-            receive_file_impl(&mut message_rx, &header, key, final_output_path, &data_channel).await?;
+            receive_file_impl(
+                &mut message_rx,
+                &header,
+                key,
+                final_output_path,
+                &data_channel,
+            )
+            .await?;
         }
         TransferType::Folder => {
             receive_folder_impl(message_rx, &header, key, Some(output_dir), &data_channel).await?;
@@ -380,8 +391,6 @@ async fn try_webrtc_receive(
 
     Ok(WebRtcResult::Success)
 }
-
-
 
 /// Receive a file or folder via webrtc transport
 pub async fn receive_webrtc(code: &str, output_dir: Option<PathBuf>) -> Result<()> {
@@ -410,8 +419,7 @@ pub async fn receive_webrtc(code: &str, output_dir: Option<PathBuf>) -> Result<(
     let key_str = Some(token.key.as_str())
         .filter(|s| !s.is_empty())
         .context("Missing encryption key in wormhole code")?;
-    let key = decode_key(key_str)
-        .context("Failed to decode encryption key")?;
+    let key = decode_key(key_str).context("Failed to decode encryption key")?;
 
     // Parse sender public key
     let sender_pubkey: nostr_sdk::PublicKey = sender_pubkey_hex
@@ -596,18 +604,17 @@ async fn receive_folder_impl(
 
     // Extract tar archive in a blocking task
     let extract_dir_clone = extract_dir.clone();
-    
+
     // We need to keep the reader alive for ACK sending if we wanted to drain it,
     // but here we just want to extract. We can't easily return the reader from spawn_blocking
     // and use it back in async context effectively if it consumed the receiver.
     // Actually, WebRtcStreamingReader owns the receiver.
     // If extraction finishes successfully, we assume transfer is done.
-    
-    let skipped_entries = tokio::task::spawn_blocking(move || {
-        extract_tar_archive(reader, &extract_dir_clone)
-    })
-    .await
-    .context("Extraction task panicked")??;
+
+    let skipped_entries =
+        tokio::task::spawn_blocking(move || extract_tar_archive(reader, &extract_dir_clone))
+            .await
+            .context("Extraction task panicked")??;
 
     // Report skipped entries
     print_skipped_entries(&skipped_entries);
@@ -663,14 +670,15 @@ impl std::io::Read for WebRtcStreamingReader {
         // Use a loop instead of recursion to avoid stack overflow on many non-chunk messages
         while self.buffer_pos >= self.buffer.len() && self.bytes_remaining > 0 {
             // Block on async receive
-            let msg_result = self.runtime_handle.block_on(async {
-                timeout(Duration::from_secs(30), self.receiver.recv()).await
-            });
+            let msg_result = self
+                .runtime_handle
+                .block_on(async { timeout(Duration::from_secs(30), self.receiver.recv()).await });
 
             match msg_result {
                 Ok(Some(msg)) => {
                     if msg.is_empty() {
-                        return Ok(0);
+                        // Skip empty messages, continue waiting for next
+                        continue;
                     }
 
                     // Parse message

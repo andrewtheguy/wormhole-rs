@@ -50,7 +50,11 @@ where
     // Send: transfer_id_len (2 bytes BE) + transfer_id + spake2_msg (33 bytes)
     let transfer_id_bytes = transfer_id.as_bytes();
     if transfer_id_bytes.len() > u16::MAX as usize {
-        anyhow::bail!("Transfer ID too long: {} bytes (max: {})", transfer_id_bytes.len(), u16::MAX);
+        anyhow::bail!(
+            "Transfer ID too long: {} bytes (max: {})",
+            transfer_id_bytes.len(),
+            u16::MAX
+        );
     }
     let mut msg = Vec::with_capacity(2 + transfer_id_bytes.len() + SPAKE2_MSG_LEN);
     msg.extend_from_slice(&(transfer_id_bytes.len() as u16).to_be_bytes());
@@ -126,8 +130,7 @@ where
         .read_exact(&mut transfer_id_buf)
         .await
         .context("Failed to read transfer ID")?;
-    let transfer_id =
-        String::from_utf8(transfer_id_buf).context("Invalid transfer ID encoding")?;
+    let transfer_id = String::from_utf8(transfer_id_buf).context("Invalid transfer ID encoding")?;
 
     // Validate transfer ID
     if transfer_id != expected_transfer_id {
@@ -180,13 +183,15 @@ mod tests {
         let pin = "test-pin-1234";
         let transfer_id = "abc123def456";
 
-        let client_handle = tokio::spawn(async move {
-            handshake_as_initiator(&mut client, pin, transfer_id).await
-        });
+        let client_handle =
+            tokio::spawn(
+                async move { handshake_as_initiator(&mut client, pin, transfer_id).await },
+            );
 
-        let server_handle = tokio::spawn(async move {
-            handshake_as_responder(&mut server, pin, transfer_id).await
-        });
+        let server_handle =
+            tokio::spawn(
+                async move { handshake_as_responder(&mut server, pin, transfer_id).await },
+            );
 
         let (client_result, server_result) = tokio::join!(client_handle, server_handle);
         let client_key = client_result.unwrap().unwrap();
@@ -202,13 +207,15 @@ mod tests {
         let (mut client, mut server) = duplex(1024);
         let transfer_id = "abc123def456";
 
-        let client_handle = tokio::spawn(async move {
-            handshake_as_initiator(&mut client, "pin1", transfer_id).await
-        });
+        let client_handle =
+            tokio::spawn(
+                async move { handshake_as_initiator(&mut client, "pin1", transfer_id).await },
+            );
 
-        let server_handle = tokio::spawn(async move {
-            handshake_as_responder(&mut server, "pin2", transfer_id).await
-        });
+        let server_handle =
+            tokio::spawn(
+                async move { handshake_as_responder(&mut server, "pin2", transfer_id).await },
+            );
 
         let (client_result, server_result) = tokio::join!(client_handle, server_handle);
         let client_key = client_result.unwrap().unwrap();
@@ -224,13 +231,15 @@ mod tests {
         let (mut client, mut server) = duplex(1024);
         let pin = "same-pin";
 
-        let client_handle = tokio::spawn(async move {
-            handshake_as_initiator(&mut client, pin, "transfer-1").await
-        });
+        let client_handle =
+            tokio::spawn(
+                async move { handshake_as_initiator(&mut client, pin, "transfer-1").await },
+            );
 
-        let server_handle = tokio::spawn(async move {
-            handshake_as_responder(&mut server, pin, "transfer-2").await
-        });
+        let server_handle =
+            tokio::spawn(
+                async move { handshake_as_responder(&mut server, pin, "transfer-2").await },
+            );
 
         let (client_result, server_result) = tokio::join!(client_handle, server_handle);
 

@@ -19,17 +19,17 @@ use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
+use crate::auth::spake2::handshake_as_initiator;
 use crate::core::folder::{
     extract_tar_archive_returning_reader, get_extraction_dir, print_skipped_entries,
     print_tar_extraction_info, StreamingReader,
 };
-use crate::mdns::common::{
-    MdnsServiceInfo, SERVICE_TYPE, TXT_FILENAME, TXT_FILE_SIZE, TXT_TRANSFER_ID, TXT_TRANSFER_TYPE,
-};
-use crate::auth::spake2::handshake_as_initiator;
 use crate::core::transfer::{
     find_available_filename, format_bytes, num_chunks, prompt_file_exists, recv_encrypted_chunk,
     recv_encrypted_header, send_abort, send_ack, send_proceed, FileExistsChoice, TransferType,
+};
+use crate::mdns::common::{
+    MdnsServiceInfo, SERVICE_TYPE, TXT_FILENAME, TXT_FILE_SIZE, TXT_TRANSFER_ID, TXT_TRANSFER_TYPE,
 };
 
 /// Timeout for mDNS browsing (seconds)
@@ -100,7 +100,11 @@ pub async fn receive_mdns(output_dir: Option<PathBuf>) -> Result<()> {
                         .unwrap_or_else(|| "file".to_string());
 
                     // Filter and deduplicate addresses: prefer IPv4 and non-link-local IPv6
-                    let all_addrs: Vec<IpAddr> = info.get_addresses().iter().map(|s| s.to_ip_addr()).collect();
+                    let all_addrs: Vec<IpAddr> = info
+                        .get_addresses()
+                        .iter()
+                        .map(|s| s.to_ip_addr())
+                        .collect();
                     let filtered: HashSet<IpAddr> = all_addrs
                         .into_iter()
                         .filter(|addr| match addr {
@@ -126,7 +130,8 @@ pub async fn receive_mdns(output_dir: Option<PathBuf>) -> Result<()> {
 
                         // Merge addresses with existing if already known
                         let final_addresses = if let Some(existing) = services.get(&transfer_id) {
-                            let mut merged: HashSet<IpAddr> = existing.addresses.iter().cloned().collect();
+                            let mut merged: HashSet<IpAddr> =
+                                existing.addresses.iter().cloned().collect();
                             merged.extend(service_info.addresses.iter().cloned());
                             merged.into_iter().collect()
                         } else {
@@ -139,11 +144,22 @@ pub async fn receive_mdns(output_dir: Option<PathBuf>) -> Result<()> {
                         };
 
                         if is_new {
-                            let addrs: Vec<_> = service_info.addresses.iter().map(|a| a.to_string()).collect();
-                            let addr_str = if addrs.is_empty() { "discovering...".to_string() } else { addrs.join(", ") };
+                            let addrs: Vec<_> = service_info
+                                .addresses
+                                .iter()
+                                .map(|a| a.to_string())
+                                .collect();
+                            let addr_str = if addrs.is_empty() {
+                                "discovering...".to_string()
+                            } else {
+                                addrs.join(", ")
+                            };
                             // For folders, show the original folder name (strip .tar extension)
                             let display_name = if service_info.transfer_type == "folder" {
-                                service_info.filename.strip_suffix(".tar").unwrap_or(&service_info.filename)
+                                service_info
+                                    .filename
+                                    .strip_suffix(".tar")
+                                    .unwrap_or(&service_info.filename)
                             } else {
                                 &service_info.filename
                             };
@@ -185,10 +201,17 @@ pub async fn receive_mdns(output_dir: Option<PathBuf>) -> Result<()> {
     let service_list: Vec<_> = services.values().collect();
     for (i, service) in service_list.iter().enumerate() {
         let addrs: Vec<_> = service.addresses.iter().map(|a| a.to_string()).collect();
-        let addr_str = if addrs.is_empty() { "no routable addr".to_string() } else { addrs.join(", ") };
+        let addr_str = if addrs.is_empty() {
+            "no routable addr".to_string()
+        } else {
+            addrs.join(", ")
+        };
         // For folders, show the original folder name (strip .tar extension)
         let display_name = if service.transfer_type == "folder" {
-            service.filename.strip_suffix(".tar").unwrap_or(&service.filename)
+            service
+                .filename
+                .strip_suffix(".tar")
+                .unwrap_or(&service.filename)
         } else {
             &service.filename
         };
@@ -317,8 +340,14 @@ async fn receive_data_over_tcp(
         }
         TransferType::Folder => {
             // Folder impl takes ownership and returns stream after extraction
-            receive_folder_impl(stream, &header.filename, header.file_size, key, Some(output_dir))
-                .await?
+            receive_folder_impl(
+                stream,
+                &header.filename,
+                header.file_size,
+                key,
+                Some(output_dir),
+            )
+            .await?
         }
     };
 
@@ -343,10 +372,7 @@ async fn receive_file_impl(
     let output_dir = output_path.parent().unwrap_or(std::path::Path::new("."));
 
     // Create temp file path with unique suffix
-    let temp_path = output_dir.join(format!(
-        ".wormhole-{}.tmp",
-        std::process::id()
-    ));
+    let temp_path = output_dir.join(format!(".wormhole-{}.tmp", std::process::id()));
 
     // Create async temp file
     let mut temp_file = File::create(&temp_path)
@@ -440,7 +466,10 @@ async fn receive_folder_impl(
     print_tar_extraction_info();
 
     let total_chunks = num_chunks(file_size);
-    println!("Receiving {} chunks (streaming to extractor)...", total_chunks);
+    println!(
+        "Receiving {} chunks (streaming to extractor)...",
+        total_chunks
+    );
 
     // Get runtime handle for blocking in StreamingReader
     let runtime_handle = tokio::runtime::Handle::current();
@@ -487,7 +516,10 @@ fn prompt_selection(max: usize) -> Result<Option<usize>> {
                 return Ok(Some(selection - 1));
             }
             _ => {
-                println!("Invalid selection. Please enter a number between 1 and {}, or 'q' to quit.", max);
+                println!(
+                    "Invalid selection. Please enter a number between 1 and {}, or 'q' to quit.",
+                    max
+                );
             }
         }
     }

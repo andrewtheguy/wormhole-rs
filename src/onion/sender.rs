@@ -10,12 +10,11 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tor_cell::relaycell::msg::Connected;
 use tor_hsservice::{config::OnionServiceConfigBuilder, handle_rend_requests};
 
-use crate::core::crypto::{generate_key, CHUNK_SIZE};
 use crate::cli::instructions::print_receiver_command;
+use crate::core::crypto::{generate_key, CHUNK_SIZE};
 use crate::core::transfer::{
-    format_bytes, num_chunks, prepare_file_for_send, prepare_folder_for_send,
-    recv_control, send_encrypted_chunk, send_encrypted_header, ControlSignal,
-    FileHeader, TransferType,
+    format_bytes, num_chunks, prepare_file_for_send, prepare_folder_for_send, recv_control,
+    send_encrypted_chunk, send_encrypted_header, ControlSignal, FileHeader, TransferType,
 };
 use crate::core::wormhole::generate_tor_code;
 
@@ -82,7 +81,8 @@ async fn transfer_data_tor_internal(
             &keys,
             &code,
             "tor-transfer", // Transfer id not critical for tor bootstrap, just needs to be non-empty
-        ).await?;
+        )
+        .await?;
 
         println!("🔢 PIN: {}\n", pin);
         println!("Then enter the PIN above when prompted.\n");
@@ -133,7 +133,10 @@ async fn transfer_data_tor_internal(
         eprintln!("Sending {} chunks...", total_chunks);
 
         loop {
-            let bytes_read = file.read(&mut buffer).await.context("Failed to read data")?;
+            let bytes_read = file
+                .read(&mut buffer)
+                .await
+                .context("Failed to read data")?;
             if bytes_read == 0 {
                 break;
             }
