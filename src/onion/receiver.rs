@@ -172,6 +172,7 @@ pub async fn receive_file_tor(code: &str, output_dir: Option<PathBuf>) -> Result
                         .write_all(ABORT_SIGNAL)
                         .await
                         .context("Failed to send abort signal")?;
+                    stream.flush().await.context("Failed to flush abort signal")?;
                     anyhow::bail!("Transfer cancelled by user");
                 }
             }
@@ -188,6 +189,7 @@ pub async fn receive_file_tor(code: &str, output_dir: Option<PathBuf>) -> Result
         .write_all(PROCEED_SIGNAL)
         .await
         .context("Failed to send proceed signal")?;
+    stream.flush().await.context("Failed to flush proceed signal")?;
     eprintln!("Ready to receive data...");
 
     // Check transfer type
