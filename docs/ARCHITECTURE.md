@@ -79,6 +79,44 @@ sequenceDiagram
     Receiver->>Sender: 3. Send ACK
 ```
 
+#### iroh Mode (QUIC / Direct + Relay)
+
+iroh uses a "hole punching" strategy that attempts direct connections via UDP/QUIC while simultaneously establishing a fallback path through a Relay (DERP) server.
+
+```mermaid
+sequenceDiagram
+    participant Sender
+    participant Discovery as DNS / mDNS
+    participant Relay as iroh Relay
+    participant Receiver
+
+    Sender->>Sender: 1. Create iroh Node (Random NodeID)
+    Sender->>Relay: 2. Connect to Home Relay
+    Sender->>Discovery: 3. Publish NodeAddr (Direct IP + Relay URL)
+    
+    Sender->>Sender: 4. Generate wormhole code
+    Note over Sender: Code = base64(AES_key + NodeAddr)
+
+    Receiver->>Receiver: 5. Parse Code -> NodeAddr
+    Receiver->>Relay: 6. Connect to Relay
+    
+    par Connection Attempts
+        Receiver->>Relay: A. Dial via Relay (Guaranteed)
+        Receiver->>Sender: B. Dial Direct UDP (Optimization)
+    end
+    
+    Note over Sender,Receiver: iroh selects best path (Direct > Relay)
+    
+    Sender->>Receiver: 7. Handshake (ALPN "wormhole-transfer/1")
+    Sender->>Receiver: 8. Send Encrypted Header (AES-256-GCM)
+    
+    loop 16KB chunks
+        Sender->>Receiver: Send Encrypted Chunk (QUIC Stream)
+    end
+
+    Receiver->>Sender: 9. Send ACK
+```
+
 #### Manual Signaling (Copy/Paste, Offline-Friendly)
 
 Used when relays are blocked or unavailable (`--manual-signaling`). Signaling blobs are base64url-encoded JSON with CRC32 checksums; they expire under the same TTL checks as wormhole codes.
@@ -165,11 +203,12 @@ sequenceDiagram
 
 ### iroh Mode (`wormhole-rs send-iroh`)
 - **Transport**: QUIC / TLS 1.3
-- **Discovery**: iroh's global discovery (DNS/pkarr) + mDNS for local network
-- **Relay**: iroh DERP relays - automatically used if direct P2P connection fails
-  - Default: Uses iroh's public relay
-  - Custom: Use `--relay-url` for self-hosted DERP relays (supports multiple for failover)
-- **Encryption**: Always AES-256-GCM encrypted at the application layer, plus QUIC/TLS.
+- **Discovery**: iroh's global discovery (n0 DNS / pkarr) + mDNS for local network.
+- **Relay**: iroh relays (DERP) - automatically used if direct P2P connection fails.
+- **Failover**: Uses multiple relays for redundancy; monitors latency to select the best path.
+- **Connection**: "Hole punching" attempts to establish a direct UDP connection; falls back to relay if NATs are strict.
+- **Protocol**: ALPN `wormhole-transfer/1`.
+- **Encryption**: Always AES-256-GCM encrypted at the application layer, plus QUIC/TLS encryption.
 
 ### Local Mode (`wormhole-rs send-local`)
 - **Transport**: Raw TCP
