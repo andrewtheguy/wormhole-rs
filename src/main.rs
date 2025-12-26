@@ -267,6 +267,15 @@ async fn main() -> Result<()> {
             .add_directive("tor_hsclient=warn".parse().unwrap())
             .add_directive("tor_rtcompat=warn".parse().unwrap())
             .add_directive("tor_persist=off".parse().unwrap()) // Suppress state persistence errors
+            // Suppress noisy webrtc internal logs
+            .add_directive("webrtc=error".parse().unwrap())
+            .add_directive("webrtc_ice=error".parse().unwrap())
+            .add_directive("webrtc_srtp=off".parse().unwrap()) // Suppress SRTP close warnings
+            .add_directive("webrtc_sctp=error".parse().unwrap())
+            .add_directive("ice=error".parse().unwrap())
+            .add_directive("stun=error".parse().unwrap())
+            .add_directive("turn=error".parse().unwrap())
+            .add_directive("dtls=error".parse().unwrap())
     });
 
     tracing_subscriber::fmt()
