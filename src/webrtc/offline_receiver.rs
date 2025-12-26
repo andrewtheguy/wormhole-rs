@@ -19,8 +19,9 @@ use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 use crate::core::crypto::decrypt_chunk;
 use crate::core::folder::{extract_tar_archive, print_tar_extraction_info};
 use crate::core::transfer::{
-    find_available_filename, format_bytes, num_chunks, prompt_file_exists, FileExistsChoice,
-    FileHeader, TransferType,
+    find_available_filename, format_bytes, make_webrtc_abort_msg, make_webrtc_ack_msg,
+    make_webrtc_proceed_msg, num_chunks, prompt_file_exists, FileExistsChoice, FileHeader,
+    TransferType,
 };
 use crate::webrtc::common::{setup_data_channel_handlers, WebRtcPeer};
 use crate::signaling::offline::{
@@ -269,8 +270,8 @@ pub async fn receive_file_offline(output_dir: Option<PathBuf>) -> Result<()> {
                     new_path
                 }
                 FileExistsChoice::Cancel => {
-                    // Send ABORT signal to sender (message type 5)
-                    let abort_msg = vec![5u8];
+                    // Send encrypted ABORT signal to sender
+                    let abort_msg = make_webrtc_abort_msg(&key)?;
                     data_channel
                         .send(&Bytes::from(abort_msg))
                         .await
@@ -286,8 +287,8 @@ pub async fn receive_file_offline(output_dir: Option<PathBuf>) -> Result<()> {
         output_dir.clone()
     };
 
-    // Send PROCEED signal to sender (message type 4)
-    let proceed_msg = vec![4u8];
+    // Send encrypted PROCEED signal to sender
+    let proceed_msg = make_webrtc_proceed_msg(&key)?;
     data_channel
         .send(&Bytes::from(proceed_msg))
         .await
@@ -403,8 +404,8 @@ async fn receive_file_impl(
     eprintln!("\nFile received successfully!");
     eprintln!("Saved to: {}", output_path.display());
 
-    // Send ACK
-    let ack_msg = vec![3u8]; // Message type: ACK
+    // Send encrypted ACK
+    let ack_msg = make_webrtc_ack_msg(key)?;
     data_channel
         .send(&Bytes::from(ack_msg))
         .await
@@ -578,8 +579,8 @@ async fn receive_folder_impl(
     eprintln!("\nFolder received successfully!");
     eprintln!("Extracted to: {}", extract_dir.display());
 
-    // Send ACK
-    let ack_msg = vec![3u8];
+    // Send encrypted ACK
+    let ack_msg = make_webrtc_ack_msg(key)?;
     data_channel
         .send(&Bytes::from(ack_msg))
         .await

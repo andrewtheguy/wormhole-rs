@@ -11,6 +11,7 @@ use std::net::TcpListener;
 use std::path::Path;
 use std::sync::Arc;
 use tokio::fs::File;
+use tokio::io::AsyncReadExt;
 use tokio::net::TcpStream;
 use tokio::sync::Mutex;
 
@@ -23,8 +24,8 @@ use crate::mdns::common::{
 use crate::auth::spake2::handshake_as_responder;
 use crate::core::transfer::{
     format_bytes, num_chunks, prepare_file_for_send, prepare_folder_for_send,
-    send_encrypted_chunk, send_encrypted_header, FileHeader, TransferType,
-    ABORT_SIGNAL, PROCEED_SIGNAL,
+    recv_control, send_encrypted_chunk, send_encrypted_header, ControlSignal,
+    FileHeader, TransferType,
 };
 
 /// Display receiver instructions and PIN to the user.
@@ -251,22 +252,18 @@ async fn send_data_over_tcp(
 
     // Wait for receiver confirmation before sending data
     eprintln!("Waiting for receiver to confirm...");
-    let mut confirm_buf = [0u8; 7];
-    stream
-        .read_exact(&mut confirm_buf)
-        .await
-        .context("Failed to receive confirmation from receiver")?;
-
-    if confirm_buf[..5] == ABORT_SIGNAL[..5] {
-        eprintln!("Receiver declined transfer");
-        anyhow::bail!("Transfer cancelled by receiver");
+    match recv_control(&mut stream, key).await? {
+        ControlSignal::Proceed => {
+            eprintln!("Receiver ready, starting transfer...");
+        }
+        ControlSignal::Abort => {
+            eprintln!("Receiver declined transfer");
+            anyhow::bail!("Transfer cancelled by receiver");
+        }
+        ControlSignal::Ack => {
+            anyhow::bail!("Unexpected ACK signal during confirmation");
+        }
     }
-
-    if confirm_buf != *PROCEED_SIGNAL {
-        anyhow::bail!("Invalid confirmation signal from receiver");
-    }
-
-    eprintln!("Receiver ready, starting transfer...");
 
     // Send chunks
     let total_chunks = num_chunks(file_size);
@@ -309,23 +306,22 @@ async fn send_data_over_tcp(
 
     eprintln!("\nAll data sent!");
 
-    // Wait for ACK with timeout (same as handshake timeout)
+    // Wait for encrypted ACK with timeout (same as handshake timeout)
     eprintln!("Waiting for receiver confirmation...");
-    let mut ack_buf = [0u8; 3];
-    use tokio::io::AsyncReadExt;
     use tokio::time::timeout;
 
     let ack_result = timeout(
         std::time::Duration::from_secs(10),
-        stream.read_exact(&mut ack_buf),
+        recv_control(&mut stream, key),
     )
     .await;
 
     match ack_result {
+        Ok(Ok(ControlSignal::Ack)) => {
+            eprintln!("Receiver confirmed!");
+        }
         Ok(Ok(_)) => {
-            if &ack_buf != b"ACK" {
-                anyhow::bail!("Invalid acknowledgment from receiver");
-            }
+            anyhow::bail!("Unexpected control signal, expected ACK");
         }
         Ok(Err(e)) => {
             return Err(e).context("Failed to receive ACK from receiver");
@@ -335,7 +331,6 @@ async fn send_data_over_tcp(
         }
     }
 
-    eprintln!("Receiver confirmed!");
     Ok(())
 }
 

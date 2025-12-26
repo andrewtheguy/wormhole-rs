@@ -13,7 +13,7 @@ use crate::core::folder::{
 };
 use crate::core::transfer::{
     find_available_filename, format_bytes, num_chunks, prompt_file_exists, recv_encrypted_chunk,
-    recv_encrypted_header, FileExistsChoice, TransferType, ABORT_SIGNAL, PROCEED_SIGNAL,
+    recv_encrypted_header, send_abort, send_ack, send_proceed, FileExistsChoice, TransferType,
 };
 use crate::core::wormhole::{decode_key, parse_code, PROTOCOL_TOR};
 
@@ -167,12 +167,10 @@ pub async fn receive_file_tor(code: &str, output_dir: Option<PathBuf>) -> Result
                     new_path
                 }
                 FileExistsChoice::Cancel => {
-                    // Send ABORT signal to sender
-                    stream
-                        .write_all(ABORT_SIGNAL)
+                    // Send encrypted ABORT signal to sender
+                    send_abort(&mut stream, &key)
                         .await
                         .context("Failed to send abort signal")?;
-                    stream.flush().await.context("Failed to flush abort signal")?;
                     anyhow::bail!("Transfer cancelled by user");
                 }
             }
@@ -184,12 +182,10 @@ pub async fn receive_file_tor(code: &str, output_dir: Option<PathBuf>) -> Result
         output_dir.clone()
     };
 
-    // Send confirmation to sender that we're ready to receive data
-    stream
-        .write_all(PROCEED_SIGNAL)
+    // Send encrypted confirmation to sender that we're ready to receive data
+    send_proceed(&mut stream, &key)
         .await
         .context("Failed to send proceed signal")?;
-    stream.flush().await.context("Failed to flush proceed signal")?;
     eprintln!("Ready to receive data...");
 
     // Check transfer type
@@ -285,12 +281,10 @@ pub async fn receive_file_tor(code: &str, output_dir: Option<PathBuf>) -> Result
     eprintln!("\nFile received successfully!");
     eprintln!("Saved to: {}", final_output_path.display());
 
-    // Send ACK
-    stream
-        .write_all(b"ACK")
+    // Send encrypted ACK
+    send_ack(&mut stream, &key)
         .await
         .context("Failed to send acknowledgment")?;
-    stream.flush().await.context("Failed to flush stream")?;
 
     eprintln!("Connection closed.");
 
@@ -338,10 +332,9 @@ async fn receive_folder_stream<S: AsyncReadExt + AsyncWriteExt + Unpin + Send + 
     eprintln!("\nFolder received successfully!");
     eprintln!("Extracted to: {}", extract_dir.display());
 
-    // Get the underlying stream back and send explicit ACK (consistent with file transfers)
+    // Get the underlying stream back and send encrypted ACK (consistent with file transfers)
     let mut stream = streaming_reader.into_inner();
-    stream
-        .write_all(b"ACK")
+    send_ack(&mut stream, &key)
         .await
         .context("Failed to send ACK")?;
 

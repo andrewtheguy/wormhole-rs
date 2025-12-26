@@ -13,7 +13,7 @@ use crate::core::folder::{
 use crate::iroh::common::{create_receiver_endpoint, ALPN};
 use crate::core::transfer::{
     find_available_filename, format_bytes, num_chunks, prompt_file_exists, recv_encrypted_chunk,
-    recv_encrypted_header, FileExistsChoice, TransferType, ABORT_SIGNAL, PROCEED_SIGNAL,
+    recv_encrypted_header, send_abort, send_ack, send_proceed, FileExistsChoice, TransferType,
 };
 use crate::core::wormhole::parse_code;
 
@@ -145,8 +145,7 @@ pub async fn receive(code: &str, output_dir: Option<PathBuf>, relay_urls: Vec<St
                 }
                 FileExistsChoice::Cancel => {
                     // Send ABORT signal to sender
-                    send_stream
-                        .write_all(ABORT_SIGNAL)
+                    send_abort(&mut send_stream, &key)
                         .await
                         .context("Failed to send abort signal")?;
                     anyhow::bail!("Transfer cancelled by user");
@@ -161,8 +160,7 @@ pub async fn receive(code: &str, output_dir: Option<PathBuf>, relay_urls: Vec<St
     };
 
     // Send confirmation to sender that we're ready to receive data
-    send_stream
-        .write_all(PROCEED_SIGNAL)
+    send_proceed(&mut send_stream, &key)
         .await
         .context("Failed to send proceed signal")?;
     eprintln!("Ready to receive data...");
@@ -190,8 +188,7 @@ pub async fn receive(code: &str, output_dir: Option<PathBuf>, relay_urls: Vec<St
     }
 
     // Send acknowledgment to sender
-    send_stream
-        .write_all(b"ACK")
+    send_ack(&mut send_stream, &key)
         .await
         .context("Failed to send acknowledgment")?;
     send_stream

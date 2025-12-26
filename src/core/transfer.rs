@@ -398,11 +398,187 @@ pub async fn prepare_folder_for_send(folder_path: &Path) -> Result<Option<Prepar
 // Confirmation handshake protocol (file exists check before data transfer)
 // ============================================================================
 
+// Legacy plaintext signals (kept for reference, use encrypted versions below)
 /// Signal sent by receiver to indicate transfer should proceed
 pub const PROCEED_SIGNAL: &[u8] = b"PROCEED";
-
 /// Signal sent by receiver to abort transfer (e.g., file exists and user declined)
 pub const ABORT_SIGNAL: &[u8] = b"ABORT\0\0"; // Padded to 7 bytes like PROCEED
+
+// Reserved chunk numbers for encrypted control messages
+// Using high u64 values that will never conflict with actual chunk numbers
+const CONTROL_CHUNK_PROCEED: u64 = u64::MAX;
+const CONTROL_CHUNK_ABORT: u64 = u64::MAX - 1;
+const CONTROL_CHUNK_ACK: u64 = u64::MAX - 2;
+
+/// Control signal types for encrypted handshake
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ControlSignal {
+    Proceed,
+    Abort,
+    Ack,
+}
+
+/// Send encrypted PROCEED signal
+pub async fn send_proceed<W: AsyncWriteExt + Unpin>(writer: &mut W, key: &[u8; 32]) -> Result<()> {
+    let encrypted = encrypt_chunk(key, CONTROL_CHUNK_PROCEED, b"PROCEED")?;
+    let len = encrypted.len() as u32;
+    writer.write_all(&len.to_be_bytes()).await?;
+    writer.write_all(&encrypted).await?;
+    writer.flush().await?;
+    Ok(())
+}
+
+/// Send encrypted ABORT signal
+pub async fn send_abort<W: AsyncWriteExt + Unpin>(writer: &mut W, key: &[u8; 32]) -> Result<()> {
+    let encrypted = encrypt_chunk(key, CONTROL_CHUNK_ABORT, b"ABORT")?;
+    let len = encrypted.len() as u32;
+    writer.write_all(&len.to_be_bytes()).await?;
+    writer.write_all(&encrypted).await?;
+    writer.flush().await?;
+    Ok(())
+}
+
+/// Send encrypted ACK signal
+pub async fn send_ack<W: AsyncWriteExt + Unpin>(writer: &mut W, key: &[u8; 32]) -> Result<()> {
+    let encrypted = encrypt_chunk(key, CONTROL_CHUNK_ACK, b"ACK")?;
+    let len = encrypted.len() as u32;
+    writer.write_all(&len.to_be_bytes()).await?;
+    writer.write_all(&encrypted).await?;
+    writer.flush().await?;
+    Ok(())
+}
+
+/// Receive and decrypt a control signal
+/// Tries to decrypt with each control chunk number to determine the signal type
+pub async fn recv_control<R: AsyncReadExt + Unpin>(
+    reader: &mut R,
+    key: &[u8; 32],
+) -> Result<ControlSignal> {
+    // Read length prefix
+    let mut len_buf = [0u8; 4];
+    reader
+        .read_exact(&mut len_buf)
+        .await
+        .context("Failed to read control signal length")?;
+    let len = u32::from_be_bytes(len_buf) as usize;
+
+    // Read encrypted data
+    let mut encrypted = vec![0u8; len];
+    reader
+        .read_exact(&mut encrypted)
+        .await
+        .context("Failed to read control signal data")?;
+
+    // Try decrypting with each control chunk number
+    if let Ok(data) = decrypt_chunk(key, CONTROL_CHUNK_PROCEED, &encrypted) {
+        if data == b"PROCEED" {
+            return Ok(ControlSignal::Proceed);
+        }
+    }
+    if let Ok(data) = decrypt_chunk(key, CONTROL_CHUNK_ABORT, &encrypted) {
+        if data == b"ABORT" {
+            return Ok(ControlSignal::Abort);
+        }
+    }
+    if let Ok(data) = decrypt_chunk(key, CONTROL_CHUNK_ACK, &encrypted) {
+        if data == b"ACK" {
+            return Ok(ControlSignal::Ack);
+        }
+    }
+
+    anyhow::bail!("Invalid or corrupted control signal")
+}
+
+// WebRTC-specific control message format: [type(1)][len(4)][encrypted]
+// Type: 3 = ACK, 4 = PROCEED, 5 = ABORT
+const WEBRTC_MSG_TYPE_ACK: u8 = 3;
+const WEBRTC_MSG_TYPE_PROCEED: u8 = 4;
+const WEBRTC_MSG_TYPE_ABORT: u8 = 5;
+
+/// Create encrypted PROCEED message for WebRTC data channel
+pub fn make_webrtc_proceed_msg(key: &[u8; 32]) -> Result<Vec<u8>> {
+    let encrypted = encrypt_chunk(key, CONTROL_CHUNK_PROCEED, b"PROCEED")?;
+    let mut msg = vec![WEBRTC_MSG_TYPE_PROCEED];
+    msg.extend_from_slice(&(encrypted.len() as u32).to_be_bytes());
+    msg.extend_from_slice(&encrypted);
+    Ok(msg)
+}
+
+/// Create encrypted ABORT message for WebRTC data channel
+pub fn make_webrtc_abort_msg(key: &[u8; 32]) -> Result<Vec<u8>> {
+    let encrypted = encrypt_chunk(key, CONTROL_CHUNK_ABORT, b"ABORT")?;
+    let mut msg = vec![WEBRTC_MSG_TYPE_ABORT];
+    msg.extend_from_slice(&(encrypted.len() as u32).to_be_bytes());
+    msg.extend_from_slice(&encrypted);
+    Ok(msg)
+}
+
+/// Create encrypted ACK message for WebRTC data channel
+pub fn make_webrtc_ack_msg(key: &[u8; 32]) -> Result<Vec<u8>> {
+    let encrypted = encrypt_chunk(key, CONTROL_CHUNK_ACK, b"ACK")?;
+    let mut msg = vec![WEBRTC_MSG_TYPE_ACK];
+    msg.extend_from_slice(&(encrypted.len() as u32).to_be_bytes());
+    msg.extend_from_slice(&encrypted);
+    Ok(msg)
+}
+
+/// Parse encrypted control message from WebRTC data channel
+/// Returns Some(signal) if the message type matches a control signal and decryption succeeds
+/// Returns None if the message type is not a control signal
+/// Returns Err if the message is malformed or decryption fails
+pub fn parse_webrtc_control_msg(data: &[u8], key: &[u8; 32]) -> Result<Option<ControlSignal>> {
+    if data.is_empty() {
+        return Ok(None);
+    }
+
+    let msg_type = data[0];
+
+    // Check if it's a control message type
+    if msg_type != WEBRTC_MSG_TYPE_ACK
+        && msg_type != WEBRTC_MSG_TYPE_PROCEED
+        && msg_type != WEBRTC_MSG_TYPE_ABORT
+    {
+        return Ok(None); // Not a control message
+    }
+
+    // Parse message: [type(1)][len(4)][encrypted]
+    if data.len() < 5 {
+        anyhow::bail!("Control message too short");
+    }
+
+    let encrypted_len = u32::from_be_bytes([data[1], data[2], data[3], data[4]]) as usize;
+    if data.len() < 5 + encrypted_len {
+        anyhow::bail!("Control message truncated");
+    }
+
+    let encrypted = &data[5..5 + encrypted_len];
+
+    // Decrypt based on message type
+    match msg_type {
+        WEBRTC_MSG_TYPE_PROCEED => {
+            let decrypted = decrypt_chunk(key, CONTROL_CHUNK_PROCEED, encrypted)?;
+            if decrypted != b"PROCEED" {
+                anyhow::bail!("Invalid PROCEED payload");
+            }
+            Ok(Some(ControlSignal::Proceed))
+        }
+        WEBRTC_MSG_TYPE_ABORT => {
+            let decrypted = decrypt_chunk(key, CONTROL_CHUNK_ABORT, encrypted)?;
+            if decrypted != b"ABORT" {
+                anyhow::bail!("Invalid ABORT payload");
+            }
+            Ok(Some(ControlSignal::Abort))
+        }
+        WEBRTC_MSG_TYPE_ACK => {
+            let decrypted = decrypt_chunk(key, CONTROL_CHUNK_ACK, encrypted)?;
+            if decrypted != b"ACK" {
+                anyhow::bail!("Invalid ACK payload");
+            }
+            Ok(Some(ControlSignal::Ack))
+        }
+        _ => Ok(None), // Not reached due to earlier check
+    }
+}
 
 /// User's choice when file already exists
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

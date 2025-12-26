@@ -14,8 +14,8 @@ use crate::core::crypto::{generate_key, CHUNK_SIZE};
 use crate::cli::instructions::print_receiver_command;
 use crate::core::transfer::{
     format_bytes, num_chunks, prepare_file_for_send, prepare_folder_for_send,
-    send_encrypted_chunk, send_encrypted_header, FileHeader, TransferType,
-    ABORT_SIGNAL, PROCEED_SIGNAL,
+    recv_control, send_encrypted_chunk, send_encrypted_header, ControlSignal,
+    FileHeader, TransferType,
 };
 use crate::core::wormhole::generate_tor_code;
 
@@ -111,22 +111,18 @@ async fn transfer_data_tor_internal(
         // Wait for receiver confirmation before sending data
         // This allows receiver to check if file exists and prompt user
         eprintln!("Waiting for receiver to confirm...");
-        let mut confirm_buf = [0u8; 7]; // "PROCEED" or "ABORT\0\0"
-        stream
-            .read_exact(&mut confirm_buf)
-            .await
-            .context("Failed to receive confirmation from receiver")?;
-
-        if confirm_buf[..5] == ABORT_SIGNAL[..5] {
-            eprintln!("Receiver declined transfer");
-            anyhow::bail!("Transfer cancelled by receiver");
+        match recv_control(&mut stream, &key).await? {
+            ControlSignal::Proceed => {
+                eprintln!("Receiver ready, starting transfer...");
+            }
+            ControlSignal::Abort => {
+                eprintln!("Receiver declined transfer");
+                anyhow::bail!("Transfer cancelled by receiver");
+            }
+            ControlSignal::Ack => {
+                anyhow::bail!("Unexpected ACK signal during confirmation");
+            }
         }
-
-        if confirm_buf != *PROCEED_SIGNAL {
-            anyhow::bail!("Invalid confirmation signal from receiver");
-        }
-
-        eprintln!("Receiver ready, starting transfer...");
 
         // Send chunks
         let total_chunks = num_chunks(file_size);
@@ -173,18 +169,17 @@ async fn transfer_data_tor_internal(
 
         // Wait for receiver ACK (best-effort, Tor streams may close abruptly)
         eprintln!("Waiting for receiver to confirm...");
-        let mut ack_buf = [0u8; 3];
         match tokio::time::timeout(
             std::time::Duration::from_secs(10),
-            stream.read_exact(&mut ack_buf),
+            recv_control(&mut stream, &key),
         )
         .await
         {
-            Ok(Ok(_)) if &ack_buf == b"ACK" => {
+            Ok(Ok(ControlSignal::Ack)) => {
                 eprintln!("Receiver confirmed!");
             }
             Ok(Ok(_)) => {
-                eprintln!("Received unexpected response (transfer likely succeeded)");
+                eprintln!("Received unexpected signal (transfer likely succeeded)");
             }
             Ok(Err(_)) | Err(_) => {
                 // Tor streams may close without proper END cell - this is normal

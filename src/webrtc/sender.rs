@@ -20,8 +20,8 @@ use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 use crate::core::crypto::{encrypt_chunk, generate_key, CHUNK_SIZE};
 use crate::signaling::nostr::{create_sender_signaling, NostrSignaling, SignalingMessage};
 use crate::core::transfer::{
-    format_bytes, num_chunks, prepare_file_for_send, prepare_folder_for_send, FileHeader,
-    TransferType,
+    format_bytes, num_chunks, parse_webrtc_control_msg, prepare_file_for_send,
+    prepare_folder_for_send, ControlSignal, FileHeader, TransferType,
 };
 use crate::webrtc::common::{setup_data_channel_handlers, WebRtcPeer};
 use crate::signaling::offline::ice_candidates_to_payloads;
@@ -288,16 +288,19 @@ async fn try_webrtc_transfer(
     // This allows receiver to check if file exists and prompt user
     println!("Waiting for receiver to confirm...");
 
+    let key_for_confirm = *key;
     let confirm_result = timeout(Duration::from_secs(120), async {
         loop {
             match message_rx.recv().await {
-                Some(data) if !data.is_empty() && data[0] == 4 => {
-                    return Ok(true); // Got PROCEED
+                Some(data) => {
+                    match parse_webrtc_control_msg(&data, &key_for_confirm) {
+                        Ok(Some(ControlSignal::Proceed)) => return Ok(true),
+                        Ok(Some(ControlSignal::Abort)) => return Ok::<bool, ()>(false),
+                        Ok(Some(ControlSignal::Ack)) => continue, // Unexpected, ignore
+                        Ok(None) => continue, // Not a control message
+                        Err(_) => continue,   // Parse error, ignore
+                    }
                 }
-                Some(data) if !data.is_empty() && data[0] == 5 => {
-                    return Ok::<bool, ()>(false); // Got ABORT
-                }
-                Some(_) => continue,
                 None => return Ok(false), // Channel closed
             }
         }
@@ -389,16 +392,20 @@ async fn try_webrtc_transfer(
     // Wrap close_rx in a Mutex so it can be used in async block
     let close_rx = Arc::new(Mutex::new(Some(close_rx)));
     let close_rx_clone = close_rx.clone();
+    let key_for_ack = *key;
 
     let ack_result: Result<bool, ()> = timeout(Duration::from_secs(10), async {
         loop {
             tokio::select! {
                 msg = message_rx.recv() => {
                     match msg {
-                        Some(data) if !data.is_empty() && data[0] == 3 => {
-                            return true; // Got explicit ACK
+                        Some(data) => {
+                            match parse_webrtc_control_msg(&data, &key_for_ack) {
+                                Ok(Some(ControlSignal::Ack)) => return true, // Got explicit ACK
+                                Ok(_) => continue,
+                                Err(_) => continue,
+                            }
                         }
-                        Some(_) => continue,
                         None => return false, // Channel closed
                     }
                 }

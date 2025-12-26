@@ -23,8 +23,9 @@ use crate::core::folder::{
 
 use crate::signaling::nostr::{create_receiver_signaling, NostrSignaling, SignalingMessage};
 use crate::core::transfer::{
-    find_available_filename, format_bytes, num_chunks, prompt_file_exists, FileExistsChoice,
-    FileHeader, TransferType,
+    find_available_filename, format_bytes, make_webrtc_abort_msg, make_webrtc_ack_msg,
+    make_webrtc_proceed_msg, num_chunks, prompt_file_exists, FileExistsChoice, FileHeader,
+    TransferType,
 };
 
 use crate::webrtc::common::{setup_data_channel_handlers, WebRtcPeer};
@@ -337,8 +338,8 @@ async fn try_webrtc_receive(
                     new_path
                 }
                 FileExistsChoice::Cancel => {
-                    // Send ABORT signal to sender (message type 5)
-                    let abort_msg = vec![5u8];
+                    // Send encrypted ABORT signal to sender
+                    let abort_msg = make_webrtc_abort_msg(key)?;
                     data_channel
                         .send(&Bytes::from(abort_msg))
                         .await
@@ -354,8 +355,8 @@ async fn try_webrtc_receive(
         output_dir.clone()
     };
 
-    // Send confirmation to sender that we're ready to receive data (message type 4)
-    let proceed_msg = vec![4u8];
+    // Send encrypted confirmation to sender that we're ready to receive data
+    let proceed_msg = make_webrtc_proceed_msg(key)?;
     data_channel
         .send(&Bytes::from(proceed_msg))
         .await
@@ -543,8 +544,8 @@ async fn receive_file_impl(
     eprintln!("\nFile received successfully!");
     eprintln!("Saved to: {}", output_path.display());
 
-    // Send ACK
-    let ack_msg = vec![3u8]; // Message type: ACK
+    // Send encrypted ACK
+    let ack_msg = make_webrtc_ack_msg(key)?;
     data_channel
         .send(&Bytes::from(ack_msg))
         .await
@@ -607,8 +608,8 @@ async fn receive_folder_impl(
     eprintln!("\nFolder received successfully!");
     eprintln!("Extracted to: {}", extract_dir.display());
 
-    // Send ACK
-    let ack_msg = vec![3u8]; // Message type: ACK
+    // Send encrypted ACK
+    let ack_msg = make_webrtc_ack_msg(key)?;
     data_channel
         .send(&Bytes::from(ack_msg))
         .await

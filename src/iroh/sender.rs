@@ -12,8 +12,8 @@ use crate::cli::instructions::print_receiver_command;
 use crate::iroh::common::{create_sender_endpoint};
 use crate::core::transfer::{
     format_bytes, num_chunks, prepare_file_for_send, prepare_folder_for_send,
-    send_encrypted_chunk, send_encrypted_header, FileHeader, TransferType,
-    ABORT_SIGNAL, PROCEED_SIGNAL,
+    recv_control, send_encrypted_chunk, send_encrypted_header, ControlSignal,
+    FileHeader, TransferType,
 };
 use crate::core::wormhole::generate_code;
 
@@ -120,24 +120,20 @@ async fn transfer_data_internal(
     // Wait for receiver confirmation before sending data
     // This allows receiver to check if file exists and prompt user
     eprintln!("Waiting for receiver to confirm...");
-    let mut confirm_buf = [0u8; 7]; // "PROCEED" or "ABORT\0\0"
-    recv_stream
-        .read_exact(&mut confirm_buf)
-        .await
-        .context("Failed to receive confirmation from receiver")?;
-
-    if confirm_buf[..5] == ABORT_SIGNAL[..5] {
-        eprintln!("Receiver declined transfer");
-        conn.close(0u32.into(), b"cancelled");
-        endpoint.close().await;
-        anyhow::bail!("Transfer cancelled by receiver");
+    match recv_control(&mut recv_stream, &key).await? {
+        ControlSignal::Proceed => {
+            eprintln!("Receiver ready, starting transfer...");
+        }
+        ControlSignal::Abort => {
+            eprintln!("Receiver declined transfer");
+            conn.close(0u32.into(), b"cancelled");
+            endpoint.close().await;
+            anyhow::bail!("Transfer cancelled by receiver");
+        }
+        ControlSignal::Ack => {
+            anyhow::bail!("Unexpected ACK signal during confirmation");
+        }
     }
-
-    if confirm_buf != *PROCEED_SIGNAL {
-        anyhow::bail!("Invalid confirmation signal from receiver");
-    }
-
-    eprintln!("Receiver ready, starting transfer...");
 
     // Send chunks
     let total_chunks = num_chunks(file_size);
@@ -184,17 +180,14 @@ async fn transfer_data_internal(
 
     // Wait for receiver to acknowledge completion
     eprintln!("Waiting for receiver to confirm...");
-    let mut ack_buf = [0u8; 3];
-    recv_stream
-        .read_exact(&mut ack_buf)
-        .await
-        .context("Failed to receive acknowledgment from receiver")?;
-
-    if &ack_buf != b"ACK" {
-        anyhow::bail!("Invalid acknowledgment from receiver");
+    match recv_control(&mut recv_stream, &key).await? {
+        ControlSignal::Ack => {
+            eprintln!("Receiver confirmed!");
+        }
+        _ => {
+            anyhow::bail!("Unexpected control signal, expected ACK");
+        }
     }
-
-    eprintln!("Receiver confirmed!");
 
     // Close connection gracefully
     conn.close(0u32.into(), b"done");

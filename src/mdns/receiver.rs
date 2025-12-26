@@ -13,7 +13,6 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use tempfile::NamedTempFile;
-use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
@@ -29,7 +28,7 @@ use crate::mdns::common::{
 use crate::auth::spake2::handshake_as_initiator;
 use crate::core::transfer::{
     find_available_filename, format_bytes, num_chunks, prompt_file_exists, recv_encrypted_chunk,
-    recv_encrypted_header, FileExistsChoice, TransferType, ABORT_SIGNAL, PROCEED_SIGNAL,
+    recv_encrypted_header, send_abort, send_ack, send_proceed, FileExistsChoice, TransferType,
 };
 
 /// Timeout for mDNS browsing (seconds)
@@ -288,9 +287,8 @@ async fn receive_data_over_tcp(
                     new_path
                 }
                 FileExistsChoice::Cancel => {
-                    // Send ABORT signal to sender
-                    stream
-                        .write_all(ABORT_SIGNAL)
+                    // Send encrypted ABORT signal to sender
+                    send_abort(&mut stream, key)
                         .await
                         .context("Failed to send abort signal")?;
                     anyhow::bail!("Transfer cancelled by user");
@@ -304,9 +302,8 @@ async fn receive_data_over_tcp(
         output_dir.clone()
     };
 
-    // Send confirmation to sender that we're ready to receive data
-    stream
-        .write_all(PROCEED_SIGNAL)
+    // Send encrypted confirmation to sender that we're ready to receive data
+    send_proceed(&mut stream, key)
         .await
         .context("Failed to send proceed signal")?;
     println!("Ready to receive data...");
@@ -324,13 +321,11 @@ async fn receive_data_over_tcp(
         }
     };
 
-    // Send ACK
+    // Send encrypted ACK
     let mut stream = stream;
-    stream
-        .write_all(b"ACK")
+    send_ack(&mut stream, key)
         .await
         .context("Failed to send ACK")?;
-    stream.flush().await?;
     println!("Sent confirmation to sender");
 
     Ok(())
