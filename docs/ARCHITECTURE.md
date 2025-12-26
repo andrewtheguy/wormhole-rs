@@ -327,26 +327,29 @@ All encrypted messages (used by Iroh, Tor, and mDNS modes) follow this format:
 ```
 
 - **length**: Big-endian u32 indicating total size of encrypted payload (nonce + ciphertext + tag)
-- **nonce**: 12-byte AES-GCM nonce derived from chunk number
+- **nonce**: 12-byte AES-GCM nonce derived from session key and chunk number (see [Nonce Derivation](#nonce-derivation))
 - **ciphertext**: Encrypted data
 - **tag**: 16-byte AES-GCM authentication tag
 
 ### Chunk Numbers and Control Signals
 
-Each encrypted message uses a chunk number to derive a unique nonce:
+Each encrypted message uses a chunk number combined with the session key to derive a unique nonce (see [Nonce Derivation](#nonce-derivation) below):
 
-| Message Type | Chunk Number | Plaintext Content |
-|-------------|--------------|-------------------|
-| Header | 0 | File metadata (type, name, size) |
-| Data Chunk 1 | 1 | First 16KB of file data |
-| Data Chunk N | N | Nth chunk of file data |
-| PROCEED | `u64::MAX` | `b"PROCEED"` |
-| ABORT | `u64::MAX - 1` | `b"ABORT"` |
-| ACK | `u64::MAX - 2` | `b"ACK"` |
+| Message Type | Chunk Number | Plaintext Content | Encrypted |
+|-------------|--------------|-------------------|-----------|
+| Header | 0 | File metadata (type, name, size) | Yes |
+| Data Chunk 1 | 1 | First 16KB of file data | Yes |
+| Data Chunk N | N | Nth chunk of file data | Yes |
+| PROCEED | `u64::MAX` | `b"PROCEED"` | Yes |
+| ABORT | `u64::MAX - 1` | `b"ABORT"` | Yes |
+| ACK | `u64::MAX - 2` | `b"ACK"` | Yes |
+| Done | `u64::MAX - 3` | `b"DONE"` | WebRTC: No* |
+
+*The Done signal indicates transfer completion. In **WebRTC**, it is sent as an unencrypted single-byte message (type 2) since it carries no sensitive data and the receiver already knows the expected file size from the encrypted header. For **stream-based transports** (iroh, Tor, mDNS), there is no explicit Done signal—transfer completion is determined by receiving all expected bytes based on the file size in the header.
 
 Using reserved high chunk numbers for control signals ensures:
 - Same encryption infrastructure for all messages
-- No collision with data chunk numbers
+- No collision with data chunk numbers (even for files with billions of chunks)
 - Full end-to-end encryption of the transfer protocol
 
 ### WebRTC Message Format
@@ -354,19 +357,45 @@ Using reserved high chunk numbers for control signals ensures:
 WebRTC uses a message-based protocol with a type byte prefix:
 
 ```
-[type: 1 byte][length: 4 bytes BE][encrypted_payload]
+Header/Control: [type: 1 byte][length: 4 bytes BE][encrypted_payload]
+Data Chunk:     [type: 1 byte][chunk_num: 8 bytes BE][length: 4 bytes BE][encrypted_payload]
+Done Signal:    [type: 1 byte]  (no payload)
 ```
 
-| Type Byte | Message |
-|-----------|---------|
-| 0 | Header |
-| 1 | Data Chunk |
-| 2 | Done Signal |
-| 3 | ACK (encrypted) |
-| 4 | PROCEED (encrypted) |
-| 5 | ABORT (encrypted) |
+| Type Byte | Message | Encrypted | Format |
+|-----------|---------|-----------|--------|
+| 0 | Header | Yes | `[0][len][encrypted]` |
+| 1 | Data Chunk | Yes | `[1][chunk_num][len][encrypted]` |
+| 2 | Done Signal | No | `[2]` (single byte) |
+| 3 | ACK | Yes | `[3][len][encrypted]` |
+| 4 | PROCEED | Yes | `[4][len][encrypted]` |
+| 5 | ABORT | Yes | `[5][len][encrypted]` |
 
-The encrypted payload for control signals (types 3, 4, 5) uses the same AES-256-GCM encryption with reserved chunk numbers as stream-based transports.
+**Control Signal Encryption (Types 3, 4, 5):**
+
+WebRTC control signals use the same nonce derivation as stream-based transports. The type byte is used only for message routing—the encrypted payload uses the reserved chunk numbers from the [Chunk Numbers table](#chunk-numbers-and-control-signals):
+
+- **Type 3 (ACK)**: Encrypts `b"ACK"` with chunk number `u64::MAX - 2`
+- **Type 4 (PROCEED)**: Encrypts `b"PROCEED"` with chunk number `u64::MAX`
+- **Type 5 (ABORT)**: Encrypts `b"ABORT"` with chunk number `u64::MAX - 1`
+
+This ensures identical encryption behavior across all transports, with WebRTC simply adding a routing prefix.
+
+### Nonce Derivation
+
+AES-256-GCM requires a unique 12-byte nonce for each encryption operation with the same key. The nonce is derived deterministically from the session key and chunk number:
+
+```
+nonce_prefix = SHA256("wormhole-nonce-prefix-v1" || session_key)[0..12]
+nonce = nonce_prefix XOR (chunk_num as little-endian bytes, zero-padded to 12 bytes)
+```
+
+This construction ensures:
+- **Cross-session uniqueness**: Different session keys produce different nonce prefixes (via the SHA256 hash)
+- **Intra-session uniqueness**: Different chunk numbers produce different nonces (via XOR with counter)
+- **Deterministic verification**: Receiver can verify expected nonce matches transmitted nonce
+
+Control signals are single-use per session (one PROCEED/ABORT, one ACK), so their fixed chunk numbers never collide with data chunks or each other.
 
 ### Confirmation Handshake
 
