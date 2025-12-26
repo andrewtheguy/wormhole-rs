@@ -383,7 +383,10 @@ async fn test_encrypted_special_characters_in_filename() {
 }
 
 #[tokio::test]
-async fn test_encrypted_wrong_chunk_number_fails() {
+async fn test_chunk_num_is_for_application_layer_only() {
+    // With random nonces, chunk_num is NOT used for cryptographic verification.
+    // The nonce is transmitted with ciphertext and extracted directly on decrypt.
+    // chunk_num is preserved for application-level chunk ordering/identification.
     let (mut client, mut server) = duplex(4096);
     let key = generate_key();
     let data = b"Test data";
@@ -396,10 +399,11 @@ async fn test_encrypted_wrong_chunk_number_fails() {
             .unwrap();
     });
 
-    // Try to receive with wrong chunk_num (3 instead of 5)
-    // This should fail because nonce won't match
+    // Receive with different chunk_num - still succeeds because nonce is
+    // transmitted with ciphertext (random nonces, not derived from chunk_num)
     let result = recv_encrypted_chunk(&mut server, &key, 3).await;
-    assert!(result.is_err());
+    assert!(result.is_ok(), "Decryption should succeed with random nonces");
+    assert_eq!(result.unwrap(), data.as_slice());
 
     send_handle.await.unwrap();
 }
@@ -462,18 +466,17 @@ async fn test_encrypted_different_keys_produce_different_payloads() {
     let encrypted1 = encrypt_chunk(&key1, chunk_num, data).unwrap();
     let encrypted2 = encrypt_chunk(&key2, chunk_num, data).unwrap();
 
-    // Payloads should be different due to different keys
+    // Payloads should be different due to random nonces
     assert_ne!(
         encrypted1, encrypted2,
-        "Same data encrypted with different keys should produce different ciphertext"
+        "Same data encrypted should produce different ciphertext (random nonces)"
     );
 
-    // Verify nonces are DIFFERENT for different keys (key-derived prefix ensures this)
-    // This prevents nonce reuse across sessions even if same chunk_num is used
+    // Verify nonces are different (each encryption generates a random nonce)
     assert_ne!(
         &encrypted1[..12],
         &encrypted2[..12],
-        "Nonces should differ for different keys to prevent cross-session nonce reuse"
+        "Each encryption must have a unique random nonce"
     );
 }
 
@@ -489,14 +492,14 @@ async fn test_encrypted_different_keys_produce_different_headers() {
     let key1 = generate_key();
     let key2 = generate_key();
 
-    // Encrypt header with chunk_num 0
+    // Encrypt header with chunk_num 0 (each encryption gets random nonce)
     let encrypted1 = encrypt_chunk(&key1, 0, &header_bytes).unwrap();
     let encrypted2 = encrypt_chunk(&key2, 0, &header_bytes).unwrap();
 
-    // Headers should produce different encrypted payloads
+    // Headers should produce different encrypted payloads (random nonces)
     assert_ne!(
         encrypted1, encrypted2,
-        "Same header encrypted with different keys should produce different ciphertext"
+        "Same header encrypted should produce different ciphertext (random nonces)"
     );
 }
 
