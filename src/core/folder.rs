@@ -249,22 +249,22 @@ pub fn extract_tar_archive_returning_reader<R: Read>(
 /// Print folder creation info messages.
 pub fn print_tar_creation_info() {
     #[cfg(unix)]
-    log::info!("   File modes (e.g., 0755) will be preserved; owner/group will not.");
+    eprintln!("   File modes (e.g., 0755) will be preserved; owner/group will not.");
     #[cfg(windows)]
-    log::info!("   Note: Windows does not support Unix file modes.");
-    log::info!("   Symlinks are included; special files (devices, FIFOs) are skipped.");
+    eprintln!("   Note: Windows does not support Unix file modes.");
+    eprintln!("   Symlinks are included; special files (devices, FIFOs) are skipped.");
 }
 
 /// Print folder extraction info messages.
 pub fn print_tar_extraction_info() {
     #[cfg(unix)]
-    log::info!("   File modes (e.g., 0755) will be preserved; owner/group will not.");
+    eprintln!("   File modes (e.g., 0755) will be preserved; owner/group will not.");
     #[cfg(windows)]
     {
-        log::info!("   Note: Unix file modes are not supported on Windows.");
-        log::info!("   Symlinks require admin privileges and may be skipped.");
+        eprintln!("   Note: Unix file modes are not supported on Windows.");
+        eprintln!("   Symlinks require admin privileges and may be skipped.");
     }
-    log::info!("   Special files (devices, FIFOs) will be skipped if present.");
+    eprintln!("   Special files (devices, FIFOs) will be skipped if present.");
 }
 
 /// Determine the extraction directory for a folder transfer.
@@ -294,12 +294,12 @@ pub fn get_extraction_dir(output_dir: Option<PathBuf>) -> PathBuf {
 /// Print skipped entries warning if any were skipped during extraction.
 pub fn print_skipped_entries(skipped_entries: &[String]) {
     if !skipped_entries.is_empty() {
-        log::info!(
+        eprintln!(
             "\n⚠️  Skipped {} entries (not supported on this platform):",
             skipped_entries.len()
         );
         for entry in skipped_entries {
-            log::info!("   - {}", entry);
+            eprintln!("   - {}", entry);
         }
     }
 }

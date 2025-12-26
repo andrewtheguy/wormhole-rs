@@ -54,7 +54,7 @@ fn setup_cleanup_handler(cleanup_path: TempFileCleanup) {
 
 /// Receive a file via Tor hidden service
 pub async fn receive_file_tor(code: &str, output_dir: Option<PathBuf>) -> Result<()> {
-    log::info!("Parsing wormhole code...");
+    eprintln!("Parsing wormhole code...");
 
     // Parse the wormhole code
     let token = parse_code(code).context("Failed to parse wormhole code")?;
@@ -74,25 +74,25 @@ pub async fn receive_file_tor(code: &str, output_dir: Option<PathBuf>) -> Result
         .onion_address
         .context("No onion address in wormhole code")?;
 
-    log::info!("Code valid. Connecting to sender via Tor...");
+    eprintln!("Code valid. Connecting to sender via Tor...");
 
     // Bootstrap Tor client (ephemeral mode - allows multiple concurrent receivers)
     let temp_dir = tempfile::tempdir()?;
     let state_dir = temp_dir.path().join("state");
     let cache_dir = temp_dir.path().join("cache");
 
-    log::info!("Bootstrapping Tor client (ephemeral mode)...");
+    eprintln!("Bootstrapping Tor client (ephemeral mode)...");
 
     let config = TorClientConfigBuilder::from_directories(state_dir, cache_dir).build()?;
     let tor_client = TorClient::create_bootstrapped(config).await?;
-    log::info!("Tor client bootstrapped!");
+    eprintln!("Tor client bootstrapped!");
 
     // Retry connection for temporary errors
     let mut stream = None;
     let mut last_error = None;
 
     for attempt in 1..=MAX_RETRIES {
-        log::info!(
+        eprintln!(
             "Connecting to {} (attempt {}/{})...",
             onion_addr, attempt, MAX_RETRIES
         );
@@ -103,7 +103,7 @@ pub async fn receive_file_tor(code: &str, output_dir: Option<PathBuf>) -> Result
                 break;
             }
             Err(e) => {
-                log::error!("Connection failed: {}", e);
+                eprintln!("Connection failed: {}", e);
 
                 if !is_retryable(&e) {
                     return Err(e.into());
@@ -111,7 +111,7 @@ pub async fn receive_file_tor(code: &str, output_dir: Option<PathBuf>) -> Result
 
                 last_error = Some(e);
                 if attempt < MAX_RETRIES {
-                    log::info!("Retrying in {} seconds...", RETRY_DELAY_SECS);
+                    eprintln!("Retrying in {} seconds...", RETRY_DELAY_SECS);
                     tokio::time::sleep(tokio::time::Duration::from_secs(RETRY_DELAY_SECS)).await;
                 }
             }
@@ -126,14 +126,14 @@ pub async fn receive_file_tor(code: &str, output_dir: Option<PathBuf>) -> Result
         )
     })?;
 
-    log::info!("Connected!");
+    eprintln!("Connected!");
 
     // Read file header
     let header = recv_encrypted_header(&mut stream, &key)
         .await
         .context("Failed to read file header")?;
 
-    log::info!(
+    eprintln!(
         "Receiving: {} ({})",
         header.filename,
         format_bytes(header.file_size)
@@ -163,7 +163,7 @@ pub async fn receive_file_tor(code: &str, output_dir: Option<PathBuf>) -> Result
                 }
                 FileExistsChoice::Rename => {
                     let new_path = find_available_filename(&output_path);
-                    log::info!("Will save as: {}", new_path.display());
+                    eprintln!("Will save as: {}", new_path.display());
                     new_path
                 }
                 FileExistsChoice::Cancel => {
@@ -188,7 +188,7 @@ pub async fn receive_file_tor(code: &str, output_dir: Option<PathBuf>) -> Result
         .write_all(PROCEED_SIGNAL)
         .await
         .context("Failed to send proceed signal")?;
-    log::info!("Ready to receive data...");
+    eprintln!("Ready to receive data...");
 
     // Check transfer type
     if header.transfer_type == TransferType::Folder {
@@ -219,7 +219,7 @@ pub async fn receive_file_tor(code: &str, output_dir: Option<PathBuf>) -> Result
     // Buffer for batching writes to avoid blocking async runtime
     let mut chunk_buffer: Vec<Vec<u8>> = Vec::with_capacity(WRITE_BATCH_SIZE);
 
-    log::info!("Receiving {} chunks...", total_chunks);
+    eprintln!("Receiving {} chunks...", total_chunks);
 
     while bytes_received < header.file_size {
         let chunk = recv_encrypted_chunk(&mut stream, &key, chunk_num)
@@ -280,8 +280,8 @@ pub async fn receive_file_tor(code: &str, output_dir: Option<PathBuf>) -> Result
     .await
     .context("Persist task panicked")??;
 
-    log::info!("\nFile received successfully!");
-    log::info!("Saved to: {}", final_output_path.display());
+    eprintln!("\nFile received successfully!");
+    eprintln!("Saved to: {}", final_output_path.display());
 
     // Send ACK
     stream
@@ -290,7 +290,7 @@ pub async fn receive_file_tor(code: &str, output_dir: Option<PathBuf>) -> Result
         .context("Failed to send acknowledgment")?;
     stream.flush().await.context("Failed to flush stream")?;
 
-    log::info!("Connection closed.");
+    eprintln!("Connection closed.");
 
     Ok(())
 }
@@ -302,7 +302,7 @@ async fn receive_folder_stream<S: AsyncReadExt + AsyncWriteExt + Unpin + Send + 
     key: [u8; 32],
     output_dir: Option<PathBuf>,
 ) -> Result<()> {
-    log::info!(
+    eprintln!(
         "Receiving folder archive: {} ({})",
         header.filename,
         format_bytes(header.file_size)
@@ -312,7 +312,7 @@ async fn receive_folder_stream<S: AsyncReadExt + AsyncWriteExt + Unpin + Send + 
     let extract_dir = get_extraction_dir(output_dir);
     std::fs::create_dir_all(&extract_dir).context("Failed to create extraction directory")?;
 
-    log::info!("Extracting to: {}", extract_dir.display());
+    eprintln!("Extracting to: {}", extract_dir.display());
     print_tar_extraction_info();
 
     // Get runtime handle for blocking in Read impl
@@ -333,8 +333,8 @@ async fn receive_folder_stream<S: AsyncReadExt + AsyncWriteExt + Unpin + Send + 
     // Report skipped entries
     print_skipped_entries(&skipped_entries);
 
-    log::info!("\nFolder received successfully!");
-    log::info!("Extracted to: {}", extract_dir.display());
+    eprintln!("\nFolder received successfully!");
+    eprintln!("Extracted to: {}", extract_dir.display());
 
     // Get the underlying stream back and send explicit ACK (consistent with file transfers)
     let mut stream = streaming_reader.into_inner();
@@ -343,7 +343,7 @@ async fn receive_folder_stream<S: AsyncReadExt + AsyncWriteExt + Unpin + Send + 
         .await
         .context("Failed to send ACK")?;
 
-    log::info!("Sent ACK to sender.");
+    eprintln!("Sent ACK to sender.");
 
     Ok(())
 }

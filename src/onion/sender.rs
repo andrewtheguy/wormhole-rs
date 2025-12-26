@@ -36,12 +36,12 @@ async fn transfer_data_tor_internal(
     let state_dir = temp_dir.path().join("state");
     let cache_dir = temp_dir.path().join("cache");
 
-    log::info!("Bootstrapping Tor client (ephemeral mode)...");
+    eprintln!("Bootstrapping Tor client (ephemeral mode)...");
 
     let config = TorClientConfigBuilder::from_directories(state_dir, cache_dir).build()?;
     let tor_client = TorClient::create_bootstrapped(config).await?;
 
-    log::info!("Tor client bootstrapped!");
+    eprintln!("Tor client bootstrapped!");
 
     // Generate a random nickname for ephemeral service
     let random_suffix: u64 = rand::thread_rng().gen();
@@ -90,14 +90,14 @@ async fn transfer_data_tor_internal(
         println!("Then enter the code above when prompted.\n");
     }
 
-    log::info!("Waiting for receiver to connect via Tor...");
+    eprintln!("Waiting for receiver to connect via Tor...");
 
     // Convert RendRequest stream to StreamRequest stream
     let mut stream_requests = handle_rend_requests(rend_requests);
 
     // Wait for incoming stream request
     if let Some(stream_req) = stream_requests.next().await {
-        log::info!("Receiver connected! Accepting stream...");
+        eprintln!("Receiver connected! Accepting stream...");
 
         // Accept the stream request
         let mut stream = stream_req.accept(Connected::new_empty()).await?;
@@ -110,7 +110,7 @@ async fn transfer_data_tor_internal(
 
         // Wait for receiver confirmation before sending data
         // This allows receiver to check if file exists and prompt user
-        log::info!("Waiting for receiver to confirm...");
+        eprintln!("Waiting for receiver to confirm...");
         let mut confirm_buf = [0u8; 7]; // "PROCEED" or "ABORT\0\0"
         stream
             .read_exact(&mut confirm_buf)
@@ -118,7 +118,7 @@ async fn transfer_data_tor_internal(
             .context("Failed to receive confirmation from receiver")?;
 
         if confirm_buf[..5] == ABORT_SIGNAL[..5] {
-            log::info!("Receiver declined transfer");
+            eprintln!("Receiver declined transfer");
             anyhow::bail!("Transfer cancelled by receiver");
         }
 
@@ -126,7 +126,7 @@ async fn transfer_data_tor_internal(
             anyhow::bail!("Invalid confirmation signal from receiver");
         }
 
-        log::info!("Receiver ready, starting transfer...");
+        eprintln!("Receiver ready, starting transfer...");
 
         // Send chunks
         let total_chunks = num_chunks(file_size);
@@ -134,7 +134,7 @@ async fn transfer_data_tor_internal(
         let mut chunk_num = 1u64; // Start at 1, header used 0
         let mut bytes_sent = 0u64;
 
-        log::info!("Sending {} chunks...", total_chunks);
+        eprintln!("Sending {} chunks...", total_chunks);
 
         loop {
             let bytes_read = file.read(&mut buffer).await.context("Failed to read data")?;
@@ -169,10 +169,10 @@ async fn transfer_data_tor_internal(
         // Flush the stream
         stream.flush().await.context("Failed to flush stream")?;
 
-        log::info!("Transfer complete!");
+        eprintln!("Transfer complete!");
 
         // Wait for receiver ACK (best-effort, Tor streams may close abruptly)
-        log::info!("Waiting for receiver to confirm...");
+        eprintln!("Waiting for receiver to confirm...");
         let mut ack_buf = [0u8; 3];
         match tokio::time::timeout(
             std::time::Duration::from_secs(10),
@@ -181,17 +181,17 @@ async fn transfer_data_tor_internal(
         .await
         {
             Ok(Ok(_)) if &ack_buf == b"ACK" => {
-                log::info!("Receiver confirmed!");
+                eprintln!("Receiver confirmed!");
             }
             Ok(Ok(_)) => {
-                log::info!("Received unexpected response (transfer likely succeeded)");
+                eprintln!("Received unexpected response (transfer likely succeeded)");
             }
             Ok(Err(_)) | Err(_) => {
                 // Tor streams may close without proper END cell - this is normal
-                log::info!("Connection closed (transfer completed)");
+                eprintln!("Connection closed (transfer completed)");
             }
         }
-        log::info!("Done.");
+        eprintln!("Done.");
     } else {
         anyhow::bail!("No connection received");
     }

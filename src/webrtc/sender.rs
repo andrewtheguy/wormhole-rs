@@ -59,7 +59,7 @@ fn setup_data_channel_close_handler(
             if let Some(tx) = close_tx.lock().await.take() {
                 let _ = tx.send(());
             }
-            log::info!("Data channel closed");
+            eprintln!("Data channel closed");
         })
     }));
 }

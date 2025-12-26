@@ -38,9 +38,9 @@ pub async fn create_sender_endpoint(relay_urls: Vec<String>) -> Result<Endpoint>
     let using_custom_relay = !matches!(relay_mode, RelayMode::Default);
     if using_custom_relay {
         if relay_urls.len() == 1 {
-            log::info!("Using custom relay server");
+            eprintln!("Using custom relay server");
         } else {
-            log::info!("Using {} custom relay servers (with failover)", relay_urls.len());
+            eprintln!("Using {} custom relay servers (with failover)", relay_urls.len());
         }
     }
 
@@ -69,9 +69,9 @@ pub async fn create_receiver_endpoint(relay_urls: Vec<String>) -> Result<Endpoin
     let using_custom_relay = !matches!(relay_mode, RelayMode::Default);
     if using_custom_relay {
         if relay_urls.len() == 1 {
-            log::info!("Using custom relay server");
+            eprintln!("Using custom relay server");
         } else {
-            log::info!("Using {} custom relay servers (with failover)", relay_urls.len());
+            eprintln!("Using {} custom relay servers (with failover)", relay_urls.len());
         }
     }
 

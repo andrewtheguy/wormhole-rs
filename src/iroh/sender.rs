@@ -81,7 +81,7 @@ async fn transfer_data_internal(
         println!("Then enter the code above when prompted.\n");
     }
 
-    log::info!("⏳ Waiting for receiver to connect...");
+    eprintln!("Waiting for receiver to connect...");
 
     // Wait for connection
     let conn = endpoint
@@ -99,13 +99,13 @@ async fn transfer_data_internal(
         ))?;
 
     let remote_id = conn.remote_id();
-    log::info!("✅ Receiver connected!");
-    log::info!("   📡 Remote ID: {}", remote_id);
+    eprintln!("Receiver connected!");
+    eprintln!("   Remote ID: {}", remote_id);
 
     // Get connection type (Direct, Relay, Mixed, None)
     if let Some(mut conn_type_watcher) = endpoint.conn_type(remote_id) {
         let conn_type = conn_type_watcher.get();
-        log::info!("   🔗 Connection: {:?}", conn_type);
+        eprintln!("   Connection: {:?}", conn_type);
     }
 
     // Open bi-directional stream
@@ -119,7 +119,7 @@ async fn transfer_data_internal(
 
     // Wait for receiver confirmation before sending data
     // This allows receiver to check if file exists and prompt user
-    log::info!("⏳ Waiting for receiver to confirm...");
+    eprintln!("Waiting for receiver to confirm...");
     let mut confirm_buf = [0u8; 7]; // "PROCEED" or "ABORT\0\0"
     recv_stream
         .read_exact(&mut confirm_buf)
@@ -127,7 +127,7 @@ async fn transfer_data_internal(
         .context("Failed to receive confirmation from receiver")?;
 
     if confirm_buf[..5] == ABORT_SIGNAL[..5] {
-        log::info!("❌ Receiver declined transfer");
+        eprintln!("Receiver declined transfer");
         conn.close(0u32.into(), b"cancelled");
         endpoint.close().await;
         anyhow::bail!("Transfer cancelled by receiver");
@@ -137,7 +137,7 @@ async fn transfer_data_internal(
         anyhow::bail!("Invalid confirmation signal from receiver");
     }
 
-    log::info!("✅ Receiver ready, starting transfer...");
+    eprintln!("Receiver ready, starting transfer...");
 
     // Send chunks
     let total_chunks = num_chunks(file_size);
@@ -145,7 +145,7 @@ async fn transfer_data_internal(
     let mut chunk_num = 1u64; // Start at 1, header used 0
     let mut bytes_sent = 0u64;
 
-    log::info!("📤 Sending {} chunks...", total_chunks);
+    eprintln!("Sending {} chunks...", total_chunks);
 
     loop {
         let bytes_read = file.read(&mut buffer).await.context("Failed to read data")?;
@@ -177,13 +177,13 @@ async fn transfer_data_internal(
         }
     }
 
-    log::info!("\n✅ Transfer complete!");
+    eprintln!("\nTransfer complete!");
 
     // Finish the send stream to signal we're done sending
     send_stream.finish().context("Failed to finish stream")?;
 
     // Wait for receiver to acknowledge completion
-    log::info!("⏳ Waiting for receiver to confirm...");
+    eprintln!("Waiting for receiver to confirm...");
     let mut ack_buf = [0u8; 3];
     recv_stream
         .read_exact(&mut ack_buf)
@@ -194,13 +194,13 @@ async fn transfer_data_internal(
         anyhow::bail!("Invalid acknowledgment from receiver");
     }
 
-    log::info!("✅ Receiver confirmed!");
+    eprintln!("Receiver confirmed!");
 
     // Close connection gracefully
     conn.close(0u32.into(), b"done");
     endpoint.close().await;
 
-    log::info!("👋 Connection closed.");
+    eprintln!("Connection closed.");
 
     Ok(())
 }

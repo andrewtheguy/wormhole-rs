@@ -62,7 +62,7 @@ fn setup_data_channel_close_handler(
             if let Some(tx) = close_tx.lock().await.take() {
                 let _ = tx.send(());
             }
-            log::info!("Data channel closed");
+            eprintln!("Data channel closed");
         })
     }));
 }
@@ -122,9 +122,9 @@ async fn transfer_offline_internal(
 ) -> Result<()> {
     // Generate encryption key
     let key = generate_key();
-    log::info!("Encryption enabled for transfer");
+    eprintln!("Encryption enabled for transfer");
 
-    log::info!("\nPreparing WebRTC offline transfer...");
+    eprintln!("\nPreparing WebRTC offline transfer...");
 
     // Create WebRTC peer with STUN for NAT traversal
     let mut rtc_peer = WebRtcPeer::new().await?;
@@ -143,11 +143,11 @@ async fn transfer_offline_internal(
     let offer = rtc_peer.create_offer().await?;
     rtc_peer.set_local_description(offer.clone()).await?;
 
-    log::info!("Gathering connection info...");
+    eprintln!("Gathering connection info...");
 
     // Wait for ICE gathering to complete
     let candidates = rtc_peer.gather_ice_candidates(ICE_GATHERING_TIMEOUT).await?;
-    log::info!("Collected {} ICE candidates", candidates.len());
+    eprintln!("Collected {} ICE candidates", candidates.len());
 
     if candidates.is_empty() {
         anyhow::bail!("No ICE candidates gathered. Check your network connection.");
@@ -178,7 +178,7 @@ async fn transfer_offline_internal(
     // Read answer from user
     let answer: OfflineAnswer = read_answer_json()?;
 
-    log::info!("\nProcessing receiver's response...");
+    eprintln!("\nProcessing receiver's response...");
 
     // Set remote description
     let answer_sdp =
@@ -196,7 +196,7 @@ async fn transfer_offline_internal(
         rtc_peer.add_ice_candidate(candidate_init).await?;
     }
 
-    log::info!(
+    eprintln!(
         "Added {} remote ICE candidates",
         answer.ice_candidates.len()
     );
@@ -205,12 +205,12 @@ async fn transfer_offline_internal(
     let rtc_peer_arc = Arc::new(rtc_peer);
 
     // Wait for data channel to open
-    log::info!("Connecting...");
+    eprintln!("Connecting...");
 
     let open_result = tokio::time::timeout(CONNECTION_TIMEOUT, open_rx).await;
     match open_result {
         Ok(Ok(())) => {
-            log::info!("Data channel opened!");
+            eprintln!("Data channel opened!");
         }
         Ok(Err(_)) => {
             anyhow::bail!("Data channel open signal was cancelled");
@@ -234,10 +234,10 @@ async fn transfer_offline_internal(
 
     // Display connection info
     let conn_info = rtc_peer_arc.get_connection_info().await;
-    log::info!("WebRTC connection established!");
-    log::info!("   Connection: {}", conn_info.connection_type);
+    eprintln!("WebRTC connection established!");
+    eprintln!("   Connection: {}", conn_info.connection_type);
     if let (Some(local), Some(remote)) = (&conn_info.local_address, &conn_info.remote_address) {
-        log::info!("   Local: {} -> Remote: {}", local, remote);
+        eprintln!("   Local: {} -> Remote: {}", local, remote);
     }
 
     // Small delay to ensure connection is stable
@@ -258,14 +258,14 @@ async fn transfer_offline_internal(
         .await
         .context("Failed to send header")?;
 
-    log::info!(
+    eprintln!(
         "Sent file header: {} ({})",
         filename,
         format_bytes(file_size)
     );
 
     // Wait for receiver confirmation before sending data
-    log::info!("Waiting for receiver to confirm...");
+    eprintln!("Waiting for receiver to confirm...");
     let confirm_result = tokio::time::timeout(Duration::from_secs(120), async {
         loop {
             match message_rx.recv().await {
@@ -280,15 +280,15 @@ async fn transfer_offline_internal(
 
     match confirm_result {
         Ok(Ok(true)) => {
-            log::info!("Receiver ready, starting transfer...");
+            eprintln!("Receiver ready, starting transfer...");
         }
         Ok(Ok(false)) | Ok(Err(_)) => {
-            log::info!("Receiver declined transfer");
+            eprintln!("Receiver declined transfer");
             let _ = rtc_peer_arc.close().await;
             anyhow::bail!("Transfer cancelled by receiver");
         }
         Err(_) => {
-            log::info!("Confirmation timeout");
+            eprintln!("Confirmation timeout");
             let _ = rtc_peer_arc.close().await;
             anyhow::bail!("Timed out waiting for receiver confirmation");
         }
@@ -300,7 +300,7 @@ async fn transfer_offline_internal(
     let mut chunk_num = 1u64;
     let mut bytes_sent = 0u64;
 
-    log::info!("Sending {} chunks...", total_chunks);
+    eprintln!("Sending {} chunks...", total_chunks);
 
     loop {
         let bytes_read = file
@@ -345,7 +345,7 @@ async fn transfer_offline_internal(
         }
     }
 
-    log::info!("\nTransfer complete!");
+    eprintln!("\nTransfer complete!");
 
     // Send done message
     let done_msg = vec![2u8];
@@ -355,7 +355,7 @@ async fn transfer_offline_internal(
         .context("Failed to send done message")?;
 
     // Wait for ACK from receiver (or data channel close, which means receiver is done)
-    log::info!("Waiting for receiver to confirm...");
+    eprintln!("Waiting for receiver to confirm...");
 
     // Wrap close_rx in a Mutex so it can be used in async block
     let close_rx = Arc::new(Mutex::new(Some(close_rx)));
@@ -391,14 +391,14 @@ async fn transfer_offline_internal(
 
     match ack_result {
         Ok(true) => {
-            log::info!("Receiver confirmed!");
+            eprintln!("Receiver confirmed!");
         }
         Ok(false) => {
             // Data channel closed - receiver got the data and disconnected
-            log::info!("Transfer complete (receiver disconnected)");
+            eprintln!("Transfer complete (receiver disconnected)");
         }
         Err(_) => {
-            log::info!("Warning: Did not receive confirmation from receiver (timeout)");
+            eprintln!("Warning: Did not receive confirmation from receiver (timeout)");
         }
     }
 

@@ -359,11 +359,11 @@ async fn main() -> Result<()> {
             if pin {
                 let pin_str = wormhole_rs::auth::pin::prompt_pin()?;
 
-                log::info!("Searching for wormhole token via Nostr...");
+                eprintln!("Searching for wormhole token via Nostr...");
 
                 // Fetch encrypted token from Nostr
                 let token_str = wormhole_rs::auth::nostr_pin::fetch_wormhole_code_via_pin(&pin_str).await?;
-                log::info!("Token found and decrypted!");
+                eprintln!("Token found and decrypted!");
                 code = Some(token_str);
             }
 
@@ -391,11 +391,11 @@ async fn main() -> Result<()> {
             if pin {
                 let pin_str = wormhole_rs::auth::pin::prompt_pin()?;
 
-                log::info!("Searching for wormhole token via Nostr...");
+                eprintln!("Searching for wormhole token via Nostr...");
 
                 // Fetch encrypted token from Nostr
                 let token_str = wormhole_rs::auth::nostr_pin::fetch_wormhole_code_via_pin(&pin_str).await?;
-                log::info!("Token found and decrypted!");
+                eprintln!("Token found and decrypted!");
                 code = Some(token_str);
             }
 
