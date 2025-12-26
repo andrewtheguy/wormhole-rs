@@ -408,12 +408,12 @@ pub fn setup_data_channel_handlers(
     }
 
     // On message
-    let label = dc_label.clone();
     dc.on_message(Box::new(move |msg: DataChannelMessage| {
         let message_tx = message_tx.clone();
-        let _label = label.clone();
         Box::pin(async move {
-            let _ = message_tx.send(msg.data.to_vec()).await;
+            if message_tx.send(msg.data.to_vec()).await.is_err() {
+                log::warn!("Failed to forward data channel message - receiver dropped");
+            }
         })
     }));
 

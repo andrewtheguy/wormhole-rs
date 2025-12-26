@@ -314,15 +314,34 @@ pub async fn fetch_wormhole_code_via_pin(pin: &str) -> Result<String> {
         anyhow::bail!("No PIN exchange event found. Check if sender is ready.");
     }
     
-    // Try decrypting
-    for event in events {
-        if let Ok((encrypted, salt)) = parse_pin_exchange_event(&event) {
-            if let Ok(code) = decrypt_wormhole_code(&encrypted, pin, &salt) {
-                return Ok(code);
+    // Try decrypting each event
+    for (index, event) in events.iter().enumerate() {
+        let event_id = event.id.to_hex();
+        match parse_pin_exchange_event(event) {
+            Ok((encrypted, salt)) => {
+                match decrypt_wormhole_code(&encrypted, pin, &salt) {
+                    Ok(code) => return Ok(code),
+                    Err(e) => {
+                        log::debug!(
+                            "Failed to decrypt event {} (index {}): {}",
+                            event_id,
+                            index,
+                            e
+                        );
+                    }
+                }
+            }
+            Err(e) => {
+                log::debug!(
+                    "Failed to parse event {} (index {}): {}",
+                    event_id,
+                    index,
+                    e
+                );
             }
         }
     }
-    
+
     anyhow::bail!("Failed to decrypt wormhole code with the provided PIN.")
 }
 

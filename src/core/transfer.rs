@@ -132,6 +132,9 @@ pub async fn send_encrypted_header<W: AsyncWriteExt + Unpin>(
     Ok(())
 }
 
+// Maximum header size (64KB - headers contain filename + metadata, this is generous)
+const MAX_HEADER_SIZE: usize = 64 * 1024;
+
 /// Receive a header from the stream (unencrypted, relies on QUIC/TLS)
 pub async fn recv_header<R: AsyncReadExt + Unpin>(reader: &mut R) -> Result<FileHeader> {
     // Read length prefix
@@ -141,6 +144,18 @@ pub async fn recv_header<R: AsyncReadExt + Unpin>(reader: &mut R) -> Result<File
         .await
         .context("Failed to read header length")?;
     let len = u32::from_be_bytes(len_buf) as usize;
+
+    // Validate header size to prevent huge allocations from malicious peers
+    if len == 0 {
+        anyhow::bail!("Invalid header: length is zero");
+    }
+    if len > MAX_HEADER_SIZE {
+        anyhow::bail!(
+            "Header size {} exceeds maximum {} bytes",
+            len,
+            MAX_HEADER_SIZE
+        );
+    }
 
     // Read header
     let mut data = vec![0u8; len];
@@ -164,6 +179,18 @@ pub async fn recv_encrypted_header<R: AsyncReadExt + Unpin>(
         .await
         .context("Failed to read header length")?;
     let len = u32::from_be_bytes(len_buf) as usize;
+
+    // Validate header size to prevent huge allocations from malicious peers
+    if len == 0 {
+        anyhow::bail!("Invalid header: length is zero");
+    }
+    if len > MAX_HEADER_SIZE {
+        anyhow::bail!(
+            "Header size {} exceeds maximum {} bytes",
+            len,
+            MAX_HEADER_SIZE
+        );
+    }
 
     // Read encrypted header
     let mut encrypted = vec![0u8; len];

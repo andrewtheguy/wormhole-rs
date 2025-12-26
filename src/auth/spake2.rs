@@ -234,8 +234,24 @@ mod tests {
 
         let (client_result, server_result) = tokio::join!(client_handle, server_handle);
 
-        // Client might succeed (it doesn't validate transfer ID)
-        // Server should fail due to transfer ID mismatch
-        assert!(client_result.unwrap().is_ok() || server_result.unwrap().is_err());
+        let client_result = client_result.unwrap();
+        let server_result = server_result.unwrap();
+
+        // Server must fail due to transfer ID mismatch
+        assert!(
+            server_result.is_err(),
+            "Expected server to fail due to transfer ID mismatch, got {:?}",
+            server_result
+        );
+        let server_err = server_result.unwrap_err().to_string();
+        assert!(
+            server_err.contains("Transfer ID mismatch"),
+            "Expected transfer ID mismatch error, got: {}",
+            server_err
+        );
+
+        // Client may fail too (connection closed by server) or succeed (timing dependent)
+        // The important thing is the server rejected the mismatched transfer ID
+        let _ = client_result;
     }
 }

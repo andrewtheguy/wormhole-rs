@@ -403,6 +403,15 @@ async fn receive_file_impl(
     // Clear cleanup path
     cleanup_path.lock().await.take();
 
+    // Verify received size matches expected size to detect silent truncation
+    if bytes_received != header.file_size {
+        anyhow::bail!(
+            "File size mismatch: received {} bytes but expected {} bytes",
+            bytes_received,
+            header.file_size
+        );
+    }
+
     // Persist temp file to final path
     temp_file.flush().context("Failed to flush file")?;
     temp_file
