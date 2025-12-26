@@ -18,7 +18,10 @@ use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 
 use crate::crypto::decrypt_chunk;
 use crate::folder::{extract_tar_archive, print_tar_extraction_info};
-use crate::transfer::{format_bytes, num_chunks, FileHeader, TransferType};
+use crate::transfer::{
+    find_available_filename, format_bytes, num_chunks, prompt_file_exists, FileExistsChoice,
+    FileHeader, TransferType,
+};
 use crate::webrtc_common::{setup_data_channel_handlers, WebRtcPeer};
 use crate::webrtc_offline_signaling::{
     display_answer_json, ice_candidates_to_payloads, read_offer_json, OfflineAnswer,
@@ -238,13 +241,66 @@ pub async fn receive_file_offline(output_dir: Option<PathBuf>) -> Result<()> {
         format_bytes(header.file_size)
     );
 
+    // Determine output directory
+    let output_dir = output_dir.unwrap_or_else(|| PathBuf::from("."));
+
+    // Check file existence and get final output path (for files only)
+    // This happens BEFORE data transfer, so user can cancel without wasting bandwidth
+    let final_output_path = if header.transfer_type == TransferType::File {
+        let output_path = output_dir.join(&header.filename);
+
+        if output_path.exists() {
+            // Prompt user in blocking context
+            let path_clone = output_path.clone();
+            let choice = tokio::task::spawn_blocking(move || prompt_file_exists(&path_clone))
+                .await
+                .context("Prompt task panicked")??;
+
+            match choice {
+                FileExistsChoice::Overwrite => {
+                    tokio::fs::remove_file(&output_path)
+                        .await
+                        .context("Failed to remove existing file")?;
+                    output_path
+                }
+                FileExistsChoice::Rename => {
+                    let new_path = find_available_filename(&output_path);
+                    log::info!("Will save as: {}", new_path.display());
+                    new_path
+                }
+                FileExistsChoice::Cancel => {
+                    // Send ABORT signal to sender (message type 5)
+                    let abort_msg = vec![5u8];
+                    data_channel
+                        .send(&Bytes::from(abort_msg))
+                        .await
+                        .context("Failed to send abort signal")?;
+                    anyhow::bail!("Transfer cancelled by user");
+                }
+            }
+        } else {
+            output_path
+        }
+    } else {
+        // For folders, we extract to a directory - handled separately
+        output_dir.clone()
+    };
+
+    // Send PROCEED signal to sender (message type 4)
+    let proceed_msg = vec![4u8];
+    data_channel
+        .send(&Bytes::from(proceed_msg))
+        .await
+        .context("Failed to send proceed signal")?;
+    log::info!("Ready to receive data...");
+
     // Dispatch based on transfer type
     match header.transfer_type {
         TransferType::File => {
-            receive_file_impl(&mut message_rx, &header, &key, output_dir, &data_channel).await?;
+            receive_file_impl(&mut message_rx, &header, &key, final_output_path, &data_channel).await?;
         }
         TransferType::Folder => {
-            receive_folder_impl(message_rx, &header, &key, output_dir, &data_channel).await?;
+            receive_folder_impl(message_rx, &header, &key, Some(output_dir), &data_channel).await?;
         }
     }
 
@@ -260,40 +316,15 @@ async fn receive_file_impl(
     message_rx: &mut mpsc::Receiver<Vec<u8>>,
     header: &FileHeader,
     key: &[u8; 32],
-    output_dir: Option<PathBuf>,
+    output_path: PathBuf,
     data_channel: &Arc<RTCDataChannel>,
 ) -> Result<()> {
-    // Determine output directory and final path
-    let output_dir = output_dir.unwrap_or_else(|| PathBuf::from("."));
-    let output_path = output_dir.join(&header.filename);
-
-    // Check if file already exists
-    if output_path.exists() {
-        let prompt_path = output_path.display().to_string();
-        let should_overwrite = tokio::task::spawn_blocking(move || {
-            print!("File already exists: {}. Overwrite? [y/N] ", prompt_path);
-            std::io::Write::flush(&mut std::io::stdout())?;
-
-            let mut input = String::new();
-            std::io::stdin().read_line(&mut input)?;
-
-            Ok::<bool, std::io::Error>(input.trim().eq_ignore_ascii_case("y"))
-        })
-        .await
-        .context("Prompt task panicked")??;
-
-        if !should_overwrite {
-            anyhow::bail!("Transfer cancelled - file exists");
-        }
-
-        tokio::fs::remove_file(&output_path)
-            .await
-            .context("Failed to remove existing file")?;
-    }
+    // Get output directory for temp file
+    let output_dir = output_path.parent().unwrap_or(std::path::Path::new("."));
 
     // Create temp file in same directory
     let temp_file =
-        NamedTempFile::new_in(&output_dir).context("Failed to create temporary file")?;
+        NamedTempFile::new_in(output_dir).context("Failed to create temporary file")?;
     let temp_path = temp_file.path().to_path_buf();
 
     // Set up cleanup handler

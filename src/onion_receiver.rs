@@ -12,7 +12,8 @@ use crate::folder::{
     print_tar_extraction_info, StreamingReader,
 };
 use crate::transfer::{
-    format_bytes, num_chunks, recv_encrypted_chunk, recv_encrypted_header, TransferType,
+    find_available_filename, format_bytes, num_chunks, prompt_file_exists, recv_encrypted_chunk,
+    recv_encrypted_header, FileExistsChoice, TransferType, ABORT_SIGNAL, PROCEED_SIGNAL,
 };
 use crate::wormhole::{decode_key, parse_code, PROTOCOL_TOR};
 
@@ -132,47 +133,75 @@ pub async fn receive_file_tor(code: &str, output_dir: Option<PathBuf>) -> Result
         .await
         .context("Failed to read file header")?;
 
-    // Check transfer type
-    if header.transfer_type == TransferType::Folder {
-        // Handle as folder transfer
-        return receive_folder_stream(stream, header, key, output_dir).await;
-    }
-
     log::info!(
         "Receiving: {} ({})",
         header.filename,
         format_bytes(header.file_size)
     );
 
-    // Determine output directory and final path
+    // Determine output directory
     let output_dir = output_dir.unwrap_or_else(|| PathBuf::from("."));
-    let output_path = output_dir.join(&header.filename);
 
-    // Check if file already exists
-    if output_path.exists() {
-        let prompt_path = output_path.display().to_string();
-        let should_overwrite = tokio::task::spawn_blocking(move || {
-            print!("File already exists: {}. Overwrite? [y/N] ", prompt_path);
-            std::io::Write::flush(&mut std::io::stdout())?;
+    // Check file existence and get final output path (for files only)
+    // This happens BEFORE data transfer, so user can cancel without wasting bandwidth
+    let final_output_path = if header.transfer_type == TransferType::File {
+        let output_path = output_dir.join(&header.filename);
 
-            let mut input = String::new();
-            std::io::stdin().read_line(&mut input)?;
+        if output_path.exists() {
+            // Prompt user in blocking context
+            let path_clone = output_path.clone();
+            let choice = tokio::task::spawn_blocking(move || prompt_file_exists(&path_clone))
+                .await
+                .context("Prompt task panicked")??;
 
-            Ok::<bool, std::io::Error>(input.trim().eq_ignore_ascii_case("y"))
-        })
-        .await
-        .context("Prompt task panicked")??;
-
-        if !should_overwrite {
-            anyhow::bail!("Transfer cancelled - file exists");
+            match choice {
+                FileExistsChoice::Overwrite => {
+                    tokio::fs::remove_file(&output_path)
+                        .await
+                        .context("Failed to remove existing file")?;
+                    output_path
+                }
+                FileExistsChoice::Rename => {
+                    let new_path = find_available_filename(&output_path);
+                    log::info!("Will save as: {}", new_path.display());
+                    new_path
+                }
+                FileExistsChoice::Cancel => {
+                    // Send ABORT signal to sender
+                    stream
+                        .write_all(ABORT_SIGNAL)
+                        .await
+                        .context("Failed to send abort signal")?;
+                    anyhow::bail!("Transfer cancelled by user");
+                }
+            }
+        } else {
+            output_path
         }
+    } else {
+        // For folders, we extract to a directory - handled separately
+        output_dir.clone()
+    };
 
-        tokio::fs::remove_file(&output_path).await.context("Failed to remove existing file")?;
+    // Send confirmation to sender that we're ready to receive data
+    stream
+        .write_all(PROCEED_SIGNAL)
+        .await
+        .context("Failed to send proceed signal")?;
+    log::info!("Ready to receive data...");
+
+    // Check transfer type
+    if header.transfer_type == TransferType::Folder {
+        // Handle as folder transfer
+        return receive_folder_stream(stream, header, key, Some(final_output_path)).await;
     }
+
+    // Get output directory from path for temp file
+    let output_dir_for_temp = final_output_path.parent().unwrap_or(std::path::Path::new("."));
 
     // Create temp file in same directory
     let temp_file =
-        NamedTempFile::new_in(&output_dir).context("Failed to create temporary file")?;
+        NamedTempFile::new_in(&output_dir_for_temp).context("Failed to create temporary file")?;
     let temp_path = temp_file.path().to_path_buf();
 
     // Set up cleanup handler for Ctrl+C
@@ -241,7 +270,7 @@ pub async fn receive_file_tor(code: &str, output_dir: Option<PathBuf>) -> Result
         .map_err(|e| anyhow::anyhow!("Mutex poisoned: {}", e))?;
 
     // Persist temp file using spawn_blocking to avoid blocking async runtime
-    let output_path_for_persist = output_path.clone();
+    let output_path_for_persist = final_output_path.clone();
     tokio::task::spawn_blocking(move || {
         let mut file = temp_file;
         file.flush().context("Failed to flush file")?;
@@ -252,7 +281,7 @@ pub async fn receive_file_tor(code: &str, output_dir: Option<PathBuf>) -> Result
     .context("Persist task panicked")??;
 
     log::info!("\nFile received successfully!");
-    log::info!("Saved to: {}", output_path.display());
+    log::info!("Saved to: {}", final_output_path.display());
 
     // Send ACK
     stream

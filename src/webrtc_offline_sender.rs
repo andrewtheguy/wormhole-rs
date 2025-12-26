@@ -264,6 +264,36 @@ async fn transfer_offline_internal(
         format_bytes(file_size)
     );
 
+    // Wait for receiver confirmation before sending data
+    log::info!("Waiting for receiver to confirm...");
+    let confirm_result = tokio::time::timeout(Duration::from_secs(120), async {
+        loop {
+            match message_rx.recv().await {
+                Some(data) if !data.is_empty() && data[0] == 4 => return Ok(true),  // PROCEED
+                Some(data) if !data.is_empty() && data[0] == 5 => return Ok::<bool, ()>(false), // ABORT
+                Some(_) => continue,
+                None => return Ok(false),
+            }
+        }
+    })
+    .await;
+
+    match confirm_result {
+        Ok(Ok(true)) => {
+            log::info!("Receiver ready, starting transfer...");
+        }
+        Ok(Ok(false)) | Ok(Err(_)) => {
+            log::info!("Receiver declined transfer");
+            let _ = rtc_peer_arc.close().await;
+            anyhow::bail!("Transfer cancelled by receiver");
+        }
+        Err(_) => {
+            log::info!("Confirmation timeout");
+            let _ = rtc_peer_arc.close().await;
+            anyhow::bail!("Timed out waiting for receiver confirmation");
+        }
+    }
+
     // Send chunks
     let total_chunks = num_chunks(file_size);
     let mut buffer = vec![0u8; CHUNK_SIZE];

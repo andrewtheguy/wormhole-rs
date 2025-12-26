@@ -27,7 +27,10 @@ use crate::mdns_common::{
     MdnsServiceInfo, SERVICE_TYPE, TXT_FILENAME, TXT_FILE_SIZE, TXT_TRANSFER_ID, TXT_TRANSFER_TYPE,
 };
 use crate::spake2_handshake::handshake_as_initiator;
-use crate::transfer::{format_bytes, num_chunks, recv_encrypted_chunk, recv_encrypted_header, TransferType};
+use crate::transfer::{
+    find_available_filename, format_bytes, num_chunks, prompt_file_exists, recv_encrypted_chunk,
+    recv_encrypted_header, FileExistsChoice, TransferType, ABORT_SIGNAL, PROCEED_SIGNAL,
+};
 
 /// Timeout for mDNS browsing (seconds)
 const BROWSE_TIMEOUT_SECS: u64 = 30;
@@ -257,16 +260,66 @@ async fn receive_data_over_tcp(
         format_bytes(header.file_size)
     );
 
+    // Determine output directory
+    let output_dir = output_dir.unwrap_or_else(|| PathBuf::from("."));
+
+    // Check file existence and get final output path (for files only)
+    // This happens BEFORE data transfer, so user can cancel without wasting bandwidth
+    let final_output_path = if header.transfer_type == TransferType::File {
+        let output_path = output_dir.join(&header.filename);
+
+        if output_path.exists() {
+            // Prompt user in blocking context
+            let path_clone = output_path.clone();
+            let choice = tokio::task::spawn_blocking(move || prompt_file_exists(&path_clone))
+                .await
+                .context("Prompt task panicked")??;
+
+            match choice {
+                FileExistsChoice::Overwrite => {
+                    tokio::fs::remove_file(&output_path)
+                        .await
+                        .context("Failed to remove existing file")?;
+                    output_path
+                }
+                FileExistsChoice::Rename => {
+                    let new_path = find_available_filename(&output_path);
+                    println!("Will save as: {}", new_path.display());
+                    new_path
+                }
+                FileExistsChoice::Cancel => {
+                    // Send ABORT signal to sender
+                    stream
+                        .write_all(ABORT_SIGNAL)
+                        .await
+                        .context("Failed to send abort signal")?;
+                    anyhow::bail!("Transfer cancelled by user");
+                }
+            }
+        } else {
+            output_path
+        }
+    } else {
+        // For folders, we extract to a directory - handled separately
+        output_dir.clone()
+    };
+
+    // Send confirmation to sender that we're ready to receive data
+    stream
+        .write_all(PROCEED_SIGNAL)
+        .await
+        .context("Failed to send proceed signal")?;
+    println!("Ready to receive data...");
+
     // Dispatch based on transfer type
     let stream = match header.transfer_type {
         TransferType::File => {
-            receive_file_impl(&mut stream, &header.filename, header.file_size, key, output_dir)
-                .await?;
+            receive_file_impl(&mut stream, header.file_size, key, final_output_path).await?;
             stream
         }
         TransferType::Folder => {
             // Folder impl takes ownership and returns stream after extraction
-            receive_folder_impl(stream, &header.filename, header.file_size, key, output_dir)
+            receive_folder_impl(stream, &header.filename, header.file_size, key, Some(output_dir))
                 .await?
         }
     };
@@ -286,25 +339,15 @@ async fn receive_data_over_tcp(
 /// Receive a file implementation (streams directly to disk).
 async fn receive_file_impl(
     stream: &mut TcpStream,
-    filename: &str,
     file_size: u64,
     key: &[u8; 32],
-    output_dir: Option<PathBuf>,
+    output_path: PathBuf,
 ) -> Result<()> {
-    let output_dir = output_dir.unwrap_or_else(|| PathBuf::from("."));
-    let output_path = output_dir.join(filename);
-
-    // Check if exists
-    if output_path.exists() {
-        let should_overwrite = prompt_overwrite(&output_path)?;
-        if !should_overwrite {
-            anyhow::bail!("Transfer cancelled - file exists");
-        }
-        std::fs::remove_file(&output_path)?;
-    }
+    // Get output directory for temp file
+    let output_dir = output_path.parent().unwrap_or(std::path::Path::new("."));
 
     // Create temp file
-    let mut temp_file = NamedTempFile::new_in(&output_dir).context("Failed to create temp file")?;
+    let mut temp_file = NamedTempFile::new_in(output_dir).context("Failed to create temp file")?;
     let temp_path = temp_file.path().to_path_buf();
     let cleanup_path: TempFileCleanup = Arc::new(Mutex::new(Some(temp_path.clone())));
     let cleanup_cancel = CancellationToken::new();
@@ -446,15 +489,6 @@ fn prompt_selection(max: usize) -> Result<Option<usize>> {
 /// Prompt user for PIN with checksum validation.
 fn prompt_pin() -> Result<String> {
     crate::pin::prompt_pin().context("Failed to read PIN")
-}
-
-/// Prompt user to overwrite existing file.
-fn prompt_overwrite(path: &PathBuf) -> Result<bool> {
-    print!("File exists: {}. Overwrite? [y/N] ", path.display());
-    std::io::stdout().flush()?;
-    let mut input = String::new();
-    std::io::stdin().read_line(&mut input)?;
-    Ok(input.trim().eq_ignore_ascii_case("y"))
 }
 
 /// Set up Ctrl+C handler for temp file cleanup.

@@ -15,6 +15,7 @@ use crate::cli_instructions::print_receiver_command;
 use crate::transfer::{
     format_bytes, num_chunks, prepare_file_for_send, prepare_folder_for_send,
     send_encrypted_chunk, send_encrypted_header, FileHeader, TransferType,
+    ABORT_SIGNAL, PROCEED_SIGNAL,
 };
 use crate::wormhole::generate_tor_code;
 
@@ -106,6 +107,26 @@ async fn transfer_data_tor_internal(
         send_encrypted_header(&mut stream, &key, &header)
             .await
             .context("Failed to send header")?;
+
+        // Wait for receiver confirmation before sending data
+        // This allows receiver to check if file exists and prompt user
+        log::info!("Waiting for receiver to confirm...");
+        let mut confirm_buf = [0u8; 7]; // "PROCEED" or "ABORT\0\0"
+        stream
+            .read_exact(&mut confirm_buf)
+            .await
+            .context("Failed to receive confirmation from receiver")?;
+
+        if confirm_buf[..5] == ABORT_SIGNAL[..5] {
+            log::info!("Receiver declined transfer");
+            anyhow::bail!("Transfer cancelled by receiver");
+        }
+
+        if confirm_buf != *PROCEED_SIGNAL {
+            anyhow::bail!("Invalid confirmation signal from receiver");
+        }
+
+        log::info!("Receiver ready, starting transfer...");
 
         // Send chunks
         let total_chunks = num_chunks(file_size);

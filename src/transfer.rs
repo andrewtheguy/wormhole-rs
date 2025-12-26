@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use tempfile::NamedTempFile;
 use tokio::fs::File;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -389,4 +389,78 @@ pub async fn prepare_folder_for_send(folder_path: &Path) -> Result<Option<Prepar
         file_size,
         temp_file: tar_archive.temp_file,
     }))
+}
+
+// ============================================================================
+// Confirmation handshake protocol (file exists check before data transfer)
+// ============================================================================
+
+/// Signal sent by receiver to indicate transfer should proceed
+pub const PROCEED_SIGNAL: &[u8] = b"PROCEED";
+
+/// Signal sent by receiver to abort transfer (e.g., file exists and user declined)
+pub const ABORT_SIGNAL: &[u8] = b"ABORT\0\0"; // Padded to 7 bytes like PROCEED
+
+/// User's choice when file already exists
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FileExistsChoice {
+    Overwrite,
+    Rename,
+    Cancel,
+}
+
+/// Find next available filename by appending .2, .3, etc.
+/// Example: file.txt -> file.2.txt -> file.3.txt
+pub fn find_available_filename(path: &Path) -> PathBuf {
+    if !path.exists() {
+        return path.to_path_buf();
+    }
+
+    let stem = path
+        .file_stem()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_string();
+    let ext = path
+        .extension()
+        .map(|e| format!(".{}", e.to_string_lossy()))
+        .unwrap_or_default();
+    let parent = path.parent().unwrap_or(Path::new("."));
+
+    for i in 2..=999 {
+        let new_name = format!("{}.{}{}", stem, i, ext);
+        let new_path = parent.join(&new_name);
+        if !new_path.exists() {
+            return new_path;
+        }
+    }
+
+    // Fallback with timestamp if somehow 999 files exist
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    parent.join(format!("{}.{}{}", stem, timestamp, ext))
+}
+
+/// Prompt user for choice when file already exists.
+/// Returns the user's choice (overwrite, rename, or cancel).
+pub fn prompt_file_exists(path: &Path) -> Result<FileExistsChoice> {
+    let display_path = path.display().to_string();
+
+    print!(
+        "⚠️  File exists: {}\n[o]verwrite / [r]ename / [c]ancel: ",
+        display_path
+    );
+    std::io::stdout().flush()?;
+
+    let mut input = String::new();
+    std::io::stdin().read_line(&mut input)?;
+
+    let choice = input.trim().to_lowercase();
+    match choice.as_str() {
+        "o" | "overwrite" => Ok(FileExistsChoice::Overwrite),
+        "r" | "rename" => Ok(FileExistsChoice::Rename),
+        _ => Ok(FileExistsChoice::Cancel),
+    }
 }

@@ -284,6 +284,48 @@ async fn try_webrtc_transfer(
         format_bytes(file_size)
     );
 
+    // Wait for receiver confirmation before sending data
+    // This allows receiver to check if file exists and prompt user
+    println!("Waiting for receiver to confirm...");
+
+    let confirm_result = timeout(Duration::from_secs(120), async {
+        loop {
+            match message_rx.recv().await {
+                Some(data) if !data.is_empty() && data[0] == 4 => {
+                    return Ok(true); // Got PROCEED
+                }
+                Some(data) if !data.is_empty() && data[0] == 5 => {
+                    return Ok::<bool, ()>(false); // Got ABORT
+                }
+                Some(_) => continue,
+                None => return Ok(false), // Channel closed
+            }
+        }
+    })
+    .await;
+
+    match confirm_result {
+        Err(_) => {
+            return Ok(WebRtcResult::Failed(
+                "Timeout waiting for receiver confirmation".to_string(),
+            ));
+        }
+        Ok(Ok(false)) => {
+            println!("Receiver declined transfer");
+            return Ok(WebRtcResult::Failed(
+                "Transfer cancelled by receiver".to_string(),
+            ));
+        }
+        Ok(Ok(true)) => {
+            println!("Receiver confirmed, starting transfer...");
+        }
+        Ok(Err(_)) => {
+            return Ok(WebRtcResult::Failed(
+                "Confirmation channel error".to_string(),
+            ));
+        }
+    }
+
     // Send chunks
     let total_chunks = num_chunks(file_size);
     let mut buffer = vec![0u8; CHUNK_SIZE];

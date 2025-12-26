@@ -24,6 +24,7 @@ use crate::spake2_handshake::handshake_as_responder;
 use crate::transfer::{
     format_bytes, num_chunks, prepare_file_for_send, prepare_folder_for_send,
     send_encrypted_chunk, send_encrypted_header, FileHeader, TransferType,
+    ABORT_SIGNAL, PROCEED_SIGNAL,
 };
 
 /// Display receiver instructions and PIN to the user.
@@ -247,6 +248,25 @@ async fn send_data_over_tcp(
         .context("Failed to send header")?;
 
     log::info!("Sent file header");
+
+    // Wait for receiver confirmation before sending data
+    log::info!("Waiting for receiver to confirm...");
+    let mut confirm_buf = [0u8; 7];
+    stream
+        .read_exact(&mut confirm_buf)
+        .await
+        .context("Failed to receive confirmation from receiver")?;
+
+    if confirm_buf[..5] == ABORT_SIGNAL[..5] {
+        log::info!("Receiver declined transfer");
+        anyhow::bail!("Transfer cancelled by receiver");
+    }
+
+    if confirm_buf != *PROCEED_SIGNAL {
+        anyhow::bail!("Invalid confirmation signal from receiver");
+    }
+
+    log::info!("Receiver ready, starting transfer...");
 
     // Send chunks
     let total_chunks = num_chunks(file_size);
