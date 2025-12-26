@@ -121,6 +121,9 @@ pub async fn send_encrypted_header<W: AsyncWriteExt + Unpin>(
     // Write encrypted header
     writer.write_all(&encrypted).await?;
 
+    // Flush to ensure header is sent immediately (required for Tor streams)
+    writer.flush().await?;
+
     Ok(())
 }
 
