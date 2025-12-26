@@ -259,13 +259,14 @@ async fn main() -> Result<()> {
             .add_directive("arti_client=warn".parse().unwrap())
             .add_directive("tor_proto=warn".parse().unwrap())
             .add_directive("tor_chanmgr=warn".parse().unwrap())
-            .add_directive("tor_circmgr=warn".parse().unwrap())
+            .add_directive("tor_circmgr=off".parse().unwrap()) // Suppress cleanup errors on drop
             .add_directive("tor_guardmgr=warn".parse().unwrap())
             .add_directive("tor_netdir=warn".parse().unwrap())
             .add_directive("tor_dirmgr=warn".parse().unwrap())
             .add_directive("tor_hsservice=warn".parse().unwrap())
             .add_directive("tor_hsclient=warn".parse().unwrap())
             .add_directive("tor_rtcompat=warn".parse().unwrap())
+            .add_directive("tor_persist=off".parse().unwrap()) // Suppress state persistence errors
     });
 
     tracing_subscriber::fmt()
