@@ -1,6 +1,6 @@
 use tokio::io::duplex;
-use wormhole_rs::crypto::{generate_key, CHUNK_SIZE};
-use wormhole_rs::transfer::{
+use wormhole_rs::core::crypto::{generate_key, CHUNK_SIZE};
+use wormhole_rs::core::transfer::{
     recv_chunk, recv_encrypted_chunk, recv_encrypted_header, recv_header, send_chunk,
     send_encrypted_chunk, send_encrypted_header, send_header, FileHeader, TransferType,
 };
@@ -443,7 +443,7 @@ async fn test_encrypted_wrong_key_fails_on_chunk() {
 
 #[tokio::test]
 async fn test_encrypted_different_keys_produce_different_payloads() {
-    use wormhole_rs::crypto::encrypt_chunk;
+    use wormhole_rs::core::crypto::encrypt_chunk;
 
     // Same file content and metadata
     let data = b"Identical file content for both transfers";
@@ -479,8 +479,8 @@ async fn test_encrypted_different_keys_produce_different_payloads() {
 
 #[tokio::test]
 async fn test_encrypted_different_keys_produce_different_headers() {
-    use wormhole_rs::crypto::encrypt_chunk;
-    use wormhole_rs::transfer::FileHeader;
+    use wormhole_rs::core::crypto::encrypt_chunk;
+    use wormhole_rs::core::transfer::FileHeader;
 
     // Same file metadata
     let header = FileHeader::new(TransferType::File, "same_file.txt".to_string(), 12345);

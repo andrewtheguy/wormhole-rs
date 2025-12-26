@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use crate::nostr_protocol::*;
+    use crate::signaling::nostr_protocol::*;
     use nostr_sdk::prelude::*;
 
     #[test]

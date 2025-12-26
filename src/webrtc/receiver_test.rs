@@ -1,6 +1,6 @@
 use anyhow::Result;
-use crate::crypto::{encrypt_chunk, generate_key, CHUNK_SIZE};
-use crate::webrtc_receiver::WebRtcStreamingReader;
+use crate::core::crypto::{encrypt_chunk, generate_key, CHUNK_SIZE};
+use crate::webrtc::receiver::WebRtcStreamingReader;
 use std::io::Read;
 use tokio::sync::mpsc;
 

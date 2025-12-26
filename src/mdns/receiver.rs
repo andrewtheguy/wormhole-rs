@@ -19,15 +19,15 @@ use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
-use crate::folder::{
+use crate::core::folder::{
     extract_tar_archive_returning_reader, get_extraction_dir, print_skipped_entries,
     print_tar_extraction_info, StreamingReader,
 };
-use crate::mdns_common::{
+use crate::mdns::common::{
     MdnsServiceInfo, SERVICE_TYPE, TXT_FILENAME, TXT_FILE_SIZE, TXT_TRANSFER_ID, TXT_TRANSFER_TYPE,
 };
-use crate::spake2_handshake::handshake_as_initiator;
-use crate::transfer::{
+use crate::auth::spake2::handshake_as_initiator;
+use crate::core::transfer::{
     find_available_filename, format_bytes, num_chunks, prompt_file_exists, recv_encrypted_chunk,
     recv_encrypted_header, FileExistsChoice, TransferType, ABORT_SIGNAL, PROCEED_SIGNAL,
 };
@@ -488,7 +488,7 @@ fn prompt_selection(max: usize) -> Result<Option<usize>> {
 
 /// Prompt user for PIN with checksum validation.
 fn prompt_pin() -> Result<String> {
-    crate::pin::prompt_pin().context("Failed to read PIN")
+    crate::auth::pin::prompt_pin().context("Failed to read PIN")
 }
 
 /// Set up Ctrl+C handler for temp file cleanup.

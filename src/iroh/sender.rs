@@ -7,15 +7,15 @@ use tokio::fs::File;
 use tokio::io::AsyncReadExt;
 use tokio::sync::Mutex;
 
-use crate::crypto::{generate_key, CHUNK_SIZE};
-use crate::cli_instructions::print_receiver_command;
-use crate::iroh_common::{create_sender_endpoint};
-use crate::transfer::{
+use crate::core::crypto::{generate_key, CHUNK_SIZE};
+use crate::cli::instructions::print_receiver_command;
+use crate::iroh::common::{create_sender_endpoint};
+use crate::core::transfer::{
     format_bytes, num_chunks, prepare_file_for_send, prepare_folder_for_send,
     send_encrypted_chunk, send_encrypted_header, FileHeader, TransferType,
     ABORT_SIGNAL, PROCEED_SIGNAL,
 };
-use crate::wormhole::generate_code;
+use crate::core::wormhole::generate_code;
 
 /// Shared state for temp file cleanup on interrupt
 type TempFileCleanup = Arc<Mutex<Option<PathBuf>>>;
@@ -69,7 +69,7 @@ async fn transfer_data_internal(
     if use_pin {
         // Generate ephemeral keys for PIN exchange
         let keys = nostr_sdk::Keys::generate();
-        let pin = crate::nostr_pin::publish_wormhole_code_via_pin(
+        let pin = crate::auth::nostr_pin::publish_wormhole_code_via_pin(
             &keys,
             &code,
             "iroh-transfer", // Transfer id not critical for iroh, just needs to be non-empty

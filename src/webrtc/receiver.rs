@@ -16,20 +16,20 @@ use tokio::time::{timeout, Duration};
 use webrtc::ice_transport::ice_candidate::RTCIceCandidateInit;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 
-use crate::crypto::decrypt_chunk;
-use crate::folder::{
+use crate::core::crypto::decrypt_chunk;
+use crate::core::folder::{
     extract_tar_archive, get_extraction_dir, print_skipped_entries, print_tar_extraction_info,
 };
 
-use crate::nostr_signaling::{create_receiver_signaling, NostrSignaling, SignalingMessage};
-use crate::transfer::{
+use crate::signaling::nostr::{create_receiver_signaling, NostrSignaling, SignalingMessage};
+use crate::core::transfer::{
     find_available_filename, format_bytes, num_chunks, prompt_file_exists, FileExistsChoice,
     FileHeader, TransferType,
 };
 
-use crate::webrtc_common::{setup_data_channel_handlers, WebRtcPeer};
-use crate::webrtc_offline_signaling::ice_candidates_to_payloads;
-use crate::wormhole::{decode_key, parse_code, PROTOCOL_WEBRTC};
+use crate::webrtc::common::{setup_data_channel_handlers, WebRtcPeer};
+use crate::signaling::offline::ice_candidates_to_payloads;
+use crate::core::wormhole::{decode_key, parse_code, PROTOCOL_WEBRTC};
 
 /// Connection timeout for WebRTC handshake
 const WEBRTC_CONNECTION_TIMEOUT: Duration = Duration::from_secs(30);

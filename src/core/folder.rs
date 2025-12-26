@@ -10,7 +10,7 @@ use tar::{Archive, Builder};
 use tempfile::NamedTempFile;
 use walkdir::WalkDir;
 
-use crate::transfer::recv_encrypted_chunk;
+use crate::core::transfer::recv_encrypted_chunk;
 
 /// Result of creating a tar archive from a folder.
 pub struct TarArchive {

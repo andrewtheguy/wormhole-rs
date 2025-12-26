@@ -5,8 +5,8 @@ use tempfile::NamedTempFile;
 use tokio::fs::File;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-use crate::crypto::{decrypt_chunk, encrypt_chunk, CHUNK_SIZE};
-use crate::folder::{create_tar_archive, print_tar_creation_info};
+use crate::core::crypto::{decrypt_chunk, encrypt_chunk, CHUNK_SIZE};
+use crate::core::folder::{create_tar_archive, print_tar_creation_info};
 
 /// Soft limit for large file transfers (100MB)
 pub const LARGE_FILE_THRESHOLD: u64 = 100 * 1024 * 1024;

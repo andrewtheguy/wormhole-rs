@@ -16,14 +16,14 @@ use webrtc::ice_transport::ice_candidate::RTCIceCandidateInit;
 use webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 
-use crate::crypto::decrypt_chunk;
-use crate::folder::{extract_tar_archive, print_tar_extraction_info};
-use crate::transfer::{
+use crate::core::crypto::decrypt_chunk;
+use crate::core::folder::{extract_tar_archive, print_tar_extraction_info};
+use crate::core::transfer::{
     find_available_filename, format_bytes, num_chunks, prompt_file_exists, FileExistsChoice,
     FileHeader, TransferType,
 };
-use crate::webrtc_common::{setup_data_channel_handlers, WebRtcPeer};
-use crate::webrtc_offline_signaling::{
+use crate::webrtc::common::{setup_data_channel_handlers, WebRtcPeer};
+use crate::signaling::offline::{
     display_answer_json, ice_candidates_to_payloads, read_offer_json, OfflineAnswer,
 };
 

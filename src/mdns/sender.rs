@@ -14,14 +14,14 @@ use tokio::fs::File;
 use tokio::net::TcpStream;
 use tokio::sync::Mutex;
 
-use crate::crypto::CHUNK_SIZE;
-use crate::cli_instructions::print_receiver_command;
-use crate::mdns_common::{
+use crate::core::crypto::CHUNK_SIZE;
+use crate::cli::instructions::print_receiver_command;
+use crate::mdns::common::{
     generate_pin, generate_transfer_id, PORT_RANGE_END, PORT_RANGE_START, SERVICE_TYPE,
     TXT_FILENAME, TXT_FILE_SIZE, TXT_TRANSFER_ID, TXT_TRANSFER_TYPE,
 };
-use crate::spake2_handshake::handshake_as_responder;
-use crate::transfer::{
+use crate::auth::spake2::handshake_as_responder;
+use crate::core::transfer::{
     format_bytes, num_chunks, prepare_file_for_send, prepare_folder_for_send,
     send_encrypted_chunk, send_encrypted_header, FileHeader, TransferType,
     ABORT_SIGNAL, PROCEED_SIGNAL,

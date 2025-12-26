@@ -17,13 +17,13 @@ use webrtc::ice_transport::ice_candidate::RTCIceCandidateInit;
 use webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 
-use crate::crypto::{encrypt_chunk, generate_key, CHUNK_SIZE};
-use crate::transfer::{
+use crate::core::crypto::{encrypt_chunk, generate_key, CHUNK_SIZE};
+use crate::core::transfer::{
     format_bytes, num_chunks, prepare_file_for_send, prepare_folder_for_send, FileHeader,
     TransferType,
 };
-use crate::webrtc_common::{setup_data_channel_handlers, WebRtcPeer};
-use crate::webrtc_offline_signaling::{
+use crate::webrtc::common::{setup_data_channel_handlers, WebRtcPeer};
+use crate::signaling::offline::{
     display_offer_json, ice_candidates_to_payloads, read_answer_json, OfflineAnswer, OfflineOffer,
     TransferInfo,
 };

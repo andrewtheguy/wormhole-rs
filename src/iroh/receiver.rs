@@ -6,16 +6,16 @@ use std::sync::Arc;
 use tempfile::NamedTempFile;
 use tokio::sync::Mutex;
 
-use crate::folder::{
+use crate::core::folder::{
     extract_tar_archive, get_extraction_dir, print_skipped_entries, print_tar_extraction_info,
     StreamingReader,
 };
-use crate::iroh_common::{create_receiver_endpoint, ALPN};
-use crate::transfer::{
+use crate::iroh::common::{create_receiver_endpoint, ALPN};
+use crate::core::transfer::{
     find_available_filename, format_bytes, num_chunks, prompt_file_exists, recv_encrypted_chunk,
     recv_encrypted_header, FileExistsChoice, TransferType, ABORT_SIGNAL, PROCEED_SIGNAL,
 };
-use crate::wormhole::parse_code;
+use crate::core::wormhole::parse_code;
 
 /// Shared state for temp file cleanup on interrupt
 type TempFileCleanup = Arc<Mutex<Option<PathBuf>>>;
@@ -65,7 +65,7 @@ pub async fn receive(code: &str, output_dir: Option<PathBuf>, relay_urls: Vec<St
 
     // Parse the wormhole code
     let token = parse_code(code).context("Failed to parse wormhole code")?;
-    let key = crate::wormhole::decode_key(&token.key)
+    let key = crate::core::wormhole::decode_key(&token.key)
         .context("Failed to decode encryption key")?;
     let addr = token
         .addr
@@ -211,7 +211,7 @@ pub async fn receive(code: &str, output_dir: Option<PathBuf>, relay_urls: Vec<St
 /// output_path is the final destination path (file existence already checked)
 async fn receive_file_impl<R>(
     recv_stream: &mut R,
-    header: &crate::transfer::FileHeader,
+    header: &crate::core::transfer::FileHeader,
     key: [u8; 32],
     output_path: PathBuf,
 ) -> Result<()>
@@ -283,7 +283,7 @@ where
 /// Internal implementation for receiving a folder (tar archive)
 async fn receive_folder_impl<R>(
     recv_stream: R,
-    header: &crate::transfer::FileHeader,
+    header: &crate::core::transfer::FileHeader,
     key: [u8; 32],
     output_dir: Option<PathBuf>,
 ) -> Result<()>

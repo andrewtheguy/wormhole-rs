@@ -17,16 +17,16 @@ use tokio::time::{timeout, Duration};
 use webrtc::ice_transport::ice_candidate::RTCIceCandidateInit;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 
-use crate::crypto::{encrypt_chunk, generate_key, CHUNK_SIZE};
-use crate::nostr_signaling::{create_sender_signaling, NostrSignaling, SignalingMessage};
-use crate::transfer::{
+use crate::core::crypto::{encrypt_chunk, generate_key, CHUNK_SIZE};
+use crate::signaling::nostr::{create_sender_signaling, NostrSignaling, SignalingMessage};
+use crate::core::transfer::{
     format_bytes, num_chunks, prepare_file_for_send, prepare_folder_for_send, FileHeader,
     TransferType,
 };
-use crate::webrtc_common::{setup_data_channel_handlers, WebRtcPeer};
-use crate::webrtc_offline_signaling::ice_candidates_to_payloads;
-use crate::wormhole::generate_webrtc_code;
-use crate::cli_instructions::print_receiver_command;
+use crate::webrtc::common::{setup_data_channel_handlers, WebRtcPeer};
+use crate::signaling::offline::ice_candidates_to_payloads;
+use crate::core::wormhole::generate_webrtc_code;
+use crate::cli::instructions::print_receiver_command;
 
 /// Connection timeout for WebRTC handshake
 const WEBRTC_CONNECTION_TIMEOUT: Duration = Duration::from_secs(30);
@@ -109,7 +109,7 @@ async fn display_transfer_code(
     transfer_id: &str,
 ) -> Result<()> {
     if use_pin {
-        let pin = crate::nostr_pin::publish_wormhole_code_via_pin(
+        let pin = crate::auth::nostr_pin::publish_wormhole_code_via_pin(
             signaling_keys,
             code_str,
             transfer_id,
@@ -517,7 +517,7 @@ pub async fn send_file_webrtc(
 ) -> Result<()> {
     // If manual signaling mode, use offline sender directly
     if manual_signaling {
-        return crate::webrtc_offline_sender::send_file_offline(file_path).await;
+        return crate::webrtc::offline_sender::send_file_offline(file_path).await;
     }
 
     // Try normal Nostr signaling path
@@ -533,7 +533,7 @@ pub async fn send_file_webrtc(
         Err(e) => {
             let path = file_path.to_path_buf();
             handle_signaling_error_with_fallback(e, || async move {
-                crate::webrtc_offline_sender::send_file_offline(&path).await
+                crate::webrtc::offline_sender::send_file_offline(&path).await
             })
             .await
         }
@@ -574,7 +574,7 @@ pub async fn send_folder_webrtc(
 ) -> Result<()> {
     // If manual signaling mode, use offline sender directly
     if manual_signaling {
-        return crate::webrtc_offline_sender::send_folder_offline(folder_path).await;
+        return crate::webrtc::offline_sender::send_folder_offline(folder_path).await;
     }
 
     // Try normal Nostr signaling path
@@ -590,7 +590,7 @@ pub async fn send_folder_webrtc(
         Err(e) => {
             let path = folder_path.to_path_buf();
             handle_signaling_error_with_fallback(e, || async move {
-                crate::webrtc_offline_sender::send_folder_offline(&path).await
+                crate::webrtc::offline_sender::send_folder_offline(&path).await
             })
             .await
         }

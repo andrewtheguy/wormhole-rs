@@ -12,7 +12,9 @@
       "Bash(cat:*)",
       "Bash(git show:*)",
       "mcp__github__issue_read",
-      "WebFetch(domain:docs.rs)"
+      "WebFetch(domain:docs.rs)",
+      "Bash(ls:*)",
+      "Bash({} ;)"
     ]
   }
 }

@@ -17,8 +17,8 @@ use rand::RngCore;
 use sha2::{Digest, Sha256};
 use tokio::time::Duration;
 
-use crate::nostr_protocol::DEFAULT_NOSTR_RELAYS;
-use crate::pin::{generate_pin, PIN_LENGTH};
+use crate::signaling::nostr_protocol::DEFAULT_NOSTR_RELAYS;
+use crate::auth::pin::{generate_pin, PIN_LENGTH};
 
 /// Nostr event kind for PIN exchange (24243)
 pub const PIN_EXCHANGE_KIND: u16 = 24243;

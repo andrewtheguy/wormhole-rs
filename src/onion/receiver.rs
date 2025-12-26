@@ -7,15 +7,15 @@ use tempfile::NamedTempFile;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::Mutex;
 
-use crate::folder::{
+use crate::core::folder::{
     extract_tar_archive_returning_reader, get_extraction_dir, print_skipped_entries,
     print_tar_extraction_info, StreamingReader,
 };
-use crate::transfer::{
+use crate::core::transfer::{
     find_available_filename, format_bytes, num_chunks, prompt_file_exists, recv_encrypted_chunk,
     recv_encrypted_header, FileExistsChoice, TransferType, ABORT_SIGNAL, PROCEED_SIGNAL,
 };
-use crate::wormhole::{decode_key, parse_code, PROTOCOL_TOR};
+use crate::core::wormhole::{decode_key, parse_code, PROTOCOL_TOR};
 
 const MAX_RETRIES: u32 = 5;
 const RETRY_DELAY_SECS: u64 = 5;
@@ -298,7 +298,7 @@ pub async fn receive_file_tor(code: &str, output_dir: Option<PathBuf>) -> Result
 /// Handle folder transfer after header is received
 async fn receive_folder_stream<S: AsyncReadExt + AsyncWriteExt + Unpin + Send + 'static>(
     stream: S,
-    header: crate::transfer::FileHeader,
+    header: crate::core::transfer::FileHeader,
     key: [u8; 32],
     output_dir: Option<PathBuf>,
 ) -> Result<()> {

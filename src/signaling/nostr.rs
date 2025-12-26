@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tokio::time::{timeout, Duration};
 
-use crate::nostr_protocol::{
+use crate::signaling::nostr_protocol::{
     generate_transfer_id, get_best_relays, nostr_file_transfer_kind, DEFAULT_NOSTR_RELAYS,
 };
 

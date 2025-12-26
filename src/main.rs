@@ -2,18 +2,22 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use std::io::{self, Write};
 use std::path::PathBuf;
+
+use wormhole_rs::core::wormhole;
+
 #[cfg(feature = "iroh")]
-use wormhole_rs::{iroh_receiver, iroh_sender};
-use wormhole_rs::wormhole;
+use wormhole_rs::iroh::{receiver as iroh_receiver, sender as iroh_sender};
 
 #[cfg(feature = "onion")]
-use wormhole_rs::{onion_receiver, onion_sender};
+use wormhole_rs::onion::{receiver as onion_receiver, sender as onion_sender};
 
 #[cfg(feature = "webrtc")]
-use wormhole_rs::{webrtc_receiver, webrtc_sender, webrtc_offline_receiver};
+use wormhole_rs::webrtc::{
+    offline_receiver as webrtc_offline_receiver, receiver as webrtc_receiver,
+    sender as webrtc_sender,
+};
 
-
-use wormhole_rs::{mdns_receiver, mdns_sender};
+use wormhole_rs::mdns::{receiver as mdns_receiver, sender as mdns_sender};
 
 #[derive(Parser)]
 #[command(name = "wormhole-rs")]
@@ -322,12 +326,12 @@ async fn main() -> Result<()> {
 
             // Handle PIN mode if requested
             if pin {
-                let pin_str = wormhole_rs::pin::prompt_pin()?;
+                let pin_str = wormhole_rs::auth::pin::prompt_pin()?;
 
                 log::info!("Searching for wormhole token via Nostr...");
 
                 // Fetch encrypted token from Nostr
-                let token_str = wormhole_rs::nostr_pin::fetch_wormhole_code_via_pin(&pin_str).await?;
+                let token_str = wormhole_rs::auth::nostr_pin::fetch_wormhole_code_via_pin(&pin_str).await?;
                 log::info!("Token found and decrypted!");
                 code = Some(token_str);
             }
@@ -354,12 +358,12 @@ async fn main() -> Result<()> {
 
             // Handle PIN mode if requested
             if pin {
-                let pin_str = wormhole_rs::pin::prompt_pin()?;
+                let pin_str = wormhole_rs::auth::pin::prompt_pin()?;
 
                 log::info!("Searching for wormhole token via Nostr...");
 
                 // Fetch encrypted token from Nostr
-                let token_str = wormhole_rs::nostr_pin::fetch_wormhole_code_via_pin(&pin_str).await?;
+                let token_str = wormhole_rs::auth::nostr_pin::fetch_wormhole_code_via_pin(&pin_str).await?;
                 log::info!("Token found and decrypted!");
                 code = Some(token_str);
             }

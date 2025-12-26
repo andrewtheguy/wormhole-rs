@@ -11,8 +11,8 @@ use std::io::{BufRead, Write};
 use std::time::{SystemTime, UNIX_EPOCH};
 use webrtc::ice_transport::ice_candidate::RTCIceCandidate;
 
-use crate::nostr_signaling::IceCandidatePayload;
-use crate::wormhole::CODE_TTL_SECS;
+use crate::signaling::nostr::IceCandidatePayload;
+use crate::core::wormhole::CODE_TTL_SECS;
 
 /// Line width for wrapped output (safe for most terminals)
 const LINE_WIDTH: usize = 76;

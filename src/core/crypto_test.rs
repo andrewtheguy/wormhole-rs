@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use crate::crypto::{decrypt_chunk, encrypt_chunk, generate_key};
+    use crate::core::crypto::{decrypt_chunk, encrypt_chunk, generate_key};
 
     #[test]
     fn test_encrypt_decrypt_roundtrip() {
