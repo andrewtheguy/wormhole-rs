@@ -10,6 +10,7 @@ use aes_gcm::{
 };
 use anyhow::{Context, Result};
 use rand::RngCore;
+use sha2::{Digest, Sha256};
 
 pub const CHUNK_SIZE: usize = 16 * 1024; // 16KB chunks
 const NONCE_SIZE: usize = 12; // 96 bits
@@ -22,12 +23,29 @@ pub fn generate_key() -> [u8; 32] {
     key
 }
 
-/// Derive a unique nonce from the chunk number
-/// Uses the chunk number as a counter to ensure nonce uniqueness
-fn derive_nonce(chunk_num: u64) -> [u8; NONCE_SIZE] {
+/// Derive a unique nonce from the key and chunk number.
+///
+/// Uses a key-derived prefix XOR'd with the chunk counter to ensure:
+/// - Different keys produce different nonce sequences (prevents cross-session reuse)
+/// - Sequential chunks within a session have unique nonces (counter-based)
+/// - Deterministic derivation allows verification on decrypt
+fn derive_nonce(key: &[u8; 32], chunk_num: u64) -> [u8; NONCE_SIZE] {
+    // Derive nonce prefix from key using SHA256, truncated to 12 bytes
+    // This ensures different keys get different nonce sequences
+    let mut hasher = Sha256::new();
+    hasher.update(b"wormhole-nonce-prefix-v1");
+    hasher.update(key);
+    let hash = hasher.finalize();
+
     let mut nonce = [0u8; NONCE_SIZE];
-    // Use chunk number as counter in first 8 bytes
-    nonce[..8].copy_from_slice(&chunk_num.to_le_bytes());
+    nonce.copy_from_slice(&hash[..NONCE_SIZE]);
+
+    // XOR with chunk number in first 8 bytes to create counter-based uniqueness
+    let chunk_bytes = chunk_num.to_le_bytes();
+    for i in 0..8 {
+        nonce[i] ^= chunk_bytes[i];
+    }
+
     nonce
 }
 
@@ -35,7 +53,7 @@ fn derive_nonce(chunk_num: u64) -> [u8; NONCE_SIZE] {
 /// Returns: nonce (12 bytes) || ciphertext || tag (16 bytes)
 pub fn encrypt_chunk(key: &[u8; 32], chunk_num: u64, plaintext: &[u8]) -> Result<Vec<u8>> {
     let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(key));
-    let nonce_bytes = derive_nonce(chunk_num);
+    let nonce_bytes = derive_nonce(key, chunk_num);
     let nonce = Nonce::from_slice(&nonce_bytes);
 
     let ciphertext = cipher
@@ -58,10 +76,10 @@ pub fn decrypt_chunk(key: &[u8; 32], chunk_num: u64, encrypted: &[u8]) -> Result
     }
 
     let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(key));
-    
+
     // Extract nonce and verify it matches expected
     let nonce_bytes = &encrypted[..NONCE_SIZE];
-    let expected_nonce = derive_nonce(chunk_num);
+    let expected_nonce = derive_nonce(key, chunk_num);
     if nonce_bytes != expected_nonce {
         anyhow::bail!("Nonce mismatch - possible replay attack or corruption");
     }

@@ -463,17 +463,12 @@ async fn test_encrypted_different_keys_produce_different_payloads() {
         "Same data encrypted with different keys should produce different ciphertext"
     );
 
-    // Also verify the nonces are the same (deterministic from chunk_num)
-    // but ciphertext differs
-    assert_eq!(
+    // Verify nonces are DIFFERENT for different keys (key-derived prefix ensures this)
+    // This prevents nonce reuse across sessions even if same chunk_num is used
+    assert_ne!(
         &encrypted1[..12],
         &encrypted2[..12],
-        "Nonces should be identical for same chunk_num"
-    );
-    assert_ne!(
-        &encrypted1[12..],
-        &encrypted2[12..],
-        "Ciphertext should differ due to different keys"
+        "Nonces should differ for different keys to prevent cross-session nonce reuse"
     );
 }
 
