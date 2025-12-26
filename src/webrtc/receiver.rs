@@ -24,8 +24,8 @@ use crate::core::folder::{
 use crate::signaling::nostr::{create_receiver_signaling, NostrSignaling, SignalingMessage};
 use crate::core::transfer::{
     find_available_filename, format_bytes, make_webrtc_abort_msg, make_webrtc_ack_msg,
-    make_webrtc_proceed_msg, num_chunks, prompt_file_exists, FileExistsChoice, FileHeader,
-    TransferType,
+    make_webrtc_proceed_msg, num_chunks, parse_webrtc_control_msg, prompt_file_exists,
+    ControlSignal, FileExistsChoice, FileHeader, TransferType,
 };
 
 use crate::webrtc::common::{setup_data_channel_handlers, WebRtcPeer};
@@ -522,9 +522,19 @@ async fn receive_file_impl(
                 }
             }
             2 => {
-                // Done message
-                eprintln!("\nTransfer complete signal received");
-                break;
+                // Encrypted Done message: [type(1)][len(4)][encrypted]
+                match parse_webrtc_control_msg(&msg, key) {
+                    Ok(Some(ControlSignal::Done)) => {
+                        eprintln!("\nTransfer complete signal received");
+                        break;
+                    }
+                    Ok(_) => {
+                        log::warn!("Unexpected control signal type in Done position");
+                    }
+                    Err(e) => {
+                        log::warn!("Failed to decrypt Done message: {}", e);
+                    }
+                }
             }
             _ => {
                 // Ignore other messages
@@ -704,7 +714,20 @@ impl std::io::Read for WebRtcStreamingReader {
                                 }
                             }
                         }
-                        2 => return Ok(0), // EOF
+                        2 => {
+                            // Encrypted Done message
+                            match parse_webrtc_control_msg(&msg, &self.key) {
+                                Ok(Some(ControlSignal::Done)) => return Ok(0), // EOF
+                                Ok(_) => {
+                                    // Unexpected signal, continue to next message
+                                    continue;
+                                }
+                                Err(_) => {
+                                    // Failed to decrypt, continue to next message
+                                    continue;
+                                }
+                            }
+                        }
                         _ => {
                             // Ignore other messages, continue loop to fetch next
                             continue;

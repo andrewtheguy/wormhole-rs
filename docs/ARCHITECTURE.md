@@ -343,9 +343,9 @@ Each encrypted message uses a chunk number combined with the session key to deri
 | PROCEED | `u64::MAX` | `b"PROCEED"` | Yes |
 | ABORT | `u64::MAX - 1` | `b"ABORT"` | Yes |
 | ACK | `u64::MAX - 2` | `b"ACK"` | Yes |
-| Done | `u64::MAX - 3` | `b"DONE"` | WebRTC: No* |
+| Done | `u64::MAX - 3` | `b"DONE"` | Yes* |
 
-*The Done signal indicates transfer completion. In **WebRTC**, it is sent as an unencrypted single-byte message (type 2) since it carries no sensitive data and the receiver already knows the expected file size from the encrypted header. For **stream-based transports** (iroh, Tor, mDNS), there is no explicit Done signal—transfer completion is determined by receiving all expected bytes based on the file size in the header.
+*The Done signal indicates transfer completion. In **WebRTC**, it is sent as an encrypted message (type 2) for protocol consistency. For **stream-based transports** (iroh, Tor, mDNS), there is no explicit Done signal—transfer completion is determined by receiving all expected bytes based on the file size in the header.
 
 Using reserved high chunk numbers for control signals ensures:
 - Same encryption infrastructure for all messages
@@ -359,22 +359,22 @@ WebRTC uses a message-based protocol with a type byte prefix:
 ```
 Header/Control: [type: 1 byte][length: 4 bytes BE][encrypted_payload]
 Data Chunk:     [type: 1 byte][chunk_num: 8 bytes BE][length: 4 bytes BE][encrypted_payload]
-Done Signal:    [type: 1 byte]  (no payload)
 ```
 
 | Type Byte | Message | Encrypted | Format |
 |-----------|---------|-----------|--------|
 | 0 | Header | Yes | `[0][len][encrypted]` |
 | 1 | Data Chunk | Yes | `[1][chunk_num][len][encrypted]` |
-| 2 | Done Signal | No | `[2]` (single byte) |
+| 2 | Done Signal | Yes | `[2][len][encrypted]` |
 | 3 | ACK | Yes | `[3][len][encrypted]` |
 | 4 | PROCEED | Yes | `[4][len][encrypted]` |
 | 5 | ABORT | Yes | `[5][len][encrypted]` |
 
-**Control Signal Encryption (Types 3, 4, 5):**
+**Control Signal Encryption (Types 2, 3, 4, 5):**
 
 WebRTC control signals use the same nonce derivation as stream-based transports. The type byte is used only for message routing—the encrypted payload uses the reserved chunk numbers from the [Chunk Numbers table](#chunk-numbers-and-control-signals):
 
+- **Type 2 (DONE)**: Encrypts `b"DONE"` with chunk number `u64::MAX - 3`
 - **Type 3 (ACK)**: Encrypts `b"ACK"` with chunk number `u64::MAX - 2`
 - **Type 4 (PROCEED)**: Encrypts `b"PROCEED"` with chunk number `u64::MAX`
 - **Type 5 (ABORT)**: Encrypts `b"ABORT"` with chunk number `u64::MAX - 1`

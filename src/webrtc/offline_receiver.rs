@@ -20,8 +20,8 @@ use crate::core::crypto::decrypt_chunk;
 use crate::core::folder::{extract_tar_archive, print_tar_extraction_info};
 use crate::core::transfer::{
     find_available_filename, format_bytes, make_webrtc_abort_msg, make_webrtc_ack_msg,
-    make_webrtc_proceed_msg, num_chunks, prompt_file_exists, FileExistsChoice, FileHeader,
-    TransferType,
+    make_webrtc_proceed_msg, num_chunks, parse_webrtc_control_msg, prompt_file_exists,
+    ControlSignal, FileExistsChoice, FileHeader, TransferType,
 };
 use crate::webrtc::common::{setup_data_channel_handlers, WebRtcPeer};
 use crate::signaling::offline::{
@@ -382,16 +382,26 @@ async fn receive_file_impl(
                 }
             }
             2 => {
-                // Done message
-                if bytes_received == header.file_size {
-                    eprintln!("\nTransfer complete signal received");
-                    break;
-                } else {
-                    anyhow::bail!(
-                        "Received Done signal but only got {}/{} bytes",
-                        bytes_received,
-                        header.file_size
-                    );
+                // Encrypted Done message: [type(1)][len(4)][encrypted]
+                match parse_webrtc_control_msg(&msg, key) {
+                    Ok(Some(ControlSignal::Done)) => {
+                        if bytes_received == header.file_size {
+                            eprintln!("\nTransfer complete signal received");
+                            break;
+                        } else {
+                            anyhow::bail!(
+                                "Received Done signal but only got {}/{} bytes",
+                                bytes_received,
+                                header.file_size
+                            );
+                        }
+                    }
+                    Ok(_) => {
+                        log::warn!("Unexpected control signal type in Done position");
+                    }
+                    Err(e) => {
+                        log::warn!("Failed to decrypt Done message: {}", e);
+                    }
                 }
             }
             _ => {
@@ -537,8 +547,12 @@ impl std::io::Read for WebRtcStreamingReader {
                 Ok(to_copy)
             }
             2 => {
-                // Done message
-                Ok(0)
+                // Encrypted Done message
+                match parse_webrtc_control_msg(&msg, &self.key) {
+                    Ok(Some(ControlSignal::Done)) => Ok(0), // EOF
+                    Ok(_) => Ok(0), // Unexpected signal, treat as EOF
+                    Err(_) => Ok(0), // Failed to decrypt, treat as EOF
+                }
             }
             _ => Ok(0),
         }

@@ -260,8 +260,8 @@ async fn send_data_over_tcp(
             eprintln!("Receiver declined transfer");
             anyhow::bail!("Transfer cancelled by receiver");
         }
-        ControlSignal::Ack => {
-            anyhow::bail!("Unexpected ACK signal during confirmation");
+        ControlSignal::Ack | ControlSignal::Done => {
+            anyhow::bail!("Unexpected control signal during confirmation");
         }
     }
 

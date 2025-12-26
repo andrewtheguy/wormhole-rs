@@ -20,8 +20,8 @@ use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 use crate::core::crypto::{encrypt_chunk, generate_key, CHUNK_SIZE};
 use crate::signaling::nostr::{create_sender_signaling, NostrSignaling, SignalingMessage};
 use crate::core::transfer::{
-    format_bytes, num_chunks, parse_webrtc_control_msg, prepare_file_for_send,
-    prepare_folder_for_send, ControlSignal, FileHeader, TransferType,
+    format_bytes, make_webrtc_done_msg, num_chunks, parse_webrtc_control_msg,
+    prepare_file_for_send, prepare_folder_for_send, ControlSignal, FileHeader, TransferType,
 };
 use crate::webrtc::common::{setup_data_channel_handlers, WebRtcPeer};
 use crate::signaling::offline::ice_candidates_to_payloads;
@@ -296,7 +296,7 @@ async fn try_webrtc_transfer(
                     match parse_webrtc_control_msg(&data, &key_for_confirm) {
                         Ok(Some(ControlSignal::Proceed)) => return Ok(true),
                         Ok(Some(ControlSignal::Abort)) => return Ok::<bool, ()>(false),
-                        Ok(Some(ControlSignal::Ack)) => continue, // Unexpected, ignore
+                        Ok(Some(ControlSignal::Ack | ControlSignal::Done)) => continue, // Unexpected, ignore
                         Ok(None) => continue, // Not a control message
                         Err(_) => continue,   // Parse error, ignore
                     }
@@ -379,8 +379,8 @@ async fn try_webrtc_transfer(
 
     println!("\nTransfer complete!");
 
-    // Send done message
-    let done_msg = vec![2u8];
+    // Send encrypted done message
+    let done_msg = make_webrtc_done_msg(key).context("Failed to create done message")?;
     data_channel
         .send(&Bytes::from(done_msg))
         .await

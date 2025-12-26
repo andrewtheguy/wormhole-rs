@@ -119,8 +119,8 @@ async fn transfer_data_tor_internal(
                 eprintln!("Receiver declined transfer");
                 anyhow::bail!("Transfer cancelled by receiver");
             }
-            ControlSignal::Ack => {
-                anyhow::bail!("Unexpected ACK signal during confirmation");
+            ControlSignal::Ack | ControlSignal::Done => {
+                anyhow::bail!("Unexpected control signal during confirmation");
             }
         }
 

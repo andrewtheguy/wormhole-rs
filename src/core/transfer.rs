@@ -448,6 +448,7 @@ pub const ABORT_SIGNAL: &[u8] = b"ABORT\0\0"; // Padded to 7 bytes like PROCEED
 const CONTROL_CHUNK_PROCEED: u64 = u64::MAX;
 const CONTROL_CHUNK_ABORT: u64 = u64::MAX - 1;
 const CONTROL_CHUNK_ACK: u64 = u64::MAX - 2;
+const CONTROL_CHUNK_DONE: u64 = u64::MAX - 3;
 
 /// Control signal types for encrypted handshake
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -455,6 +456,7 @@ pub enum ControlSignal {
     Proceed,
     Abort,
     Ack,
+    Done,
 }
 
 /// Send encrypted PROCEED signal
@@ -529,7 +531,8 @@ pub async fn recv_control<R: AsyncReadExt + Unpin>(
 }
 
 // WebRTC-specific control message format: [type(1)][len(4)][encrypted]
-// Type: 3 = ACK, 4 = PROCEED, 5 = ABORT
+// Type: 2 = DONE, 3 = ACK, 4 = PROCEED, 5 = ABORT
+const WEBRTC_MSG_TYPE_DONE: u8 = 2;
 const WEBRTC_MSG_TYPE_ACK: u8 = 3;
 const WEBRTC_MSG_TYPE_PROCEED: u8 = 4;
 const WEBRTC_MSG_TYPE_ABORT: u8 = 5;
@@ -561,6 +564,15 @@ pub fn make_webrtc_ack_msg(key: &[u8; 32]) -> Result<Vec<u8>> {
     Ok(msg)
 }
 
+/// Create encrypted DONE message for WebRTC data channel
+pub fn make_webrtc_done_msg(key: &[u8; 32]) -> Result<Vec<u8>> {
+    let encrypted = encrypt_chunk(key, CONTROL_CHUNK_DONE, b"DONE")?;
+    let mut msg = vec![WEBRTC_MSG_TYPE_DONE];
+    msg.extend_from_slice(&(encrypted.len() as u32).to_be_bytes());
+    msg.extend_from_slice(&encrypted);
+    Ok(msg)
+}
+
 /// Parse encrypted control message from WebRTC data channel
 /// Returns Some(signal) if the message type matches a control signal and decryption succeeds
 /// Returns None if the message type is not a control signal
@@ -573,7 +585,8 @@ pub fn parse_webrtc_control_msg(data: &[u8], key: &[u8; 32]) -> Result<Option<Co
     let msg_type = data[0];
 
     // Check if it's a control message type
-    if msg_type != WEBRTC_MSG_TYPE_ACK
+    if msg_type != WEBRTC_MSG_TYPE_DONE
+        && msg_type != WEBRTC_MSG_TYPE_ACK
         && msg_type != WEBRTC_MSG_TYPE_PROCEED
         && msg_type != WEBRTC_MSG_TYPE_ABORT
     {
@@ -594,6 +607,13 @@ pub fn parse_webrtc_control_msg(data: &[u8], key: &[u8; 32]) -> Result<Option<Co
 
     // Decrypt based on message type
     match msg_type {
+        WEBRTC_MSG_TYPE_DONE => {
+            let decrypted = decrypt_chunk(key, CONTROL_CHUNK_DONE, encrypted)?;
+            if decrypted != b"DONE" {
+                anyhow::bail!("Invalid DONE payload");
+            }
+            Ok(Some(ControlSignal::Done))
+        }
         WEBRTC_MSG_TYPE_PROCEED => {
             let decrypted = decrypt_chunk(key, CONTROL_CHUNK_PROCEED, encrypted)?;
             if decrypted != b"PROCEED" {
