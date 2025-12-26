@@ -2,6 +2,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use std::io::{self, Write};
 use std::path::PathBuf;
+use tracing_subscriber::EnvFilter;
 
 use wormhole_rs::core::wormhole;
 
@@ -239,8 +240,26 @@ async fn do_send_webrtc(
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
-        .format(|buf, record| writeln!(buf, "{}", record.args()))
+    // Set up tracing subscriber with filters for noisy iroh internals
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+        EnvFilter::new("info")
+            // Suppress noisy iroh internal logs (they log at info but should be trace)
+            .add_directive("iroh=warn".parse().unwrap())
+            .add_directive("iroh_net=warn".parse().unwrap())
+            .add_directive("iroh_relay=warn".parse().unwrap())
+            .add_directive("iroh_quinn=warn".parse().unwrap())
+            .add_directive("netwatch=warn".parse().unwrap())
+            .add_directive("portmapper=warn".parse().unwrap())
+            .add_directive("swarm_discovery=warn".parse().unwrap())
+            .add_directive("pkarr=warn".parse().unwrap())
+            .add_directive("quinn=warn".parse().unwrap())
+            .add_directive("quinn_proto=warn".parse().unwrap())
+    });
+
+    tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_target(false)
+        .without_time()
         .init();
 
     let cli = Cli::parse();

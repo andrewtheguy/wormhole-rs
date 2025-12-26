@@ -8991,6 +8991,7 @@ dependencies = [
  "tokio-util",
  "tor-cell",
  "tor-hsservice",
+ "tracing-subscriber",
  "uuid",
  "walkdir",
  "webrtc",

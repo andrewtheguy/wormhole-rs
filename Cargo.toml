@@ -51,6 +51,7 @@ rustyline = "15"
 crc32fast = "1.4"
 log = { version = "0.4"}
 env_logger = "0.11"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # mDNS - enabled by default for local network transfers
 mdns-sd = "0.15"
