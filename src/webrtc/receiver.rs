@@ -650,7 +650,8 @@ impl WebRtcStreamingReader {
 impl std::io::Read for WebRtcStreamingReader {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         // If buffer is exhausted and there's more data, fetch next chunk
-        if self.buffer_pos >= self.buffer.len() && self.bytes_remaining > 0 {
+        // Use a loop instead of recursion to avoid stack overflow on many non-chunk messages
+        while self.buffer_pos >= self.buffer.len() && self.bytes_remaining > 0 {
             // Block on async receive
             let msg_result = self.runtime_handle.block_on(async {
                 timeout(Duration::from_secs(30), self.receiver.recv()).await
@@ -659,15 +660,18 @@ impl std::io::Read for WebRtcStreamingReader {
             match msg_result {
                 Ok(Some(msg)) => {
                     if msg.is_empty() {
-                         return Ok(0);
+                        return Ok(0);
                     }
-                    
+
                     // Parse message
                     match msg[0] {
-                         1 => {
+                        1 => {
                             // Chunk message
-                             if msg.len() < 13 {
-                                return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "Chunk too short"));
+                            if msg.len() < 13 {
+                                return Err(std::io::Error::new(
+                                    std::io::ErrorKind::InvalidData,
+                                    "Chunk too short",
+                                ));
                             }
                             let chunk_num = u64::from_be_bytes([
                                 msg[1], msg[2], msg[3], msg[4], msg[5], msg[6], msg[7], msg[8],
@@ -675,39 +679,51 @@ impl std::io::Read for WebRtcStreamingReader {
                             let encrypted_len =
                                 u32::from_be_bytes([msg[9], msg[10], msg[11], msg[12]]) as usize;
                             if msg.len() < 13 + encrypted_len {
-                                return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "Chunk truncated"));
+                                return Err(std::io::Error::new(
+                                    std::io::ErrorKind::InvalidData,
+                                    "Chunk truncated",
+                                ));
                             }
                             let encrypted_chunk = &msg[13..13 + encrypted_len];
 
                             // Decrypt
                             match decrypt_chunk(&self.key, chunk_num, encrypted_chunk) {
                                 Ok(chunk) => {
-                                    self.bytes_remaining = self.bytes_remaining.saturating_sub(chunk.len() as u64);
+                                    self.bytes_remaining =
+                                        self.bytes_remaining.saturating_sub(chunk.len() as u64);
                                     self.buffer = chunk;
                                     self.buffer_pos = 0;
+                                    // Got a chunk, break out of loop to return data
+                                    break;
                                 }
                                 Err(e) => {
-                                    return Err(std::io::Error::new(std::io::ErrorKind::Other, format!("Decrypt failed: {}", e)));
+                                    return Err(std::io::Error::new(
+                                        std::io::ErrorKind::Other,
+                                        format!("Decrypt failed: {}", e),
+                                    ));
                                 }
                             }
-                         },
-                         2 => return Ok(0), // EOF
-                         _ => {
-                             // Ignore other messages, try next
-                             return self.read(buf);
-                         }
+                        }
+                        2 => return Ok(0), // EOF
+                        _ => {
+                            // Ignore other messages, continue loop to fetch next
+                            continue;
+                        }
                     }
-                },
+                }
                 Ok(None) => return Ok(0), // Channel closed
                 Err(_) => {
-                    return Err(std::io::Error::new(std::io::ErrorKind::TimedOut, "Timeout waiting for chunk"));
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::TimedOut,
+                        "Timeout waiting for chunk",
+                    ));
                 }
             }
         }
 
         // Return data from buffer
         if self.buffer_pos >= self.buffer.len() {
-             return Ok(0); // EOF
+            return Ok(0); // EOF
         }
 
         let available = self.buffer.len() - self.buffer_pos;

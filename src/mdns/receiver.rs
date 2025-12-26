@@ -12,7 +12,8 @@ use std::net::IpAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
-use tempfile::NamedTempFile;
+use tokio::fs::File;
+use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
@@ -341,14 +342,22 @@ async fn receive_file_impl(
     // Get output directory for temp file
     let output_dir = output_path.parent().unwrap_or(std::path::Path::new("."));
 
-    // Create temp file
-    let mut temp_file = NamedTempFile::new_in(output_dir).context("Failed to create temp file")?;
-    let temp_path = temp_file.path().to_path_buf();
+    // Create temp file path with unique suffix
+    let temp_path = output_dir.join(format!(
+        ".wormhole-{}.tmp",
+        std::process::id()
+    ));
+
+    // Create async temp file
+    let mut temp_file = File::create(&temp_path)
+        .await
+        .context("Failed to create temp file")?;
+
     let cleanup_path: TempFileCleanup = Arc::new(Mutex::new(Some(temp_path.clone())));
     let cleanup_cancel = CancellationToken::new();
     let _cleanup_handle = setup_file_cleanup_handler(cleanup_path.clone(), cleanup_cancel.clone());
 
-    // Receive chunks and write directly to file (streaming)
+    // Receive chunks and write directly to file (streaming, non-blocking)
     let total_chunks = num_chunks(file_size);
     let mut chunk_num = 1u64;
     let mut bytes_received = 0u64;
@@ -361,9 +370,10 @@ async fn receive_file_impl(
             .await
             .context("Failed to receive chunk - wrong passphrase?")?;
 
-        // Write directly to temp file (streaming, not buffering)
+        // Write to temp file (async, non-blocking)
         temp_file
             .write_all(&chunk)
+            .await
             .context("Failed to write to file")?;
 
         chunk_num += 1;
@@ -390,11 +400,13 @@ async fn receive_file_impl(
     cleanup_path.lock().await.take();
     cleanup_cancel.cancel();
 
-    // Flush and persist temp file to final path
-    temp_file.flush().context("Failed to flush file")?;
-    temp_file
-        .persist(&output_path)
-        .map_err(|e| anyhow::anyhow!("Failed to persist temp file: {}", e))?;
+    // Flush and atomically rename temp file to final path
+    temp_file.flush().await.context("Failed to flush file")?;
+    drop(temp_file); // Close file before rename
+
+    tokio::fs::rename(&temp_path, &output_path)
+        .await
+        .context("Failed to persist temp file")?;
 
     println!("\nFile received successfully!");
     println!("Saved to: {}", output_path.display());
