@@ -92,10 +92,11 @@ sequenceDiagram
 
     Sender->>Sender: 1. Create iroh Node (Random NodeID)
     Sender->>Relay: 2. Connect to Home Relay
-    Sender->>Discovery: 3. Publish NodeAddr (Direct IP + Relay URL)
+    Sender->>Discovery: 3. Publish NodeID via Pkarr/DNS (IPs auto-discovered)
     
     Sender->>Sender: 4. Generate wormhole code
-    Note over Sender: Code = base64(AES_key + NodeAddr)
+    Note over Sender: Code = base64url(JSON: AES_key + NodeID + Relay URL)
+    Note over Sender: (IPs NOT in code - discovered via Pkarr/DNS/mDNS)
 
     Receiver->>Receiver: 5. Parse Code -> NodeAddr
     Receiver->>Relay: 6. Connect to Relay
@@ -226,10 +227,18 @@ sequenceDiagram
 
 ## Security Model
 
-### iroh's Built-in Encryption (Default)
-Relies on TLS 1.3/QUIC. Key exchange happens via the `EndpointAddr` (embedded in wormhole code).
-- **Confidentiality**: Strong (ChaCha20-Poly1305).
-- **Authentication**: Mutual (Ed25519 keys).
+### iroh Mode Encryption (Dual Layer)
+iroh mode uses two encryption layers for defense in depth:
+
+**Transport Layer (iroh/QUIC)**:
+- TLS 1.3/QUIC encryption (ChaCha20-Poly1305)
+- Key exchange via NodeID (Ed25519 public key in wormhole code)
+- Mutual authentication between peers
+
+**Application Layer (wormhole-rs)**:
+- AES-256-GCM encryption for all file headers and data chunks
+- 256-bit key generated per transfer, embedded in wormhole code
+- Nonce derived from chunk number (prevents replay attacks)
 
 ### WebRTC Mode Encryption (WebRTC + Nostr)
 Since signaling happens over public relays, we cannot trust the transport for key exchange.
