@@ -146,14 +146,11 @@ impl<R: tokio::io::AsyncReadExt + Unpin + Send> Read for StreamingReader<R> {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         // If buffer is exhausted and there's more data, fetch next chunk
         if self.buffer_pos >= self.buffer.len() && self.bytes_remaining > 0 {
-            // Use block_in_place to safely block within a Tokio async context.
-            // This moves the blocking operation to a blocking thread pool,
-            // preventing panics that would occur with a direct block_on call.
-            let runtime_handle = self.runtime_handle.clone();
-            let chunk_result = tokio::task::block_in_place(|| {
-                runtime_handle.block_on(async {
-                    recv_encrypted_chunk(&mut self.recv_stream, &self.key).await
-                })
+            // Use runtime_handle.block_on() directly to run the async future.
+            // This avoids panics from block_in_place when called off a Tokio worker thread.
+            // Note: Callers should not already be inside a Tokio runtime blocking context.
+            let chunk_result = self.runtime_handle.block_on(async {
+                recv_encrypted_chunk(&mut self.recv_stream, &self.key).await
             });
 
             match chunk_result {

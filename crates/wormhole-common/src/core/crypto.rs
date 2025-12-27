@@ -52,7 +52,8 @@ use anyhow::{Context, Result};
 use rand::RngCore;
 
 pub const CHUNK_SIZE: usize = 16 * 1024; // 16KB chunks
-const NONCE_SIZE: usize = 12; // 96 bits
+/// Size of the AES-GCM nonce in bytes (96 bits)
+pub const NONCE_SIZE: usize = 12;
 const TAG_SIZE: usize = 16; // 128 bits
 
 /// Generate a random 256-bit encryption key.

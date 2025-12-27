@@ -96,7 +96,7 @@ pub async fn receive_mdns(output_dir: Option<PathBuf>) -> Result<()> {
                         .map(|v| v.val_str().to_string())
                         .unwrap_or_else(|| "file".to_string());
 
-                    // Filter and deduplicate addresses: prefer non-loopback IPv4 and non-link-local IPv6
+                    // Filter and deduplicate addresses to only routable ones
                     let all_addrs: Vec<IpAddr> = info
                         .get_addresses()
                         .iter()
@@ -104,10 +104,7 @@ pub async fn receive_mdns(output_dir: Option<PathBuf>) -> Result<()> {
                         .collect();
                     let filtered: HashSet<IpAddr> = all_addrs
                         .into_iter()
-                        .filter(|addr| match addr {
-                            IpAddr::V4(v4) => !v4.is_loopback(),
-                            IpAddr::V6(v6) => !v6.is_unicast_link_local() && !v6.is_loopback(),
-                        })
+                        .filter(is_routable)
                         .collect();
                     let addresses: Vec<IpAddr> = filtered.into_iter().collect();
 

@@ -142,7 +142,8 @@ async fn transfer_data_internal(
     eprintln!("Listening on TCP port {}", port);
 
     // Generate random hostname for mDNS (don't expose real hostname)
-    let random_host = format!("wormhole-{}", &transfer_id[..8]);
+    let id_prefix = transfer_id.get(..8).unwrap_or(&transfer_id);
+    let random_host = format!("wormhole-{}", id_prefix);
     let instance_name = random_host.clone();
 
     // Create mDNS service daemon

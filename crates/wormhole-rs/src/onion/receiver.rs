@@ -43,14 +43,19 @@ pub async fn receive_file_tor(code: &str, output_dir: Option<PathBuf>) -> Result
     eprintln!("Code valid. Connecting to sender via Tor...");
 
     // Bootstrap Tor client (ephemeral mode - allows multiple concurrent receivers)
-    let temp_dir = tempfile::tempdir()?;
+    let temp_dir = tempfile::tempdir()
+        .context("Failed to create temporary directory for Tor client")?;
     let state_dir = temp_dir.path().join("state");
     let cache_dir = temp_dir.path().join("cache");
 
     eprintln!("Bootstrapping Tor client (ephemeral mode)...");
 
-    let config = TorClientConfigBuilder::from_directories(state_dir, cache_dir).build()?;
-    let tor_client = TorClient::create_bootstrapped(config).await?;
+    let config = TorClientConfigBuilder::from_directories(state_dir, cache_dir)
+        .build()
+        .context("Failed to build Tor client configuration")?;
+    let tor_client = TorClient::create_bootstrapped(config)
+        .await
+        .context("Failed to bootstrap Tor client")?;
     eprintln!("Tor client bootstrapped!");
 
     // Retry connection for temporary errors
@@ -102,7 +107,7 @@ pub async fn receive_file_tor(code: &str, output_dir: Option<PathBuf>) -> Result
     Ok(())
 }
 
-/// Receive a file or folder via Tor (auto-detects type)
+/// Receive a file or folder via Tor
 pub async fn receive_tor(code: &str, output_dir: Option<PathBuf>) -> Result<()> {
     receive_file_tor(code, output_dir).await
 }

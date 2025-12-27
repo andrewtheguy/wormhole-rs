@@ -155,7 +155,7 @@ async fn async_main() -> Result<()> {
                     eprintln!("Looking up wormhole code via PIN...");
                     wormhole_common::auth::nostr_pin::fetch_wormhole_code_via_pin(&pin_str).await?
                 } else if let Some(c) = code {
-                    c
+                    c.trim().to_string()
                 } else {
                     // Prompt for wormhole code
                     print!("Enter wormhole code: ");

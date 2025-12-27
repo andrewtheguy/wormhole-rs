@@ -87,7 +87,14 @@ async fn test_relay_connectivity(relay_url: &str) -> Option<(String, Duration)> 
 
     // Wait for connection with timeout
     let timeout = Duration::from_secs(RELAY_CONNECT_TIMEOUT_SECS);
-    let relay = client.relay(relay_url).await.ok()?;
+    let relay = match client.relay(relay_url).await {
+        Ok(r) => r,
+        Err(_) => {
+            // Clean up background tasks before returning
+            client.disconnect().await;
+            return None;
+        }
+    };
 
     // Wait for relay to connect or timeout
     relay.wait_for_connection(timeout).await;
@@ -436,7 +443,7 @@ pub fn create_relay_list_event(keys: &Keys, relays: &[String]) -> Result<Event> 
     }
 
     // Note: valid_tags cannot be empty here because:
-    // 1. We already bailed if relays was empty (lines 390-392)
+    // 1. We already bailed if relays was empty (lines 411-413)
     // 2. We just bailed if any URLs were malformed
     // 3. Therefore all non-empty relay URLs parsed successfully into valid_tags
 

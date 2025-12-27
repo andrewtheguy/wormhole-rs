@@ -41,7 +41,7 @@
 use anyhow::{Context, Result};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use serde::{Deserialize, Serialize};
-use std::io::{BufRead, Write};
+use std::io::{BufRead, ErrorKind, Write};
 use std::time::{SystemTime, UNIX_EPOCH};
 use webrtc::ice_transport::ice_candidate::RTCIceCandidate;
 
@@ -283,6 +283,21 @@ fn read_marked_input(begin: &str, end: &str) -> Result<String> {
 /// Maximum number of retry attempts for user input
 const MAX_INPUT_RETRIES: usize = 5;
 
+/// Check if an anyhow error represents a terminal IO condition (EOF, broken pipe).
+/// These should not be retried as they indicate stdin is closed or unavailable.
+fn is_terminal_io_error(err: &anyhow::Error) -> bool {
+    // Check the error chain for std::io::Error with terminal conditions
+    for cause in err.chain() {
+        if let Some(io_err) = cause.downcast_ref::<std::io::Error>() {
+            match io_err.kind() {
+                ErrorKind::UnexpectedEof | ErrorKind::BrokenPipe => return true,
+                _ => {}
+            }
+        }
+    }
+    false
+}
+
 /// Decode base64 input with CRC32 checksum validation, with retry on error
 fn decode_with_checksum(prompt: &str, begin: &str, end: &str) -> Result<String> {
     let mut retries = 0;
@@ -297,11 +312,7 @@ fn decode_with_checksum(prompt: &str, begin: &str, end: &str) -> Result<String> 
             Ok(payload) => payload,
             Err(err) => {
                 // Check for EOF or stdin closed - don't retry, propagate immediately
-                let err_str = err.to_string();
-                if err_str.contains("Failed to read line")
-                    || err_str.contains("end of file")
-                    || err_str.contains("EOF")
-                {
+                if is_terminal_io_error(&err) {
                     return Err(err).context("EOF reached while reading input");
                 }
 
