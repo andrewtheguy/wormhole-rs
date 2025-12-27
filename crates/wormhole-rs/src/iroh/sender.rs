@@ -5,12 +5,12 @@ use std::path::Path;
 use tokio::fs::File;
 use tokio::sync::oneshot;
 
-use crate::cli::instructions::print_receiver_command;
 use super::common::{create_sender_endpoint, IrohDuplex};
+use crate::cli::instructions::print_receiver_command;
 use wormhole_common::core::crypto::generate_key;
 use wormhole_common::core::transfer::{
-    prepare_file_for_send, prepare_folder_for_send, run_sender_transfer,
-    setup_temp_file_cleanup_handler, FileHeader, Interrupted, TransferResult, TransferType,
+    run_sender_transfer, send_file_with, send_folder_with, FileHeader, Interrupted,
+    TransferResult, TransferType,
 };
 use wormhole_common::core::wormhole::generate_code;
 use wormhole_common::signaling::nostr_protocol::generate_transfer_id;
@@ -243,22 +243,18 @@ async fn transfer_data_internal(
 
 /// Send a file through the wormhole.
 pub async fn send_file(file_path: &Path, relay_urls: Vec<String>, use_pin: bool) -> Result<()> {
-    let prepared = match prepare_file_for_send(file_path).await? {
-        Some(p) => p,
-        None => return Ok(()),
-    };
-
-    // Files are resumable, so no special interrupt handling needed
-    transfer_data_internal(
-        prepared.file,
-        prepared.filename,
-        prepared.file_size,
-        prepared.checksum,
-        TransferType::File,
-        relay_urls,
-        use_pin,
-        None, // No shutdown receiver for resumable file transfers
-    )
+    send_file_with(file_path, |file, filename, file_size, checksum, transfer_type| {
+        transfer_data_internal(
+            file,
+            filename,
+            file_size,
+            checksum,
+            transfer_type,
+            relay_urls,
+            use_pin,
+            None, // No shutdown receiver for resumable file transfers
+        )
+    })
     .await
 }
 
@@ -269,43 +265,17 @@ pub async fn send_file(file_path: &Path, relay_urls: Vec<String>, use_pin: bool)
 /// support Unix permission modes (rwx), so files may have different permissions
 /// after extraction on Windows.
 pub async fn send_folder(folder_path: &Path, relay_urls: Vec<String>, use_pin: bool) -> Result<()> {
-    let prepared = match prepare_folder_for_send(folder_path).await? {
-        Some(p) => p,
-        None => return Ok(()),
-    };
-
-    // Set up cleanup handler for Ctrl+C
-    let temp_path = prepared.temp_file.path().to_path_buf();
-    let cleanup_handler = setup_temp_file_cleanup_handler(temp_path.clone());
-
-    // Run transfer - shutdown handling is done inside transfer_data_internal
-    // which properly closes the connection before returning Interrupted
-    let result = transfer_data_internal(
-        prepared.file,
-        prepared.filename,
-        prepared.file_size,
-        prepared.checksum, // 0 for folders (not resumable)
-        TransferType::Folder,
-        relay_urls,
-        use_pin,
-        Some(cleanup_handler.shutdown_rx),
-    )
-    .await;
-
-    // Clear cleanup path (transfer succeeded or failed, temp file handled)
-    cleanup_handler.cleanup_path.lock().await.take();
-
-    // Clean up temp file on interrupt (connection already closed by transfer_data_internal)
-    if result
-        .as_ref()
-        .err()
-        .map(|e| e.is::<Interrupted>())
-        .unwrap_or(false)
-    {
-        let _ = tokio::fs::remove_file(&temp_path).await;
-    }
-
-    // Temp file is automatically cleaned up when NamedTempFile (prepared.temp_file) is dropped
-
-    result
+    send_folder_with(folder_path, |file, filename, file_size, checksum, transfer_type| {
+        transfer_data_internal(
+            file,
+            filename,
+            file_size,
+            checksum,
+            transfer_type,
+            relay_urls,
+            use_pin,
+            None, // Shutdown handling is done by send_folder_with
+        )
+    })
+    .await
 }

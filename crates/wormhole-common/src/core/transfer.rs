@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use std::future::Future;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use tempfile::NamedTempFile;
@@ -552,6 +553,94 @@ pub async fn prepare_folder_for_send(folder_path: &Path) -> Result<Option<Prepar
         temp_file: tar_archive.temp_file,
         checksum: 0, // Folders are not resumable
     }))
+}
+
+// ============================================================================
+// Generic sender wrappers (reduce code duplication across transport modes)
+// ============================================================================
+
+/// Generic file sender that accepts a closure for mode-specific transfer logic.
+///
+/// This function handles file preparation (validation, size check, confirmation)
+/// and delegates the actual transfer to the provided closure.
+///
+/// # Arguments
+/// * `file_path` - Path to the file to send
+/// * `transfer_fn` - Closure that performs the mode-specific transfer.
+///   Receives: (file, filename, file_size, checksum, transfer_type)
+///
+/// # Returns
+/// * `Ok(())` if transfer completes or user cancels
+/// * `Err` if preparation or transfer fails
+pub async fn send_file_with<F, Fut>(file_path: &Path, transfer_fn: F) -> Result<()>
+where
+    F: FnOnce(File, String, u64, u64, TransferType) -> Fut,
+    Fut: Future<Output = Result<()>>,
+{
+    let prepared = match prepare_file_for_send(file_path).await? {
+        Some(p) => p,
+        None => return Ok(()),
+    };
+
+    transfer_fn(
+        prepared.file,
+        prepared.filename,
+        prepared.file_size,
+        prepared.checksum,
+        TransferType::File,
+    )
+    .await
+}
+
+/// Generic folder sender that accepts a closure for mode-specific transfer logic.
+///
+/// This function handles folder preparation (tar archive creation, size check,
+/// confirmation) and interrupt handling with temp file cleanup.
+///
+/// # Arguments
+/// * `folder_path` - Path to the folder to send
+/// * `transfer_fn` - Closure that performs the mode-specific transfer.
+///   Receives: (file, filename, file_size, checksum, transfer_type)
+///
+/// # Returns
+/// * `Ok(())` if transfer completes or user cancels
+/// * `Err(Interrupted)` if user presses Ctrl+C
+/// * `Err` if preparation or transfer fails
+pub async fn send_folder_with<F, Fut>(folder_path: &Path, transfer_fn: F) -> Result<()>
+where
+    F: FnOnce(File, String, u64, u64, TransferType) -> Fut,
+    Fut: Future<Output = Result<()>> + Send,
+{
+    let prepared = match prepare_folder_for_send(folder_path).await? {
+        Some(p) => p,
+        None => return Ok(()),
+    };
+
+    // Set up cleanup handler for Ctrl+C
+    let temp_path = prepared.temp_file.path().to_path_buf();
+    let cleanup_handler = setup_temp_file_cleanup_handler(temp_path.clone());
+
+    // Run transfer with interrupt handling
+    let result = tokio::select! {
+        result = transfer_fn(
+            prepared.file,
+            prepared.filename,
+            prepared.file_size,
+            0, // Folders are not resumable
+            TransferType::Folder,
+        ) => result,
+        _ = cleanup_handler.shutdown_rx => {
+            // Graceful shutdown requested - clean up and return Interrupted error
+            cleanup_handler.cleanup_path.lock().await.take();
+            let _ = tokio::fs::remove_file(&temp_path).await;
+            return Err(Interrupted.into());
+        }
+    };
+
+    // Clear cleanup path (transfer completed or failed normally)
+    cleanup_handler.cleanup_path.lock().await.take();
+
+    result
 }
 
 // ============================================================================
