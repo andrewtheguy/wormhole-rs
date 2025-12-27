@@ -142,6 +142,21 @@ pub fn parse_relay_mode(relay_urls: Vec<String>) -> Result<RelayMode> {
     }
 }
 
+/// Print info about custom relay servers being used.
+fn print_relay_info(relay_urls: &[String]) {
+    if relay_urls.is_empty() {
+        return;
+    }
+    if relay_urls.len() == 1 {
+        eprintln!("Using custom relay server");
+    } else {
+        eprintln!(
+            "Using {} custom relay servers (with failover)",
+            relay_urls.len()
+        );
+    }
+}
+
 /// Create an iroh endpoint configured for sending (accepts incoming connections).
 ///
 /// Sets up N0 DNS discovery, pkarr publishing, and local mDNS discovery.
@@ -149,16 +164,8 @@ pub fn parse_relay_mode(relay_urls: Vec<String>) -> Result<RelayMode> {
 /// Multiple relay URLs provide automatic failover based on latency.
 pub async fn create_sender_endpoint(relay_urls: Vec<String>) -> Result<Endpoint> {
     let relay_mode = parse_relay_mode(relay_urls.clone())?;
-    let using_custom_relay = !matches!(relay_mode, RelayMode::Default);
-    if using_custom_relay {
-        if relay_urls.len() == 1 {
-            eprintln!("Using custom relay server");
-        } else {
-            eprintln!(
-                "Using {} custom relay servers (with failover)",
-                relay_urls.len()
-            );
-        }
+    if !matches!(relay_mode, RelayMode::Default) {
+        print_relay_info(&relay_urls);
     }
 
     let endpoint = Endpoint::empty_builder(relay_mode)
