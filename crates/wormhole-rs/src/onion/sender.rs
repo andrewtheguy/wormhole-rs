@@ -36,9 +36,12 @@ async fn transfer_data_tor_internal(
     let key = generate_key();
 
     // Bootstrap Tor client (ephemeral mode - new keys each run)
-    let temp_dir = tempfile::tempdir()?;
-    let state_dir = temp_dir.path().join("state");
-    let cache_dir = temp_dir.path().join("cache");
+    // IMPORTANT: _temp_dir must remain in scope for the lifetime of tor_client.
+    // The Tor client uses state_dir and cache_dir which are subdirectories of _temp_dir.
+    // If _temp_dir is dropped, the directories are deleted and the Tor client will fail.
+    let _temp_dir = tempfile::tempdir()?;
+    let state_dir = _temp_dir.path().join("state");
+    let cache_dir = _temp_dir.path().join("cache");
 
     eprintln!("Bootstrapping Tor client (ephemeral mode)...");
 
