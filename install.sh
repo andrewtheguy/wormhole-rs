@@ -12,6 +12,7 @@ REPO_OWNER="andrewtheguy"
 REPO_NAME="wormhole-rs"
 DOWNLOAD_ONLY=false
 PREFER_PRERELEASE=false
+INSTALL_WEBRTC=false
 
 # Color output (defined early for use in release tag helpers)
 RED='\033[0;31m'
@@ -164,6 +165,10 @@ parse_args() {
                 PREFER_PRERELEASE=true
                 shift
                 ;;
+            --webrtc)
+                INSTALL_WEBRTC=true
+                shift
+                ;;
             --help|-h)
                 show_usage
                 exit 0
@@ -229,15 +234,23 @@ detect_arch() {
 
 # Map OS and architecture to binary name
 get_binary_name() {
+    if [ "$INSTALL_WEBRTC" = true ]; then
+        BINARY_PREFIX="wormhole-rs-webrtc"
+        INSTALL_NAME="wormhole-rs-webrtc"
+    else
+        BINARY_PREFIX="wormhole-rs"
+        INSTALL_NAME="wormhole-rs"
+    fi
+
     case "${OS}-${ARCH}" in
         "linux-amd64")
-            BINARY_NAME="wormhole-rs-linux-amd64"
+            BINARY_NAME="${BINARY_PREFIX}-linux-amd64"
             ;;
         "linux-arm64")
-            BINARY_NAME="wormhole-rs-linux-arm64"
+            BINARY_NAME="${BINARY_PREFIX}-linux-arm64"
             ;;
         "macos-arm64")
-            BINARY_NAME="wormhole-rs-macos-arm64"
+            BINARY_NAME="${BINARY_PREFIX}-macos-arm64"
             ;;
         *)
             print_error "Unsupported platform: ${OS}-${ARCH}"
@@ -365,7 +378,7 @@ find_profile_with_local_bin() {
 download_and_install() {
     local temp_dir=$(mktemp -d)
     local temp_binary="${temp_dir}/${BINARY_NAME}"
-    local final_path="$HOME/.local/bin/wormhole-rs"
+    local final_path="$HOME/.local/bin/${INSTALL_NAME}"
 
     # Set up trap to clean up temp directory on exit
     trap 'rm -rf "$temp_dir"' EXIT
@@ -435,13 +448,15 @@ show_usage() {
     echo "Options:"
     echo "  --download-only  Download binary to current directory without installing"
     echo "  --prerelease     Use latest prerelease instead of latest stable release"
+    echo "  --webrtc         Install wormhole-rs-webrtc binary instead of wormhole-rs"
     echo "  -h, --help       Show this help message"
     echo ""
     echo "Arguments:"
     echo "  RELEASE_TAG      GitHub release tag to download (default: latest)"
     echo ""
     echo "Examples:"
-    echo "  $0                              # Install latest release"
+    echo "  $0                              # Install latest wormhole-rs"
+    echo "  $0 --webrtc                     # Install wormhole-rs-webrtc"
     echo "  $0 20251210172710               # Install specific release"
     echo "  $0 --prerelease                 # Install latest prerelease"
     echo "  $0 --download-only              # Download latest to current directory"

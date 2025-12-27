@@ -3,21 +3,24 @@
 # Wormhole-rs installer for Windows
 # Downloads latest binary from: https://github.com/andrewtheguy/wormhole-rs/releases
 #
-# Usage: .\install.ps1 [RELEASE_TAG] [-Admin] [-PreRelease]
+# Usage: .\install.ps1 [RELEASE_TAG] [-Admin] [-PreRelease] [-WebRTC]
 # Or set $env:RELEASE_TAG environment variable
 
 param(
     [Parameter(Position = 0)]
     [string]$ReleaseTag,
-    
+
     [Parameter()]
     [switch]$Admin,
-    
+
     [Parameter()]
     [switch]$PreRelease,
-    
+
     [Parameter()]
-    [switch]$DownloadOnly
+    [switch]$DownloadOnly,
+
+    [Parameter()]
+    [switch]$WebRTC
 )
 
 $ErrorActionPreference = "Stop"
@@ -184,14 +187,24 @@ function Get-Architecture {
 # Get binary name based on architecture
 function Get-BinaryName {
     param([string]$Arch)
-    
+
     if ($Arch -ne "amd64") {
         Print-Error "Unsupported architecture: $Arch"
         Print-Error "Only amd64 is supported for Windows"
         exit 1
     }
-    
+
+    if ($WebRTC) {
+        return "wormhole-rs-webrtc-windows-amd64.exe"
+    }
     return "wormhole-rs-windows-amd64.exe"
+}
+
+function Get-InstallName {
+    if ($WebRTC) {
+        return "wormhole-rs-webrtc.exe"
+    }
+    return "wormhole-rs.exe"
 }
 
 # Download binary and verify checksum
@@ -270,7 +283,8 @@ function Install-Binary {
     $tempDir = Join-Path $env:TEMP "wormhole-rs-install-$(Get-Random)"
     $tempBinary = Join-Path $tempDir $BinaryName
     $installDir = Join-Path $env:LOCALAPPDATA "Programs\wormhole-rs"
-    $finalPath = Join-Path $installDir "wormhole-rs.exe"
+    $installName = Get-InstallName
+    $finalPath = Join-Path $installDir $installName
 
     try {
         # Create temp directory
@@ -346,7 +360,8 @@ Download and install wormhole-rs binary
 
 Options:
   -DownloadOnly  Download binary to current directory without installing
-    -PreRelease    Use latest prerelease instead of latest stable release
+  -PreRelease    Use latest prerelease instead of latest stable release
+  -WebRTC        Install wormhole-rs-webrtc binary instead of wormhole-rs
   -Admin         Allow installation with administrator privileges (not recommended)
   -h, --help     Show this help message
 
@@ -357,9 +372,10 @@ Environment variables:
   `$env:RELEASE_TAG    Alternative way to specify release tag
 
 Examples:
-  .\install.ps1                              # Install latest release
+  .\install.ps1                              # Install latest wormhole-rs
+  .\install.ps1 -WebRTC                      # Install wormhole-rs-webrtc
   .\install.ps1 20251210172710               # Install specific release
-    .\install.ps1 -PreRelease                  # Install latest prerelease
+  .\install.ps1 -PreRelease                  # Install latest prerelease
   .\install.ps1 -DownloadOnly                # Download latest to current directory
   .\install.ps1 -DownloadOnly 20251210172710 # Download specific release
   .\install.ps1 -Admin                       # Allow admin installation (not recommended)

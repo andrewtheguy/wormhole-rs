@@ -41,16 +41,12 @@ The release installers fetch a native, standalone executable. You only need the 
 
 ### Quick Install (Linux & macOS)
 
-> **Note:** This installs the `wormhole-rs` binary only. The `wormhole-rs-webrtc` binary
-> must be downloaded manually from the [GitHub Releases](https://github.com/andrewtheguy/wormhole-rs/releases) page.
-
 ```bash
+# Install wormhole-rs
 curl -sSL https://andrewtheguy.github.io/wormhole-rs/install.sh | bash
-```
 
-Install with custom release tag:
-```bash
-curl -sSL https://andrewtheguy.github.io/wormhole-rs/install.sh | bash -s <RELEASE_TAG>
+# Install wormhole-rs-webrtc
+curl -sSL https://andrewtheguy.github.io/wormhole-rs/install.sh | bash -s -- --webrtc
 ```
 
 By default the installer pulls the latest **stable** release. Use `--prerelease` for the newest prerelease, or pass an explicit tag to pin to a specific build. Examples:
@@ -65,16 +61,12 @@ curl -sSL https://andrewtheguy.github.io/wormhole-rs/install.sh | bash -s 202512
 
 ### Quick Install (Windows)
 
-> **Note:** This installs the `wormhole-rs` binary only. The `wormhole-rs-webrtc` binary
-> must be downloaded manually from the [GitHub Releases](https://github.com/andrewtheguy/wormhole-rs/releases) page.
-
 ```powershell
+# Install wormhole-rs
 irm https://andrewtheguy.github.io/wormhole-rs/install.ps1 | iex
-```
 
-Install with custom release tag:
-```powershell
-irm https://andrewtheguy.github.io/wormhole-rs/install.ps1 | iex -Args <RELEASE_TAG>
+# Install wormhole-rs-webrtc
+irm https://andrewtheguy.github.io/wormhole-rs/install.ps1 | iex -Args -WebRTC
 ```
 
 By default the PowerShell installer pulls the latest **stable** release. Use `-PreRelease` for the newest prerelease, or pass an explicit tag to pin to a specific build. Examples:

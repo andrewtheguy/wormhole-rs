@@ -60,6 +60,15 @@ jobs:
           name: release-${{ matrix.suffix }}
           path: target/release/wormhole-rs-${{ matrix.suffix }}
 
+      - name: Rename WebRTC Binary
+        run: mv target/${{ matrix.target }}/release/wormhole-rs-webrtc target/release/wormhole-rs-webrtc-${{ matrix.suffix }}
+
+      - name: Upload WebRTC release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-webrtc-${{ matrix.suffix }}
+          path: target/release/wormhole-rs-webrtc-${{ matrix.suffix }}
+
   build-other:
     needs: setup
     strategy:
@@ -106,6 +115,28 @@ jobs:
         with:
           name: release-${{ matrix.suffix }}
           path: target/release/wormhole-rs-${{ matrix.suffix }}.exe
+
+      - name: Rename WebRTC Binary (Unix)
+        if: runner.os != 'Windows'
+        run: mv target/${{ matrix.target }}/release/wormhole-rs-webrtc target/release/wormhole-rs-webrtc-${{ matrix.suffix }}
+
+      - name: Rename WebRTC Binary (Windows)
+        if: runner.os == 'Windows'
+        run: move target\${{ matrix.target }}\release\wormhole-rs-webrtc.exe target\release\wormhole-rs-webrtc-${{ matrix.suffix }}.exe
+
+      - name: Upload WebRTC release artifact (Unix)
+        if: runner.os != 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-webrtc-${{ matrix.suffix }}
+          path: target/release/wormhole-rs-webrtc-${{ matrix.suffix }}
+
+      - name: Upload WebRTC release artifact (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-webrtc-${{ matrix.suffix }}
+          path: target/release/wormhole-rs-webrtc-${{ matrix.suffix }}.exe
 
   create-release:
     needs: [setup, build-linux, build-other]
