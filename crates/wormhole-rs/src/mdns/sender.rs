@@ -249,7 +249,7 @@ async fn send_data_over_tcp(
 ) -> Result<()> {
     // Create header and run unified transfer logic
     let header = FileHeader::new(transfer_type, filename, file_size, checksum);
-    eprintln!("Sent file header");
+    eprintln!("Starting transfer...");
 
     let result = run_sender_transfer(file, &mut stream, key, &header).await?;
 
