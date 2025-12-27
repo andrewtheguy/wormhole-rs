@@ -320,9 +320,10 @@ pub fn format_bytes(bytes: u64) -> String {
     }
 }
 
-/// Prompt user for confirmation if file exceeds soft limit.
+/// Prompt user for confirmation if folder archive exceeds soft limit.
+/// Only used for folders since they are NOT resumable. Files are resumable and don't need this warning.
 /// Returns Ok(true) to proceed, Ok(false) to cancel.
-pub fn confirm_large_transfer(file_size: u64, filename: &str) -> Result<bool> {
+pub fn confirm_large_folder_transfer(file_size: u64, filename: &str) -> Result<bool> {
     if file_size <= LARGE_FILE_THRESHOLD {
         return Ok(true);
     }
@@ -332,8 +333,8 @@ pub fn confirm_large_transfer(file_size: u64, filename: &str) -> Result<bool> {
         filename,
         format_bytes(file_size)
     );
-    println!("File transfers are resumable. Folder transfers are NOT resumable.");
-    println!("Large files are recommended for local connections only (wormhole-rs send-local).");
+    println!("Folder transfers are NOT resumable. If interrupted, you must start over.");
+    println!("Large folders are recommended for local connections only (wormhole-rs send-local).");
     print!("Continue anyway? [y/N]: ");
     std::io::stdout().flush()?;
 
@@ -376,11 +377,7 @@ pub async fn prepare_file_for_send(file_path: &Path) -> Result<Option<PreparedFi
         .await
         .context("Failed to calculate file checksum")?;
 
-    // Confirm if file is large
-    if !confirm_large_transfer(file_size, &filename)? {
-        println!("Transfer cancelled.");
-        return Ok(None);
-    }
+    // No large file warning needed - file transfers are resumable
 
     // Open file
     let file = File::open(file_path).await.context("Failed to open file")?;
@@ -431,8 +428,8 @@ pub async fn prepare_folder_for_send(folder_path: &Path) -> Result<Option<Prepar
         format_bytes(file_size)
     );
 
-    // Confirm if archive is large
-    if !confirm_large_transfer(file_size, &filename)? {
+    // Confirm if archive is large (folders are NOT resumable)
+    if !confirm_large_folder_transfer(file_size, &filename)? {
         println!("Transfer cancelled.");
         return Ok(None);
     }
