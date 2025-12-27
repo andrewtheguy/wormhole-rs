@@ -12,7 +12,7 @@ use wormhole_rs::core::transfer::{
 #[tokio::test]
 async fn test_unencrypted_header_roundtrip() {
     let (mut client, mut server) = duplex(4096);
-    let header = FileHeader::new(TransferType::File, "test_file.txt".to_string(), 12345);
+    let header = FileHeader::new(TransferType::File, "test_file.txt".to_string(), 12345, 0);
 
     let send_handle = tokio::spawn(async move { send_header(&mut client, &header).await });
 
@@ -74,7 +74,7 @@ async fn test_unencrypted_full_transfer_simulation() {
     let file_data_clone = file_data.to_vec();
     let send_handle = tokio::spawn(async move {
         // Send header
-        let header = FileHeader::new(TransferType::File, filename_clone, file_size);
+        let header = FileHeader::new(TransferType::File, filename_clone, file_size, 0);
         send_header(&mut client, &header).await.unwrap();
 
         // Send file data
@@ -107,6 +107,7 @@ async fn test_unencrypted_large_file_multi_chunk() {
             TransferType::File,
             "large_file.bin".to_string(),
             file_size as u64,
+            0,
         );
         send_header(&mut client, &header).await.unwrap();
 
@@ -135,7 +136,7 @@ async fn test_unencrypted_large_file_multi_chunk() {
 #[tokio::test]
 async fn test_unencrypted_folder_transfer_type() {
     let (mut client, mut server) = duplex(4096);
-    let header = FileHeader::new(TransferType::Folder, "myfolder.tar".to_string(), 54321);
+    let header = FileHeader::new(TransferType::Folder, "myfolder.tar".to_string(), 54321, 0);
 
     let send_handle = tokio::spawn(async move { send_header(&mut client, &header).await });
 
@@ -155,7 +156,7 @@ async fn test_unencrypted_folder_transfer_type() {
 async fn test_encrypted_header_roundtrip() {
     let (mut client, mut server) = duplex(4096);
     let key = generate_key();
-    let header = FileHeader::new(TransferType::File, "test_file.txt".to_string(), 12345);
+    let header = FileHeader::new(TransferType::File, "test_file.txt".to_string(), 12345, 0);
 
     let key_clone = key;
     let send_handle =
@@ -232,7 +233,7 @@ async fn test_encrypted_full_transfer_simulation() {
     let file_data_clone = file_data.to_vec();
     let send_handle = tokio::spawn(async move {
         // Send header (chunk 0)
-        let header = FileHeader::new(TransferType::File, filename_clone, file_size);
+        let header = FileHeader::new(TransferType::File, filename_clone, file_size, 0);
         send_encrypted_header(&mut client, &key_clone, &header)
             .await
             .unwrap();
@@ -266,7 +267,7 @@ async fn test_encrypted_empty_file_transfer() {
     let key_clone = key;
     let filename_clone = filename.clone();
     let send_handle = tokio::spawn(async move {
-        let header = FileHeader::new(TransferType::File, filename_clone, file_size);
+        let header = FileHeader::new(TransferType::File, filename_clone, file_size, 0);
         send_encrypted_header(&mut client, &key_clone, &header)
             .await
             .unwrap();
@@ -292,7 +293,7 @@ async fn test_encrypted_exact_chunk_size_file() {
     let key_clone = key;
     let file_data_clone = file_data.clone();
     let send_handle = tokio::spawn(async move {
-        let header = FileHeader::new(TransferType::File, "exact_chunk.bin".to_string(), file_size);
+        let header = FileHeader::new(TransferType::File, "exact_chunk.bin".to_string(), file_size, 0);
         send_encrypted_header(&mut client, &key_clone, &header)
             .await
             .unwrap();
@@ -326,6 +327,7 @@ async fn test_encrypted_large_file_multi_chunk() {
             TransferType::File,
             "large_file.bin".to_string(),
             file_size as u64,
+            0,
         );
         send_encrypted_header(&mut client, &key_clone, &header)
             .await
@@ -365,7 +367,7 @@ async fn test_encrypted_special_characters_in_filename() {
     let filename = "file with spaces & special (chars) [2024].txt".to_string();
 
     let key_clone = key;
-    let header_clone = FileHeader::new(TransferType::File, filename.clone(), 100);
+    let header_clone = FileHeader::new(TransferType::File, filename.clone(), 100, 0);
     let send_handle = tokio::spawn(async move {
         send_encrypted_header(&mut client, &key_clone, &header_clone)
             .await
@@ -408,7 +410,7 @@ async fn test_encrypted_wrong_key_fails_on_header() {
     let sender_key = generate_key();
     let receiver_key = generate_key(); // Different key!
 
-    let header = FileHeader::new(TransferType::File, "secret.txt".to_string(), 1000);
+    let header = FileHeader::new(TransferType::File, "secret.txt".to_string(), 1000, 0);
 
     let send_handle = tokio::spawn(async move {
         send_encrypted_header(&mut client, &sender_key, &header)
@@ -478,8 +480,8 @@ async fn test_encrypted_different_keys_produce_different_headers() {
     use wormhole_rs::core::crypto::encrypt;
 
     // Same file metadata
-    let header = FileHeader::new(TransferType::File, "same_file.txt".to_string(), 12345);
-    let header_bytes = header.to_bytes();
+    let header = FileHeader::new(TransferType::File, "same_file.txt".to_string(), 12345, 0);
+    let header_bytes = header.to_bytes().unwrap();
 
     // Two different keys (two separate transfers of same file)
     let key1 = generate_key();

@@ -14,7 +14,9 @@
       "mcp__github__issue_read",
       "WebFetch(domain:docs.rs)",
       "Bash(ls:*)",
-      "Bash({} ;)"
+      "Bash({} ;)",
+      "Bash(cargo doc:*)",
+      "Bash(git ls-tree:*)"
     ]
   }
 }

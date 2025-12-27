@@ -28,20 +28,43 @@ jobs:
             echo "is_prerelease=false" >> $GITHUB_OUTPUT
           fi
 
-  build-and-release:
+  build-linux:
     needs: setup
-    name: Build and Release
     strategy:
       matrix:
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             suffix: linux-amd64
-            binary: wormhole-rs
           - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
             suffix: linux-arm64
-            binary: wormhole-rs
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build Release
+        run: cargo build --release --all-features --target ${{ matrix.target }}
+
+      - name: Rename Binary
+        run: mv target/${{ matrix.target }}/release/wormhole-rs target/release/wormhole-rs-${{ matrix.suffix }}
+
+      - name: Upload release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.suffix }}
+          path: target/release/wormhole-rs-${{ matrix.suffix }}
+
+  build-other:
+    needs: setup
+    strategy:
+      matrix:
+        include:
           - os: macos-latest
             target: aarch64-apple-darwin
             suffix: macos-arm64
@@ -51,7 +74,7 @@ jobs:
             suffix: windows-amd64
             binary: wormhole-rs.exe
     runs-on: ${{ matrix.os }}
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -70,15 +93,41 @@ jobs:
         if: runner.os == 'Windows'
         run: move target\${{ matrix.target }}\release\${{ matrix.binary }} target\release\wormhole-rs-${{ matrix.suffix }}.exe
 
+      - name: Upload release artifact (Unix)
+        if: runner.os != 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.suffix }}
+          path: target/release/wormhole-rs-${{ matrix.suffix }}
+
+      - name: Upload release artifact (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.suffix }}
+          path: target/release/wormhole-rs-${{ matrix.suffix }}.exe
+
+  create-release:
+    needs: [setup, build-linux, build-other]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: artifacts
+          merge-multiple: true
+
+      - name: List artifacts
+        run: ls -la artifacts/
+
       - name: Create Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.setup.outputs.release_tag }}
           name: Release ${{ needs.setup.outputs.release_tag }}
           prerelease: ${{ needs.setup.outputs.is_prerelease }}
           generate_release_notes: true
-          files: |
-            target/release/wormhole-rs-${{ matrix.suffix }}
-            target/release/wormhole-rs-${{ matrix.suffix }}.exe
+          files: artifacts/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,12 +1,5 @@
 # Project Roadmap
 
----
-## In Scope
-- Add file lock to the file being received to prevent multiple receivers writing to the same file simultaneously.
-- Add resumable transfers for large files on top of file locking above.
-
----
-
 ## Backlog
 
 Ideas and feature requests for future consideration.
@@ -28,14 +21,8 @@ Ideas and feature requests for future consideration.
 
 ### Make Nostr an Opt-In Feature
 **Domain:** Core / Feature Flags
-- **Feature:** Decouple Nostr dependencies completely.
-- **Benefit:** Users who only want to use Iroh or Tor (or Local mode) shouldn't be required to build/include the Nostr stack.
-
-### Transfer Resumability
-**Domain:** Core / Transfer Logic
-- **Feature:** Ability to resume interrupted transfers (especially for large files) from where they left off.
-- **Benefit:** Prevents data loss and wasted bandwidth on unstable connections.
-- **Implementation:** Needs tracking of received chunks and a handshake to negotiate resume offset.
+- **Feature:** Decouple Nostr dependencies completely (currently used by WebRTC mode for signaling).
+- **Benefit:** Users who only want to use iroh or Tor (or Local mode) shouldn't be required to build/include the Nostr stack.
 
 ### Support Custom Iroh DNS Server
 **Domain:** Iroh Mode

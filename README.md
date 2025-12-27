@@ -3,9 +3,9 @@
 A secure peer-to-peer file transfer tool with two main transport categories:
 
 **1. Internet Transfers** (Wormhole Code)
-- **WebRTC mode** (Recommended) - WebRTC transfers with Nostr signaling (or copy/paste `--manual-signaling`) - requires `webrtc` feature
-- **iroh mode** - Direct P2P transfers using [iroh](https://github.com/n0-computer/iroh) with QUIC/TLS (automatic relay fallback) - requires `iroh` feature
+- **iroh mode** (Recommended) - Direct P2P transfers using [iroh](https://github.com/n0-computer/iroh) with QUIC/TLS (automatic relay fallback) - requires `iroh` feature
 - **Tor mode** - Anonymous transfers via Tor hidden services (.onion addresses), also serves as relay when P2P fails - requires `onion` feature
+- **WebRTC mode** - Direct P2P via WebRTC DataChannels with Nostr signaling - requires `webrtc` feature
 
 **2. Local Transfers** (PIN + SPAKE2)
 - **Local mode** - LAN transfers using mDNS discovery, SPAKE2 key exchange from a 12-character PIN, and TCP transport (no internet required)
@@ -18,7 +18,7 @@ A secure peer-to-peer file transfer tool with two main transport categories:
     - **Local**: Private LAN transfers using mDNS
 - **File and folder transfers** - Send individual files or entire directories (automatically archived)
 - **Local discovery** - mDNS for same-network transfers
-- **NAT traversal** - STUN for WebRTC; relay fallback for Iroh; use Tor mode as relay when direct P2P fails
+- **NAT traversal** - STUN for WebRTC mode; relay fallback for Iroh; use Tor mode as relay when direct P2P fails
 - **PIN-based Transfers** - Use short 12-character PINs (with checksum) instead of long wormhole codes for easier typing
 - **Cross-platform** - Single, standalone native binary for macOS, Linux, and Windows (zero-dependency install)
 
@@ -106,62 +106,29 @@ cargo build --release --all-features
 
 Use these modes for transfers over the internet. They all use a **Wormhole Code** for connection.
 
-#### 1. WebRTC Mode (Recommended) - `send` / `send-webrtc`
-*Most mature and reliable. Works well for both small and large files. Has manual signaling fallback (`--manual-signaling`) for direct P2P when Nostr relays are unavailable.*
-> Requires building with `--features webrtc`.
-
-```bash
-# Standard send (displays wormhole code) - uses WebRTC by default
-wormhole-rs send /path/to/file
-
-# Explicit WebRTC send (same as above)
-wormhole-rs send-webrtc /path/to/file
-
-# Send folder
-wormhole-rs send /path/to/folder --folder
-
-# Send using a 12-character PIN (checksum-validated)
-wormhole-rs send --pin /path/to/file
-
-# Send with copy/paste manual signaling (no relays)
-wormhole-rs send --manual-signaling /path/to/file
-```
-
-##### Custom Nostr Relays
-- By default, WebRTC mode discovers the best Nostr relays automatically via NIP-65/NIP-66.
-- Use `--nostr-relay` to specify custom Nostr relays for signaling:
-    ```bash
-    wormhole-rs send --nostr-relay wss://my-relay.com /path/to/file
-    ```
-- Use `--use-default-relays` to skip discovery and use hardcoded default relays:
-    ```bash
-    wormhole-rs send --use-default-relays /path/to/file
-    ```
-
-#### 2. iroh Mode - `send-iroh`
-*Alternative P2P transport using QUIC. Direct P2P with automatic relay fallback.*
+#### 1. iroh Mode (Recommended) - `send`
+*Direct P2P transport using QUIC/TLS with automatic relay fallback. Most reliable for both small and large files.*
 > Requires building with `--features iroh`.
 
 ```bash
 # Send file
-wormhole-rs send-iroh /path/to/file
+wormhole-rs send /path/to/file
 
 # Send folder
-wormhole-rs send-iroh /path/to/folder --folder
-
+wormhole-rs send /path/to/folder --folder
 ```
 
 ##### Custom Iroh Relays
 - Default behavior uses iroh's public relay fallback plus direct P2P.
 - For self-hosted setups, point both sides at your own DERP relay(s):
     ```bash
-    wormhole-rs send-iroh --relay-url https://relay1.example.com /path/to/file
+    wormhole-rs send --relay-url https://relay1.example.com /path/to/file
     wormhole-rs receive --relay-url https://relay1.example.com
     ```
 - Multiple `--relay-url` flags are supported for failover.
 - Discovery still relies on iroh's public DNS/pkarr services today; full zero-third-party operation will land with the planned custom DNS server support (see ROADMAP).
 
-#### 3. Tor Mode - `send-tor`
+#### 2. Tor Mode - `send-tor`
 *Anonymous transfers via Tor hidden services.*
 > Requires building with `--features onion`.
 
@@ -171,6 +138,39 @@ wormhole-rs send-tor /path/to/file
 # Send using PIN
 wormhole-rs send-tor --pin /path/to/file
 ```
+
+#### 3. WebRTC Mode - `send-webrtc`
+*WebRTC transfers with Nostr signaling for NAT traversal.*
+> Requires building with `--features webrtc`. WebRTC crate is NOT in the main workspace - build separately with `cargo build -p wormhole-rs-webrtc`.
+
+```bash
+# Send with default Nostr relays
+wormhole-rs-webrtc send /path/to/file
+
+# Send with custom relay
+wormhole-rs-webrtc send --relay wss://my-relay.com /path/to/file
+
+# Receive (sender displays transfer-id, pubkey, relay)
+wormhole-rs-webrtc receive \
+    --transfer-id <TRANSFER_ID> \
+    --sender-pubkey <SENDER_PUBKEY_HEX> \
+    --relay wss://relay.example.com
+```
+
+##### Manual Mode (Copy/Paste SDP)
+For air-gapped or restricted environments where Nostr relays are unavailable:
+
+```bash
+# Sender
+wormhole-rs-webrtc send-manual /path/to/file
+
+# Receiver
+wormhole-rs-webrtc receive-manual
+```
+
+Manual mode exchanges SDP offers/answers via copy-paste. The codes contain the encryption key, so only share them through secure channels (SSH, remote desktop, encrypted chat).
+
+If WebRTC connection fails (e.g., both peers behind symmetric NAT), use Tor mode as a relay fallback.
 
 #### Receiving (Internet)
 The receiver auto-detects the protocol from the wormhole code.
@@ -182,9 +182,6 @@ wormhole-rs receive --code <WORMHOLE_CODE>
 
 # Receive using PIN
 wormhole-rs receive --pin
-
-# Receive with copy/paste manual signaling (WebRTC)
-wormhole-rs receive --manual-signaling
 ```
 
 ---
@@ -207,14 +204,14 @@ wormhole-rs receive-local
 ## Security
 
 All modes provide end-to-end encryption.
-- **Global Modes (Iroh, WebRTC, Tor)**: The **Wormhole Code** carries the key/address information.
+- **Internet Modes (iroh, Tor, WebRTC)**: The **Wormhole Code** carries the key/address information.
 - **Local Mode**: Uses a 12-character PIN that feeds a SPAKE2 PAKE to derive the AES key (no wormhole code).
 
 | Mode | Type | Key Exchange | Transport Encryption |
 |------|------|--------------|---------------------|
 | iroh | Internet | Wormhole Code | QUIC/TLS 1.3 |
-| WebRTC | Internet | Wormhole Code | DTLS (WebRTC) / TLS (Relay) |
 | Tor | Internet | Wormhole Code | Tor circuits |
+| WebRTC | Internet | Wormhole Code | DTLS (WebRTC) |
 | Local | LAN | SPAKE2 (PIN + transfer_id) | AES-256-GCM over TCP |
 
 Relay servers (iroh, Tor) never see decrypted content or encryption keys.
