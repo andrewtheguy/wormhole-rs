@@ -511,6 +511,10 @@ pub const PROCEED_SIGNAL: &[u8] = b"PROCEED";
 /// Signal sent by receiver to abort transfer (e.g., file exists and user declined)
 pub const ABORT_SIGNAL: &[u8] = b"ABORT\0\0"; // Padded to 7 bytes like PROCEED
 
+/// Maximum size for encrypted control signals (prevents OOM from malicious length prefixes)
+/// Control signals are small (e.g., "ACK", "PROCEED", "RESUME:"+8 bytes) plus encryption overhead
+const MAX_CONTROL_SIGNAL_SIZE: usize = 1024;
+
 /// Control signal types for encrypted handshake
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ControlSignal {
@@ -584,7 +588,19 @@ pub async fn recv_control<R: AsyncReadExt + Unpin>(
         .context("Failed to read control signal length")?;
     let len = u32::from_be_bytes(len_buf) as usize;
 
-    // Read encrypted data
+    // Validate length to prevent OOM from malicious peers
+    if len == 0 {
+        anyhow::bail!("Invalid control signal: zero length");
+    }
+    if len > MAX_CONTROL_SIGNAL_SIZE {
+        anyhow::bail!(
+            "Control signal too large: {} bytes (max {})",
+            len,
+            MAX_CONTROL_SIGNAL_SIZE
+        );
+    }
+
+    // Read encrypted data (safe to allocate after bounds check)
     let mut encrypted = vec![0u8; len];
     reader
         .read_exact(&mut encrypted)
@@ -1147,6 +1163,8 @@ pub fn setup_temp_file_cleanup_handler(temp_path: PathBuf) -> CleanupHandler {
 /// Returns a CleanupHandler with:
 /// - `cleanup_path`: Clear this when extraction completes normally
 /// - `shutdown_rx`: Await or select! on this to detect interrupt and shut down gracefully
+///
+/// The caller should handle the shutdown signal and exit with code 130.
 pub fn setup_dir_cleanup_handler(extract_dir: PathBuf) -> CleanupHandler {
     let cleanup_path: CleanupPath = std::sync::Arc::new(tokio::sync::Mutex::new(Some(extract_dir)));
     let cleanup_clone = cleanup_path.clone();
