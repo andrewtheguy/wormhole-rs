@@ -133,11 +133,14 @@ fn validate_path(path: &PathBuf, folder: bool) -> Result<()> {
     Ok(())
 }
 
-/// Validate output directory exists
+/// Validate output directory exists and is a directory
 fn validate_output_dir(output: &Option<PathBuf>) -> Result<()> {
     if let Some(ref dir) = output {
+        if !dir.exists() {
+            anyhow::bail!("Output path does not exist: {}", dir.display());
+        }
         if !dir.is_dir() {
-            anyhow::bail!("Output directory does not exist: {}", dir.display());
+            anyhow::bail!("Output path is not a directory: {}", dir.display());
         }
     }
     Ok(())
@@ -229,6 +232,15 @@ async fn main() -> Result<()> {
             pin,
             no_resume,
         } => {
+            // Warn if relay_url is specified but iroh feature is disabled
+            #[cfg(not(feature = "iroh"))]
+            if !relay_url.is_empty() {
+                eprintln!(
+                    "Warning: --relay-url has no effect because iroh support is disabled.\n\
+                     To use custom relays, rebuild with: cargo build --features iroh"
+                );
+            }
+
             // Validate output directory if provided
             validate_output_dir(&output)?;
 
@@ -265,6 +277,7 @@ async fn main() -> Result<()> {
 }
 
 /// Receive using a wormhole code (auto-detects transport)
+#[allow(unused_variables)] // relay_url and no_resume only used with iroh feature
 async fn receive_with_code(
     code: &str,
     output: Option<PathBuf>,
