@@ -63,25 +63,18 @@ async fn try_webrtc_receive(
 
     // Wait for answer with timeout
     eprintln!("Waiting for answer from sender...");
-    let answer_result: Result<Option<WebRtcResult>> = timeout(WEBRTC_CONNECTION_TIMEOUT, async {
+    let answer_result: Result<()> = timeout(WEBRTC_CONNECTION_TIMEOUT, async {
         loop {
             match signal_rx.recv().await {
                 Some(SignalingMessage::Answer { sdp, .. }) => {
                     eprintln!("Received answer from sender");
                     let answer_sdp = RTCSessionDescription::answer(sdp.sdp)
-                        .context("Failed to create answer SDP");
+                        .context("Failed to create answer SDP")?;
 
-                    match answer_sdp {
-                        Ok(sdp) => {
-                            if let Err(e) = rtc_peer.set_remote_description(sdp).await {
-                                break Err(anyhow::anyhow!(
-                                    "Failed to set remote description: {}",
-                                    e
-                                ));
-                            }
-                        }
-                        Err(e) => break Err(e),
-                    }
+                    rtc_peer
+                        .set_remote_description(answer_sdp)
+                        .await
+                        .context("Failed to set remote description")?;
 
                     // Add bundled ICE candidates
                     eprintln!("Received {} bundled ICE candidates", sdp.candidates.len());
@@ -97,7 +90,7 @@ async fn try_webrtc_receive(
                         }
                     }
 
-                    break Ok(None);
+                    break Ok(());
                 }
 
                 Some(_) => continue,
@@ -111,21 +104,12 @@ async fn try_webrtc_receive(
     .map_err(|_| anyhow::anyhow!("Timeout waiting for answer"))
     .and_then(|r| r);
 
-    match answer_result {
-        Ok(Some(result)) => {
-            signal_handle.abort();
-            return Ok(result);
-        }
-        Ok(None) => {
-            // Success case, continue
-        }
-        Err(e) => {
-            signal_handle.abort();
-            return Ok(WebRtcResult::Failed(format!(
-                "Failed to receive answer: {}",
-                e
-            )));
-        }
+    if let Err(e) = answer_result {
+        signal_handle.abort();
+        return Ok(WebRtcResult::Failed(format!(
+            "Failed to receive answer: {}",
+            e
+        )));
     }
 
     // Take data channel receiver from peer
