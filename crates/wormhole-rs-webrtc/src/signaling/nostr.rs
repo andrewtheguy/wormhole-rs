@@ -15,6 +15,9 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tokio::time::{timeout, Duration};
 
+/// Timeout for relay connections
+const RELAY_CONNECTION_TIMEOUT: Duration = Duration::from_secs(10);
+
 use wormhole_common::signaling::nostr_protocol::{
     generate_transfer_id, get_best_relays, nostr_file_transfer_kind, DEFAULT_NOSTR_RELAYS,
 };
@@ -96,9 +99,29 @@ impl NostrSignaling {
             anyhow::bail!("Failed to add any Nostr relays; cannot continue without relays.");
         }
 
-        // Connect
+        // Connect and wait for at least one relay to connect
         client.connect().await;
-        tokio::time::sleep(Duration::from_secs(2)).await;
+        client.wait_for_connection(RELAY_CONNECTION_TIMEOUT).await;
+
+        // Verify at least one relay connected
+        let relay_statuses = client.relays().await;
+        let connected_count = relay_statuses
+            .values()
+            .filter(|r| r.is_connected())
+            .count();
+
+        if connected_count == 0 {
+            anyhow::bail!(
+                "Failed to connect to any Nostr relay within timeout. \
+                 Check network connectivity and relay availability."
+            );
+        }
+
+        log::debug!(
+            "Connected to {}/{} Nostr relays",
+            connected_count,
+            relay_statuses.len()
+        );
 
         // Generate transfer ID
         let transfer_id = generate_transfer_id();
@@ -399,9 +422,29 @@ pub async fn create_receiver_signaling(
         anyhow::bail!("Failed to add any Nostr relays; cannot continue without relays.");
     }
 
-    // Connect
+    // Connect and wait for at least one relay to connect
     client.connect().await;
-    tokio::time::sleep(Duration::from_secs(2)).await;
+    client.wait_for_connection(RELAY_CONNECTION_TIMEOUT).await;
+
+    // Verify at least one relay connected
+    let relay_statuses = client.relays().await;
+    let connected_count = relay_statuses
+        .values()
+        .filter(|r| r.is_connected())
+        .count();
+
+    if connected_count == 0 {
+        anyhow::bail!(
+            "Failed to connect to any Nostr relay within timeout. \
+             Check network connectivity and relay availability."
+        );
+    }
+
+    log::debug!(
+        "Connected to {}/{} Nostr relays",
+        connected_count,
+        relay_statuses.len()
+    );
 
     let signaling = NostrSignaling {
         client,
