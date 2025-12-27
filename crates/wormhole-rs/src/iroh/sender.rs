@@ -241,7 +241,7 @@ async fn transfer_data_internal(
     Ok(())
 }
 
-/// Send a file and return the wormhole code
+/// Send a file through the wormhole.
 pub async fn send_file(file_path: &Path, relay_urls: Vec<String>, use_pin: bool) -> Result<()> {
     let prepared = match prepare_file_for_send(file_path).await? {
         Some(p) => p,

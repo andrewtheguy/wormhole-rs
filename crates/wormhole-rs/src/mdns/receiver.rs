@@ -259,7 +259,7 @@ pub async fn receive_mdns(output_dir: Option<PathBuf>) -> Result<()> {
         .addresses
         .iter()
         .find(|a| is_routable(a))
-        .expect("Service was filtered to have routable addresses");
+        .ok_or_else(|| anyhow::anyhow!("No routable addresses available for selected sender"))?;
     let socket_addr = std::net::SocketAddr::new(*addr, selected.port);
 
     println!("Connecting to {}...", socket_addr);

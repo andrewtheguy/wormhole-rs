@@ -239,6 +239,36 @@ pub fn generate_webrtc_code(
         );
     }
 
+    // Validate sender_pubkey format (hex string)
+    if sender_pubkey.is_empty() || !sender_pubkey.chars().all(|c| c.is_ascii_hexdigit()) {
+        anyhow::bail!("Invalid sender_pubkey: must be non-empty hex string");
+    }
+
+    // Validate transfer_id is non-empty
+    if transfer_id.trim().is_empty() {
+        anyhow::bail!("Invalid transfer_id: cannot be empty");
+    }
+
+    // Validate filename is non-empty and doesn't contain path separators
+    if filename.trim().is_empty() {
+        anyhow::bail!("Invalid filename: cannot be empty");
+    }
+    if filename.contains('/') || filename.contains('\\') {
+        anyhow::bail!("Invalid filename: cannot contain path separators");
+    }
+
+    // Validate relay URLs if provided
+    if let Some(ref relay_list) = relays {
+        if relay_list.is_empty() {
+            anyhow::bail!("Invalid relays: list cannot be empty if provided");
+        }
+        for relay in relay_list {
+            if !relay.starts_with("ws://") && !relay.starts_with("wss://") {
+                anyhow::bail!("Invalid relay URL '{}': must start with ws:// or wss://", relay);
+            }
+        }
+    }
+
     let token = WormholeToken {
         version: CURRENT_VERSION,
         protocol: PROTOCOL_WEBRTC.to_string(),

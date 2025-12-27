@@ -453,7 +453,7 @@ pub fn create_relay_list_event(keys: &Keys, relays: &[String]) -> Result<Event> 
     }
 
     // Note: valid_tags cannot be empty here because:
-    // 1. We already bailed if relays was empty (lines 411-413)
+    // 1. We already bailed if relays was empty (lines 428-430)
     // 2. We just bailed if any URLs were malformed
     // 3. Therefore all non-empty relay URLs parsed successfully into valid_tags
 

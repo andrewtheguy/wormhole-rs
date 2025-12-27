@@ -271,8 +271,11 @@ async fn async_main() -> Result<()> {
                 eprintln!("Searching for wormhole token via Nostr...");
 
                 // Fetch encrypted token from Nostr
-                let token_str =
-                    wormhole_common::auth::nostr_pin::fetch_wormhole_code_via_pin(&pin_str).await?;
+                let token_str = tokio::time::timeout(
+                    std::time::Duration::from_secs(30),
+                    wormhole_common::auth::nostr_pin::fetch_wormhole_code_via_pin(&pin_str)
+                ).await
+                .map_err(|_| anyhow::anyhow!("Timeout: Failed to retrieve wormhole code from Nostr after 30 seconds"))??;
                 eprintln!("Token found and decrypted!");
                 code = Some(token_str);
             }

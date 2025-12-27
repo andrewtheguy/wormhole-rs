@@ -203,6 +203,12 @@ impl<R: tokio::io::AsyncReadExt + Unpin + Send> Read for StreamingReader<R> {
 
             match chunk_result {
                 Ok(chunk) => {
+                    if chunk.is_empty() && self.bytes_remaining > 0 {
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::UnexpectedEof,
+                            format!("Received empty chunk with {} bytes remaining", self.bytes_remaining),
+                        ));
+                    }
                     self.bytes_remaining = self.bytes_remaining.saturating_sub(chunk.len() as u64);
                     log::trace!(
                         "Received chunk {}, {} bytes remaining",

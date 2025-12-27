@@ -174,9 +174,14 @@ pub fn display_offer_json(offer: &OfflineOffer) -> Result<()> {
     std::io::stdout().flush()?;
     std::io::stdin().read_line(&mut String::new())?;
     println!();
-    println!("WARNING: The code below contains the encryption key.");
-    println!("         Only share it through secure channels (e.g., SSH session,");
-    println!("         remote desktop, or encrypted chat).");
+     println!();
+     println!("=== RECEIVER STEP 2: Press Enter to show the answer code ===");
+     std::io::stdout().flush()?;
+     let _ = std::io::stdin().read_line(&mut String::new());
+     println!();
+     println!("{}", ANSWER_BEGIN_MARKER);
+     println!("{}", wrapped);
+     println!("{}", ANSWER_END_MARKER);
     println!();
     println!("{}", OFFER_BEGIN_MARKER);
     println!("{}", wrapped);
