@@ -34,14 +34,9 @@ const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(30);
 fn is_routable(addr: &IpAddr) -> bool {
     match addr {
         IpAddr::V4(v4) => {
-            !v4.is_loopback()
-                && !v4.is_link_local()
-                && !v4.is_unspecified()
-                && !v4.is_broadcast()
+            !v4.is_loopback() && !v4.is_link_local() && !v4.is_unspecified() && !v4.is_broadcast()
         }
-        IpAddr::V6(v6) => {
-            !v6.is_loopback() && !v6.is_unicast_link_local() && !v6.is_unspecified()
-        }
+        IpAddr::V6(v6) => !v6.is_loopback() && !v6.is_unicast_link_local() && !v6.is_unspecified(),
     }
 }
 
@@ -109,10 +104,8 @@ pub async fn receive_mdns(output_dir: Option<PathBuf>) -> Result<()> {
                         .iter()
                         .map(|s| s.to_ip_addr())
                         .collect();
-                    let filtered: HashSet<IpAddr> = all_addrs
-                        .into_iter()
-                        .filter(is_routable)
-                        .collect();
+                    let filtered: HashSet<IpAddr> =
+                        all_addrs.into_iter().filter(is_routable).collect();
                     let addresses: Vec<IpAddr> = filtered.into_iter().collect();
 
                     let service_info = MdnsServiceInfo {
@@ -205,7 +198,10 @@ pub async fn receive_mdns(output_dir: Option<PathBuf>) -> Result<()> {
         .collect();
 
     if service_list.is_empty() {
-        println!("\nFound {} sender(s) but none have routable addresses.", services.len());
+        println!(
+            "\nFound {} sender(s) but none have routable addresses.",
+            services.len()
+        );
         println!("This may indicate a network configuration issue.");
         return Ok(());
     }

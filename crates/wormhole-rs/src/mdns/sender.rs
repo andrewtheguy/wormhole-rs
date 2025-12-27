@@ -11,11 +11,11 @@ use std::path::Path;
 use tokio::fs::File;
 use tokio::net::TcpStream;
 
-use crate::cli::instructions::print_receiver_command;
 use super::common::{
     generate_pin, generate_transfer_id, PORT_RANGE_END, PORT_RANGE_START, SERVICE_TYPE,
     TXT_FILENAME, TXT_FILE_SIZE, TXT_TRANSFER_ID, TXT_TRANSFER_TYPE,
 };
+use crate::cli::instructions::print_receiver_command;
 use wormhole_common::auth::spake2::handshake_as_responder;
 use wormhole_common::core::transfer::{
     format_bytes, run_sender_transfer, send_file_with, send_folder_with, FileHeader,
@@ -99,13 +99,16 @@ fn find_available_port() -> Result<TcpListener> {
 /// Generates a random passphrase and displays it to the user.
 /// The file is encrypted using a key derived from the passphrase.
 pub async fn send_file_mdns(file_path: &Path) -> Result<()> {
-    send_file_with(file_path, |file, filename, file_size, checksum, transfer_type| async move {
-        // Generate random PIN (key will be derived via SPAKE2 handshake)
-        let pin = generate_pin();
-        display_receiver_instructions(&pin);
+    send_file_with(
+        file_path,
+        |file, filename, file_size, checksum, transfer_type| async move {
+            // Generate random PIN (key will be derived via SPAKE2 handshake)
+            let pin = generate_pin();
+            display_receiver_instructions(&pin);
 
-        transfer_data_internal(file, filename, file_size, checksum, transfer_type, pin).await
-    })
+            transfer_data_internal(file, filename, file_size, checksum, transfer_type, pin).await
+        },
+    )
     .await
 }
 
@@ -115,13 +118,16 @@ pub async fn send_file_mdns(file_path: &Path) -> Result<()> {
 /// a receiver to connect. Generates a random passphrase and displays it.
 /// The archive is encrypted using a key derived from the passphrase.
 pub async fn send_folder_mdns(folder_path: &Path) -> Result<()> {
-    send_folder_with(folder_path, |file, filename, file_size, _checksum, transfer_type| async move {
-        // Generate random PIN (key will be derived via SPAKE2 handshake)
-        let pin = generate_pin();
-        display_receiver_instructions(&pin);
+    send_folder_with(
+        folder_path,
+        |file, filename, file_size, _checksum, transfer_type| async move {
+            // Generate random PIN (key will be derived via SPAKE2 handshake)
+            let pin = generate_pin();
+            display_receiver_instructions(&pin);
 
-        transfer_data_internal(file, filename, file_size, 0, transfer_type, pin).await
-    })
+            transfer_data_internal(file, filename, file_size, 0, transfer_type, pin).await
+        },
+    )
     .await
 }
 
@@ -178,7 +184,9 @@ async fn transfer_data_internal(
     .enable_addr_auto();
 
     let fullname = service_info.get_fullname().to_string();
-    mdns_guard.daemon.register(service_info)
+    mdns_guard
+        .daemon
+        .register(service_info)
         .context("Failed to register mDNS service")?;
     mdns_guard.set_fullname(fullname);
 
@@ -289,4 +297,3 @@ async fn send_data_over_tcp(
 
     Ok(())
 }
-

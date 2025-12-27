@@ -177,8 +177,7 @@ fn write_metadata_header(file: &mut File, metadata: &ResumeMetadata) -> Result<(
         .context("Failed to write metadata length")?;
 
     // Write padded JSON metadata
-    file.write_all(&json)
-        .context("Failed to write metadata")?;
+    file.write_all(&json).context("Failed to write metadata")?;
 
     file.flush().context("Failed to flush metadata")?;
 
@@ -553,7 +552,10 @@ mod tests {
     fn test_temp_file_path() {
         let path = Path::new("/home/user/file.txt");
         let temp = temp_file_path(path);
-        assert_eq!(temp, PathBuf::from("/home/user/file.txt.wormhole-rs.partial"));
+        assert_eq!(
+            temp,
+            PathBuf::from("/home/user/file.txt.wormhole-rs.partial")
+        );
     }
 
     #[test]

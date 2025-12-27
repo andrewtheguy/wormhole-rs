@@ -74,7 +74,7 @@ pub async fn receive(
         eprintln!("Connection type: {:?}", conn_type);
     }
 
-const ACCEPT_STREAM_TIMEOUT: Duration = Duration::from_secs(30);
+    const ACCEPT_STREAM_TIMEOUT: Duration = Duration::from_secs(30);
 
     // Accept bi-directional stream
     let (send_stream, recv_stream) = timeout(ACCEPT_STREAM_TIMEOUT, conn.accept_bi())
@@ -91,7 +91,9 @@ const ACCEPT_STREAM_TIMEOUT: Duration = Duration::from_secs(30);
     // Finish send stream and wait for acknowledgment (QUIC-specific)
     // This ensures the ACK message is fully delivered before closing the connection.
     let mut send_stream = duplex.into_send_stream();
-    send_stream.finish().context("Failed to finish send stream")?;
+    send_stream
+        .finish()
+        .context("Failed to finish send stream")?;
 
     // Wait for the peer to acknowledge our FIN (with timeout to avoid hanging)
     const STREAM_CLOSE_TIMEOUT: Duration = Duration::from_secs(5);

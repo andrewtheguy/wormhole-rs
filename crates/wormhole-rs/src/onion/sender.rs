@@ -160,16 +160,22 @@ async fn transfer_data_tor_internal(
 
 /// Send a file via Tor hidden service
 pub async fn send_file_tor(file_path: &Path, use_pin: bool) -> Result<()> {
-    send_file_with(file_path, |file, filename, file_size, checksum, transfer_type| {
-        transfer_data_tor_internal(file, filename, file_size, checksum, transfer_type, use_pin)
-    })
+    send_file_with(
+        file_path,
+        |file, filename, file_size, checksum, transfer_type| {
+            transfer_data_tor_internal(file, filename, file_size, checksum, transfer_type, use_pin)
+        },
+    )
     .await
 }
 
 /// Send a folder via Tor hidden service (as tar archive)
 pub async fn send_folder_tor(folder_path: &Path, use_pin: bool) -> Result<()> {
-    send_folder_with(folder_path, |file, filename, file_size, checksum, transfer_type| {
-        transfer_data_tor_internal(file, filename, file_size, checksum, transfer_type, use_pin)
-    })
+    send_folder_with(
+        folder_path,
+        |file, filename, file_size, checksum, transfer_type| {
+            transfer_data_tor_internal(file, filename, file_size, checksum, transfer_type, use_pin)
+        },
+    )
     .await
 }

@@ -5,7 +5,6 @@
 //! - Data channel handlers
 
 use anyhow::{Context, Result};
-use webrtc::ice::candidate::CandidateType;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -15,6 +14,7 @@ use webrtc::api::media_engine::MediaEngine;
 use webrtc::api::APIBuilder;
 use webrtc::data_channel::data_channel_message::DataChannelMessage;
 use webrtc::data_channel::RTCDataChannel;
+use webrtc::ice::candidate::CandidateType;
 use webrtc::ice_transport::ice_candidate::RTCIceCandidate;
 use webrtc::ice_transport::ice_connection_state::RTCIceConnectionState;
 use webrtc::ice_transport::ice_gatherer_state::RTCIceGathererState;
@@ -367,9 +367,7 @@ impl WebRtcPeer {
         let connection_type = match (local_candidate_type, remote_candidate_type) {
             (Some(local), Some(remote)) => {
                 // If either side uses a relay, the connection is relayed
-                if matches!(local, CandidateType::Relay)
-                    || matches!(remote, CandidateType::Relay)
-                {
+                if matches!(local, CandidateType::Relay) || matches!(remote, CandidateType::Relay) {
                     "Relay (TURN)".to_string()
                 } else if matches!(local, CandidateType::Host)
                     && matches!(remote, CandidateType::Host)
@@ -674,15 +672,11 @@ impl AsyncWrite for DataChannelStream {
         // Poll immediately to register the waker, then store if still pending
         match Pin::new(&mut rx).poll(cx) {
             Poll::Ready(Ok(Ok(len))) => Poll::Ready(Ok(len)),
-            Poll::Ready(Ok(Err(e))) => {
-                Poll::Ready(Err(io::Error::new(io::ErrorKind::Other, e)))
-            }
-            Poll::Ready(Err(_)) => {
-                Poll::Ready(Err(io::Error::new(
-                    io::ErrorKind::BrokenPipe,
-                    "Write operation cancelled",
-                )))
-            }
+            Poll::Ready(Ok(Err(e))) => Poll::Ready(Err(io::Error::new(io::ErrorKind::Other, e))),
+            Poll::Ready(Err(_)) => Poll::Ready(Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "Write operation cancelled",
+            ))),
             Poll::Pending => {
                 // Store the receiver for future polls - waker is now registered
                 this.write_pending = Some(rx);

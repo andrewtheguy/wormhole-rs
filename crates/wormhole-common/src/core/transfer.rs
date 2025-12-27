@@ -52,10 +52,7 @@ pub fn contains_path_traversal(path: &str) -> bool {
 ///
 /// Use this for single-component names (filenames, folder names).
 pub fn is_invalid_filename(name: &str) -> bool {
-    name.starts_with("..")
-        || name.contains('/')
-        || name.contains('\\')
-        || name.contains('\0')
+    name.starts_with("..") || name.contains('/') || name.contains('\\') || name.contains('\0')
 }
 
 /// Soft limit for large file transfers (100MB)
@@ -90,7 +87,12 @@ pub struct FileHeader {
 }
 
 impl FileHeader {
-    pub fn new(transfer_type: TransferType, filename: String, file_size: u64, checksum: u64) -> Self {
+    pub fn new(
+        transfer_type: TransferType,
+        filename: String,
+        file_size: u64,
+        checksum: u64,
+    ) -> Self {
         Self {
             transfer_type,
             filename,
@@ -151,7 +153,8 @@ impl FileHeader {
         let file_size = u64::from_be_bytes(data[size_start..size_start + 8].try_into().unwrap());
 
         let checksum_start = size_start + 8;
-        let checksum = u64::from_be_bytes(data[checksum_start..checksum_start + 8].try_into().unwrap());
+        let checksum =
+            u64::from_be_bytes(data[checksum_start..checksum_start + 8].try_into().unwrap());
 
         Ok(Self {
             transfer_type,
@@ -865,7 +868,9 @@ pub fn parse_webrtc_control_msg(data: &[u8], key: &[u8; 32]) -> Result<Option<Co
         (WEBRTC_MSG_TYPE_PROCEED, b"PROCEED") => Ok(Some(ControlSignal::Proceed)),
         (WEBRTC_MSG_TYPE_ABORT, b"ABORT") => Ok(Some(ControlSignal::Abort)),
         (WEBRTC_MSG_TYPE_ACK, b"ACK") => Ok(Some(ControlSignal::Ack)),
-        (WEBRTC_MSG_TYPE_RESUME, payload) if payload.starts_with(b"RESUME:") && payload.len() == 15 => {
+        (WEBRTC_MSG_TYPE_RESUME, payload)
+            if payload.starts_with(b"RESUME:") && payload.len() == 15 =>
+        {
             // Parse offset from "RESUME:" || offset(8 bytes BE)
             let offset_bytes: [u8; 8] = payload[7..15].try_into().unwrap();
             let offset = u64::from_be_bytes(offset_bytes);
@@ -955,10 +960,7 @@ pub enum ResumeResponse {
     /// Fresh transfer from beginning
     Fresh,
     /// Resume from byte offset
-    Resume {
-        offset: u64,
-        starting_chunk: u64,
-    },
+    Resume { offset: u64, starting_chunk: u64 },
     /// Transfer aborted by receiver
     Aborted,
 }
@@ -973,7 +975,10 @@ pub async fn handle_receiver_response<R: AsyncReadExt + Unpin>(
         ControlSignal::Proceed => Ok(ResumeResponse::Fresh),
         ControlSignal::Resume(offset) => {
             let starting_chunk = offset / CHUNK_SIZE as u64 + 1;
-            eprintln!("   Resuming from byte offset {} (chunk {})", offset, starting_chunk);
+            eprintln!(
+                "   Resuming from byte offset {} (chunk {})",
+                offset, starting_chunk
+            );
             Ok(ResumeResponse::Resume {
                 offset,
                 starting_chunk,
@@ -1009,7 +1014,8 @@ pub async fn send_file_data<R: AsyncReadExt + Unpin, W: AsyncWriteExt + Unpin>(
         chunk_num += 1;
 
         // Progress update
-        if progress_interval > 0 && (chunk_num % progress_interval == 0 || bytes_sent == file_size) {
+        if progress_interval > 0 && (chunk_num % progress_interval == 0 || bytes_sent == file_size)
+        {
             let percent = calc_percent(bytes_sent, file_size) as u32;
             eprint!(
                 "\r   Progress: {}% ({}/{}) - chunk {}/{}",
@@ -1150,9 +1156,9 @@ pub async fn receive_file_data<R: AsyncReadExt + Unpin>(
     let mut chunk_num = start_chunk;
 
     // Seek to end of data in temp file (for appending)
-    receiver
-        .temp_file
-        .seek(SeekFrom::Start(receiver.data_offset + receiver.bytes_received))?;
+    receiver.temp_file.seek(SeekFrom::Start(
+        receiver.data_offset + receiver.bytes_received,
+    ))?;
 
     while receiver.bytes_received < file_size {
         let chunk = recv_encrypted_chunk(reader, key)
@@ -1175,9 +1181,9 @@ pub async fn receive_file_data<R: AsyncReadExt + Unpin>(
             receiver.temp_file.seek(SeekFrom::Start(0))?;
             update_resume_metadata(&mut receiver.temp_file, &receiver.metadata)?;
             // Seek back to end of data
-            receiver
-                .temp_file
-                .seek(SeekFrom::Start(receiver.data_offset + receiver.bytes_received))?;
+            receiver.temp_file.seek(SeekFrom::Start(
+                receiver.data_offset + receiver.bytes_received,
+            ))?;
         }
 
         // Progress update
@@ -1239,10 +1245,7 @@ pub struct CleanupHandler {
 /// - `shutdown_rx`: Await or select! on this to detect interrupt and shut down gracefully
 ///
 /// The caller should handle the shutdown signal and exit with code 130.
-pub fn setup_resumable_cleanup_handler(
-    temp_path: PathBuf,
-    is_resumable: bool,
-) -> CleanupHandler {
+pub fn setup_resumable_cleanup_handler(temp_path: PathBuf, is_resumable: bool) -> CleanupHandler {
     let cleanup_path: CleanupPath = std::sync::Arc::new(tokio::sync::Mutex::new(Some(temp_path)));
     let cleanup_clone = cleanup_path.clone();
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();

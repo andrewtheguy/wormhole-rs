@@ -62,8 +62,8 @@ pub async fn receive_file_tor(code: &str, output_dir: Option<PathBuf>) -> Result
     // IMPORTANT: _temp_dir must remain in scope for the lifetime of tor_client.
     // The Tor client uses state_dir and cache_dir which are subdirectories of _temp_dir.
     // If _temp_dir is dropped, the directories are deleted and the Tor client will fail.
-    let _temp_dir = tempfile::tempdir()
-        .context("Failed to create temporary directory for Tor client")?;
+    let _temp_dir =
+        tempfile::tempdir().context("Failed to create temporary directory for Tor client")?;
     let state_dir = _temp_dir.path().join("state");
     let cache_dir = _temp_dir.path().join("cache");
 

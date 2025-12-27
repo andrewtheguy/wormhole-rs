@@ -89,10 +89,7 @@ async fn setup_client_with_relays(keys: &Keys, relay_urls: &[String]) -> Result<
 
     // Verify at least one relay connected
     let relay_statuses = client.relays().await;
-    let connected_count = relay_statuses
-        .values()
-        .filter(|r| r.is_connected())
-        .count();
+    let connected_count = relay_statuses.values().filter(|r| r.is_connected()).count();
 
     if connected_count == 0 {
         anyhow::bail!(

@@ -226,8 +226,14 @@ pub async fn receive_webrtc(
     eprintln!("Receiver pubkey: {}", signaling.public_key().to_hex());
 
     // Try WebRTC transfer
-    match try_webrtc_receive(&signaling, &sender_pubkey, &key, output_dir.clone(), no_resume)
-        .await?
+    match try_webrtc_receive(
+        &signaling,
+        &sender_pubkey,
+        &key,
+        output_dir.clone(),
+        no_resume,
+    )
+    .await?
     {
         WebRtcResult::Success => {
             signaling.disconnect().await;

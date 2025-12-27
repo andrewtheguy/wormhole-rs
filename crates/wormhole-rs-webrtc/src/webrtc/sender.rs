@@ -54,7 +54,9 @@ fn is_signaling_error(err: &anyhow::Error) -> bool {
         "failed to subscribe",
     ];
 
-    signaling_phrases.iter().any(|phrase| err_msg.contains(phrase))
+    signaling_phrases
+        .iter()
+        .any(|phrase| err_msg.contains(phrase))
 }
 
 /// Handle signaling error with fallback to manual mode
@@ -310,7 +312,13 @@ async fn transfer_data_webrtc_internal(
 
     let code_str = code.clone();
 
-    display_transfer_code(use_pin, signaling.signing_keys(), &code_str, signaling.transfer_id()).await?;
+    display_transfer_code(
+        use_pin,
+        signaling.signing_keys(),
+        &code_str,
+        signaling.transfer_id(),
+    )
+    .await?;
 
     eprintln!("Filename: {}", filename);
     eprintln!("Size: {}", format_bytes(file_size));
@@ -365,18 +373,21 @@ async fn send_file_webrtc_internal(
     use_default_relays: bool,
     use_pin: bool,
 ) -> Result<()> {
-    send_file_with(file_path, |file, filename, file_size, checksum, transfer_type| {
-        transfer_data_webrtc_internal(
-            file,
-            filename,
-            file_size,
-            checksum,
-            transfer_type,
-            custom_relays,
-            use_default_relays,
-            use_pin,
-        )
-    })
+    send_file_with(
+        file_path,
+        |file, filename, file_size, checksum, transfer_type| {
+            transfer_data_webrtc_internal(
+                file,
+                filename,
+                file_size,
+                checksum,
+                transfer_type,
+                custom_relays,
+                use_default_relays,
+                use_pin,
+            )
+        },
+    )
     .await
 }
 
@@ -408,17 +419,20 @@ async fn send_folder_webrtc_internal(
     use_default_relays: bool,
     use_pin: bool,
 ) -> Result<()> {
-    send_folder_with(folder_path, |file, filename, file_size, _checksum, transfer_type| {
-        transfer_data_webrtc_internal(
-            file,
-            filename,
-            file_size,
-            0, // Folders are not resumable
-            transfer_type,
-            custom_relays,
-            use_default_relays,
-            use_pin,
-        )
-    })
+    send_folder_with(
+        folder_path,
+        |file, filename, file_size, _checksum, transfer_type| {
+            transfer_data_webrtc_internal(
+                file,
+                filename,
+                file_size,
+                0, // Folders are not resumable
+                transfer_type,
+                custom_relays,
+                use_default_relays,
+                use_pin,
+            )
+        },
+    )
     .await
 }

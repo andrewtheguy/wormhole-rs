@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use iroh::endpoint::{ConnectionError, ConnectingError};
+use iroh::endpoint::{ConnectingError, ConnectionError};
 use iroh::Watcher;
 use std::path::Path;
 use tokio::fs::File;
@@ -9,8 +9,8 @@ use super::common::{create_sender_endpoint, IrohDuplex};
 use crate::cli::instructions::print_receiver_command;
 use wormhole_common::core::crypto::generate_key;
 use wormhole_common::core::transfer::{
-    run_sender_transfer, send_file_with, send_folder_with, FileHeader, Interrupted,
-    TransferResult, TransferType,
+    run_sender_transfer, send_file_with, send_folder_with, FileHeader, Interrupted, TransferResult,
+    TransferType,
 };
 use wormhole_common::core::wormhole::generate_code;
 use wormhole_common::signaling::nostr_protocol::generate_transfer_id;
@@ -243,18 +243,21 @@ async fn transfer_data_internal(
 
 /// Send a file through the wormhole.
 pub async fn send_file(file_path: &Path, relay_urls: Vec<String>, use_pin: bool) -> Result<()> {
-    send_file_with(file_path, |file, filename, file_size, checksum, transfer_type| {
-        transfer_data_internal(
-            file,
-            filename,
-            file_size,
-            checksum,
-            transfer_type,
-            relay_urls,
-            use_pin,
-            None, // No shutdown receiver for resumable file transfers
-        )
-    })
+    send_file_with(
+        file_path,
+        |file, filename, file_size, checksum, transfer_type| {
+            transfer_data_internal(
+                file,
+                filename,
+                file_size,
+                checksum,
+                transfer_type,
+                relay_urls,
+                use_pin,
+                None, // No shutdown receiver for resumable file transfers
+            )
+        },
+    )
     .await
 }
 
@@ -265,17 +268,20 @@ pub async fn send_file(file_path: &Path, relay_urls: Vec<String>, use_pin: bool)
 /// support Unix permission modes (rwx), so files may have different permissions
 /// after extraction on Windows.
 pub async fn send_folder(folder_path: &Path, relay_urls: Vec<String>, use_pin: bool) -> Result<()> {
-    send_folder_with(folder_path, |file, filename, file_size, checksum, transfer_type| {
-        transfer_data_internal(
-            file,
-            filename,
-            file_size,
-            checksum,
-            transfer_type,
-            relay_urls,
-            use_pin,
-            None, // Shutdown handling is done by send_folder_with
-        )
-    })
+    send_folder_with(
+        folder_path,
+        |file, filename, file_size, checksum, transfer_type| {
+            transfer_data_internal(
+                file,
+                filename,
+                file_size,
+                checksum,
+                transfer_type,
+                relay_urls,
+                use_pin,
+                None, // Shutdown handling is done by send_folder_with
+            )
+        },
+    )
     .await
 }

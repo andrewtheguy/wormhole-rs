@@ -197,16 +197,19 @@ impl<R: tokio::io::AsyncReadExt + Unpin + Send> Read for StreamingReader<R> {
             // SAFETY: This is only safe when called from a blocking thread pool
             // (via spawn_blocking), not from within an async context.
             // See struct documentation for the correct usage pattern.
-            let chunk_result = self.runtime_handle.block_on(async {
-                recv_encrypted_chunk(&mut self.recv_stream, &self.key).await
-            });
+            let chunk_result = self
+                .runtime_handle
+                .block_on(async { recv_encrypted_chunk(&mut self.recv_stream, &self.key).await });
 
             match chunk_result {
                 Ok(chunk) => {
                     if chunk.is_empty() && self.bytes_remaining > 0 {
                         return Err(std::io::Error::new(
                             std::io::ErrorKind::UnexpectedEof,
-                            format!("Received empty chunk with {} bytes remaining", self.bytes_remaining),
+                            format!(
+                                "Received empty chunk with {} bytes remaining",
+                                self.bytes_remaining
+                            ),
                         ));
                     }
                     self.bytes_remaining = self.bytes_remaining.saturating_sub(chunk.len() as u64);
@@ -276,8 +279,12 @@ pub fn extract_tar_archive_returning_reader<R: Read>(
     extract_dir: &Path,
 ) -> Result<(Vec<String>, R)> {
     // Ensure extraction directory exists and is writable
-    std::fs::create_dir_all(extract_dir)
-        .with_context(|| format!("Failed to create extraction directory: {}", extract_dir.display()))?;
+    std::fs::create_dir_all(extract_dir).with_context(|| {
+        format!(
+            "Failed to create extraction directory: {}",
+            extract_dir.display()
+        )
+    })?;
 
     // Verify it's actually a directory
     if !extract_dir.is_dir() {
@@ -289,14 +296,21 @@ pub fn extract_tar_archive_returning_reader<R: Read>(
 
     // Verify directory is writable by creating and removing a temp file
     let test_file = extract_dir.join(".wormhole_write_test");
-    std::fs::File::create(&test_file)
-        .with_context(|| format!("Extraction directory is not writable: {}", extract_dir.display()))?;
+    std::fs::File::create(&test_file).with_context(|| {
+        format!(
+            "Extraction directory is not writable: {}",
+            extract_dir.display()
+        )
+    })?;
     let _ = std::fs::remove_file(&test_file);
 
     // Canonicalize extract_dir for path traversal checks
-    let canonical_extract_dir = extract_dir
-        .canonicalize()
-        .with_context(|| format!("Failed to canonicalize extraction directory: {}", extract_dir.display()))?;
+    let canonical_extract_dir = extract_dir.canonicalize().with_context(|| {
+        format!(
+            "Failed to canonicalize extraction directory: {}",
+            extract_dir.display()
+        )
+    })?;
 
     let mut archive = Archive::new(reader);
     // Preserve file mode (0755, etc.) but not owner/group (UID/GID mismatch across machines)
@@ -329,7 +343,10 @@ pub fn extract_tar_archive_returning_reader<R: Read>(
         // For entries that don't exist yet, we can't canonicalize them,
         // so we check component-by-component that no ".." escapes the root
         if !is_path_within_dir(&target_path, &canonical_extract_dir) {
-            skipped.push(format!("{} (escapes extraction directory)", entry_path.display()));
+            skipped.push(format!(
+                "{} (escapes extraction directory)",
+                entry_path.display()
+            ));
             log::warn!(
                 "Skipping entry that escapes extraction directory: {}",
                 entry_path.display()

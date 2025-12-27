@@ -111,7 +111,9 @@ async fn transfer_offline_internal(
     eprintln!("Gathering connection info...");
 
     // Wait for ICE gathering to complete
-    let candidates = rtc_peer.gather_ice_candidates(ICE_GATHERING_TIMEOUT).await?;
+    let candidates = rtc_peer
+        .gather_ice_candidates(ICE_GATHERING_TIMEOUT)
+        .await?;
     eprintln!("Collected {} ICE candidates", candidates.len());
 
     if candidates.is_empty() {
