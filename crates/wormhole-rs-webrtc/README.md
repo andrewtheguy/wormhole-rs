@@ -6,9 +6,9 @@ WebRTC transport for wormhole-rs file transfers with NAT traversal.
 
 ## Features
 
-- WebRTC ICE (Interactive Connectivity Establishment) for NAT traversal
-- TCP candidates for reliable, ordered byte streams
-- Nostr relay signaling for credential/candidate exchange
+- Full WebRTC stack with RTCPeerConnection and RTCDataChannel
+- ICE (Interactive Connectivity Establishment) for NAT traversal
+- Nostr relay signaling for SDP/candidate exchange
 - Uses unified transfer protocol (same as iroh, Tor, mDNS transports)
 - SPAKE2 key exchange for authenticated encryption
 
@@ -17,20 +17,22 @@ WebRTC transport for wormhole-rs file transfers with NAT traversal.
 ```
 ┌─────────────────────────────────────────────────────────┐
 │                    Signaling Layer                       │
-│  (Nostr relays - exchange ICE credentials & candidates) │
+│  (Nostr relays - exchange SDP offers/answers + ICE)     │
 └─────────────────────────────────────────────────────────┘
                             │
                             ▼
 ┌─────────────────────────────────────────────────────────┐
-│                   webrtc-ice Agent                       │
-│  - ICE negotiation (TCP candidates only)                │
-│  - NAT traversal via STUN                               │
+│                  RTCPeerConnection                       │
+│  - SDP offer/answer negotiation                         │
+│  - ICE candidate gathering via STUN                     │
+│  - DTLS encryption                                      │
 └─────────────────────────────────────────────────────────┘
                             │
                             ▼
 ┌─────────────────────────────────────────────────────────┐
-│               IceConn → AsyncRead/AsyncWrite            │
-│  - TCP gives ordered, reliable bytes                    │
+│        RTCDataChannel → DataChannelStream               │
+│  - AsyncRead/AsyncWrite adapter                         │
+│  - Ordered, reliable message delivery                   │
 └─────────────────────────────────────────────────────────┘
                             │
                             ▼
@@ -69,13 +71,14 @@ The sender displays the transfer ID, sender pubkey, and relay URL for the receiv
 
 ## How It Works
 
-1. **Sender** creates ICE agent, gathers TCP candidates via STUN
-2. **Sender** publishes to Nostr relay and waits for receiver
-3. **Receiver** creates ICE agent, gathers candidates, sends answer via Nostr
-4. **Sender** receives answer, publishes offer with credentials
-5. ICE connection established (TCP-based, NAT-traversed)
-6. SPAKE2 key exchange using transfer ID
-7. Unified transfer protocol runs over encrypted connection
+1. **Sender** creates RTCPeerConnection and data channel
+2. **Sender** creates SDP offer and gathers ICE candidates via STUN
+3. **Sender** publishes offer to Nostr relay and waits for receiver
+4. **Receiver** creates RTCPeerConnection, receives offer via Nostr
+5. **Receiver** creates SDP answer and publishes to Nostr
+6. **Sender** receives answer, WebRTC connection established
+7. SPAKE2 key exchange using transfer ID
+8. Unified transfer protocol runs over encrypted data channel
 
 ## Comparison with Other Transports
 
@@ -90,7 +93,6 @@ The sender displays the transfer ID, sender pubkey, and relay URL for the receiv
 
 - [Architecture & Protocol](docs/ARCHITECTURE.md) - Detailed protocol flows
 
-## Future Enhancements
+## Fallback
 
-- [ ] Offline/manual signaling mode (copy-paste credentials)
-- [ ] TURN relay support for restricted networks
+If WebRTC connection fails (e.g., both peers behind symmetric NAT), use Tor mode from the main `wormhole-rs` program as a relay fallback.

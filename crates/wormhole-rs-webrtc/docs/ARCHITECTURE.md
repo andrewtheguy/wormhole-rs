@@ -2,19 +2,7 @@
 
 ## Overview
 
-The WebRTC transport uses `webrtc-ice` for NAT traversal with TCP candidates, providing a reliable byte stream for the unified transfer protocol.
-
-## Why ICE Instead of Full WebRTC?
-
-| Aspect | Full WebRTC | ICE-Only |
-|--------|-------------|----------|
-| Stack | SCTP/DTLS/DataChannel | TCP via ICE |
-| Complexity | High | Low |
-| Binary size | ~5MB | ~1MB |
-| Protocol | Custom datagram-based | Unified stream-based |
-| Compatibility | WebRTC only | Same as iroh/Tor/mDNS |
-
-By using TCP candidates only, we get ordered, reliable byte streams that work directly with our unified transfer protocol.
+The WebRTC transport uses the full WebRTC stack (`webrtc` crate) with RTCPeerConnection and RTCDataChannel for peer-to-peer file transfers with NAT traversal.
 
 ## Connection Flow
 
@@ -25,28 +13,29 @@ sequenceDiagram
     participant Receiver
 
     Note over Sender: 1. Setup
-    Sender->>Sender: Create ICE Agent (TCP mode)
-    Sender->>Sender: Gather candidates via STUN
+    Sender->>Sender: Create RTCPeerConnection
+    Sender->>Sender: Create data channel "file-transfer"
+    Sender->>Sender: Create SDP offer
+    Sender->>Sender: Gather ICE candidates via STUN
     Sender->>Nostr: Connect & Subscribe
 
     Note over Sender: Display transfer info
     Sender->>Sender: Show transfer-id, pubkey, relay
 
     Note over Receiver: 2. Join
-    Receiver->>Receiver: Create ICE Agent (TCP mode)
-    Receiver->>Receiver: Gather candidates via STUN
+    Receiver->>Receiver: Create RTCPeerConnection
     Receiver->>Nostr: Connect & Subscribe
-    Receiver->>Nostr: Publish Answer (ufrag, pwd, candidates)
+    Receiver->>Nostr: Publish Answer (SDP + ICE candidates)
 
     Note over Sender: 3. Exchange
     Nostr->>Sender: Receive Answer
-    Sender->>Nostr: Publish Offer (ufrag, pwd, candidates)
+    Sender->>Nostr: Publish Offer (SDP + ICE candidates)
     Nostr->>Receiver: Receive Offer
+    Receiver->>Receiver: Set remote description
 
-    Note over Sender,Receiver: 4. ICE Connection
-    Sender->>Receiver: ICE dial() as controlling agent
-    Receiver->>Sender: ICE accept() as controlled agent
-    Note over Sender,Receiver: TCP connection established
+    Note over Sender,Receiver: 4. WebRTC Connection
+    Sender->>Receiver: ICE connectivity checks
+    Note over Sender,Receiver: Data channel established
 
     Note over Sender,Receiver: 5. Key Exchange
     Sender->>Receiver: SPAKE2 handshake (responder)
@@ -66,72 +55,78 @@ sequenceDiagram
 ## Module Structure
 
 ```
-src/ice/
-├── mod.rs        # Module exports
-├── agent.rs      # ICE agent wrapper (IceTransport)
-├── conn.rs       # AsyncRead/AsyncWrite adapter (IceConn)
-├── signaling.rs  # Nostr signaling for ICE
-├── sender.rs     # Send file via ICE
-└── receiver.rs   # Receive file via ICE
+src/
+├── main.rs           # CLI entry point
+├── webrtc/
+│   ├── mod.rs        # Module exports
+│   ├── common.rs     # WebRtcPeer, DataChannelStream
+│   ├── sender.rs     # Send file via WebRTC
+│   ├── receiver.rs   # Receive file via WebRTC
+│   ├── offline_sender.rs    # Offline/manual signaling sender
+│   └── offline_receiver.rs  # Offline/manual signaling receiver
+└── signaling/
+    ├── mod.rs        # Module exports
+    ├── nostr.rs      # Nostr relay signaling
+    └── offline.rs    # Copy-paste signaling helpers
 ```
 
 ## Key Components
 
-### IceTransport (agent.rs)
+### WebRtcPeer (common.rs)
 
-Wraps `webrtc-ice::Agent` configured for TCP candidates:
+Wraps `RTCPeerConnection` with STUN configuration:
 
 ```rust
-let config = AgentConfig {
-    urls: stun_urls,
-    network_types: vec![NetworkType::Tcp4, NetworkType::Tcp6],
+let ice_servers = vec![RTCIceServer {
+    urls: vec!["stun:stun.l.google.com:19302".to_owned()],
     ..Default::default()
-};
+}];
+
+let config = RTCConfiguration { ice_servers, ..Default::default() };
+let peer_connection = api.new_peer_connection(config).await?;
 ```
 
 Key methods:
-- `new()` - Create agent with default STUN servers
-- `gather_candidates()` - Start gathering ICE candidates
-- `get_local_credentials()` - Get ufrag/pwd for signaling
-- `dial()` - Connect as controlling agent (sender)
-- `accept()` - Connect as controlled agent (receiver)
+- `new()` - Create peer connection with default STUN servers
+- `new_offline()` - Create peer connection without STUN (LAN only)
+- `create_data_channel()` - Create named data channel
+- `create_offer()` / `create_answer()` - SDP negotiation
+- `gather_ice_candidates()` - Collect all ICE candidates (vanilla ICE)
+- `get_connection_info()` - Get connection type (Host/STUN/Relay)
 
-### IceConn (conn.rs)
+### DataChannelStream (common.rs)
 
-Bridges `webrtc_util::Conn` (async send/recv) to tokio's `AsyncRead/AsyncWrite`:
+Bridges `RTCDataChannel` to tokio's `AsyncRead/AsyncWrite`:
 
 ```rust
-impl AsyncRead for IceConn { ... }
-impl AsyncWrite for IceConn { ... }
+impl AsyncRead for DataChannelStream { ... }
+impl AsyncWrite for DataChannelStream { ... }
 ```
 
 This allows using the unified transfer protocol directly:
 ```rust
-run_sender_transfer(&mut file, &mut ice_conn, &key, &header).await?;
-run_receiver_transfer(ice_conn, key, output_dir, no_resume).await?;
+run_sender_transfer(&mut file, &mut stream, &key, &header).await?;
+run_receiver_transfer(stream, key, output_dir, no_resume).await?;
 ```
 
-### Signaling (signaling.rs)
+Features:
+- Message buffering with overflow detection
+- Graceful close handling
+- Non-blocking write operations
 
-ICE signaling payload exchanged via Nostr:
+### Signaling (signaling/nostr.rs)
 
-```rust
-struct IceSignalingPayload {
-    ufrag: String,           // ICE username fragment
-    pwd: String,             // ICE password
-    candidates: Vec<IceCandidateInfo>,
-}
-```
+SDP and ICE candidates are exchanged via Nostr relays:
 
 Message types:
-- `ice-offer` - Sender's credentials + candidates
-- `ice-answer` - Receiver's credentials + candidates
+- `webrtc-offer` - Sender's SDP offer + ICE candidates
+- `webrtc-answer` - Receiver's SDP answer + ICE candidates
 
 ## Security Model
 
 ### Key Exchange
 
-Unlike the old WebRTC implementation which pre-shared an AES key in the wormhole code, ICE transport uses SPAKE2:
+The WebRTC transport uses SPAKE2 for key derivation:
 
 1. Transfer ID serves as the shared password
 2. SPAKE2 derives a session key from transfer ID
@@ -142,9 +137,18 @@ This provides:
 - No key in signaling messages
 - Same security model as other transports
 
+### Transport Security
+
+WebRTC provides built-in security:
+- **DTLS**: All data channel traffic is encrypted
+- **SRTP**: Media streams are encrypted (not used here)
+- **ICE consent**: Periodic connectivity verification
+
+The application layer adds AES-256-GCM encryption on top for defense in depth.
+
 ### Signaling Privacy
 
-ICE credentials (ufrag/pwd) and candidates are sent via Nostr in base64-encoded JSON. This reveals:
+SDP offers/answers and ICE candidates are sent via Nostr. This reveals:
 - IP addresses in ICE candidates
 - Transfer ID (public identifier)
 
@@ -166,29 +170,32 @@ See `wormhole-common/src/core/transfer.rs` for protocol details.
 
 ## NAT Traversal
 
-### STUN Servers
+### STUN Server
 
-Default STUN servers for candidate gathering:
+Default STUN server for candidate gathering:
 - `stun:stun.l.google.com:19302`
-- `stun:stun1.l.google.com:19302`
 
-### TCP Candidates
+### Connection Types
 
-We use TCP candidates exclusively because:
-1. Provides reliable, ordered byte stream
-2. Works with unified protocol (no datagram framing needed)
-3. Better compatibility with firewalls
+WebRTC attempts connections in order of preference:
+- **Host**: Direct connection on local IP (same network)
+- **Server-reflexive**: Public IP discovered via STUN (NAT traversal)
+- **Peer-reflexive**: Discovered during connectivity checks
 
-Types of TCP candidates:
-- **Host**: Direct connection on local IP
-- **Server-reflexive**: Public IP discovered via STUN
-- **Relay**: Via TURN server (not yet implemented)
+If WebRTC connection fails (e.g., both peers behind symmetric NAT), use Tor mode from the main `wormhole-rs` program as a relay fallback.
+
+### Connection Info
+
+After connection, `get_connection_info()` returns the actual connection type:
+```
+Connection type: Direct (Host)
+Local: 192.168.1.100:54321
+Remote: 192.168.1.101:12345
+```
 
 ## Limitations
 
-1. **TCP only** - No UDP for lossy scenarios (fine for file transfer)
-2. **No TURN** - Fails if both peers are behind symmetric NAT
-3. **Nostr required** - No offline signaling mode yet
+1. **Symmetric NAT** - Direct connection fails if both peers are behind symmetric NAT; use Tor mode as fallback
 
 ## Resume Support
 
@@ -197,7 +204,3 @@ File transfers support resume automatically via the unified protocol:
 - If checksum matches, resumes from last position
 - Folders are NOT resumable (checksum = 0)
 
-## Future Work
-
-- [ ] Offline/manual signaling (copy-paste credentials)
-- [ ] TURN relay support
