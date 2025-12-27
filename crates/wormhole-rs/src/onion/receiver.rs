@@ -3,17 +3,17 @@ use arti_client::{config::TorClientConfigBuilder, ErrorKind, HasKind, TorClient}
 use std::path::PathBuf;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-use crate::core::folder::{
+use wormhole_common::core::folder::{
     extract_tar_archive_returning_reader, get_extraction_dir, print_skipped_entries,
     print_tar_extraction_info, StreamingReader,
 };
-use crate::core::transfer::{
+use wormhole_common::core::transfer::{
     finalize_file_receiver, find_available_filename, format_bytes, format_resume_progress,
     prepare_file_receiver, prompt_file_exists, receive_file_data, recv_encrypted_header,
     send_abort, send_ack, send_proceed, send_resume, setup_resumable_cleanup_handler,
     ControlSignal, FileExistsChoice, TransferType,
 };
-use crate::core::wormhole::{decode_key, parse_code, PROTOCOL_TOR};
+use wormhole_common::core::wormhole::{decode_key, parse_code, PROTOCOL_TOR};
 
 const MAX_RETRIES: u32 = 5;
 const RETRY_DELAY_SECS: u64 = 5;
@@ -225,7 +225,7 @@ pub async fn receive_file_tor(code: &str, output_dir: Option<PathBuf>) -> Result
 /// Handle folder transfer after header is received
 async fn receive_folder_stream<S: AsyncReadExt + AsyncWriteExt + Unpin + Send + 'static>(
     stream: S,
-    header: crate::core::transfer::FileHeader,
+    header: wormhole_common::core::transfer::FileHeader,
     key: [u8; 32],
     output_dir: Option<PathBuf>,
 ) -> Result<()> {

@@ -2,18 +2,18 @@ use anyhow::{Context, Result};
 use iroh::Watcher;
 use std::path::PathBuf;
 
-use crate::core::folder::{
+use super::common::{create_receiver_endpoint, ALPN};
+use wormhole_common::core::folder::{
     extract_tar_archive, get_extraction_dir, print_skipped_entries, print_tar_extraction_info,
     StreamingReader,
 };
-use crate::core::transfer::{
+use wormhole_common::core::transfer::{
     finalize_file_receiver, find_available_filename, format_bytes, prepare_file_receiver,
     prompt_file_exists, receive_file_data, recv_encrypted_header, send_abort, send_ack,
     send_proceed, send_resume, setup_dir_cleanup_handler, setup_resumable_cleanup_handler,
     ControlSignal, FileExistsChoice, TransferType,
 };
-use crate::core::wormhole::parse_code;
-use crate::iroh::common::{create_receiver_endpoint, ALPN};
+use wormhole_common::core::wormhole::parse_code;
 
 /// Receive a file or folder using a wormhole code.
 /// Auto-detects whether it's a file or folder transfer based on the header.
@@ -28,7 +28,7 @@ pub async fn receive(
     // Parse the wormhole code
     let token = parse_code(code).context("Failed to parse wormhole code")?;
     let key =
-        crate::core::wormhole::decode_key(&token.key).context("Failed to decode encryption key")?;
+        wormhole_common::core::wormhole::decode_key(&token.key).context("Failed to decode encryption key")?;
     let addr = token
         .addr
         .context("No iroh endpoint address in wormhole code")?
@@ -213,7 +213,7 @@ pub async fn receive(
 /// Internal implementation for receiving a folder (tar archive)
 async fn receive_folder_impl<R>(
     recv_stream: R,
-    header: &crate::core::transfer::FileHeader,
+    header: &wormhole_common::core::transfer::FileHeader,
     key: [u8; 32],
     output_dir: Option<PathBuf>,
 ) -> Result<()>

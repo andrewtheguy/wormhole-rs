@@ -12,16 +12,16 @@ use tokio::fs::File;
 use tokio::io::AsyncSeekExt;
 use tokio::net::TcpStream;
 
-use crate::auth::spake2::handshake_as_responder;
 use crate::cli::instructions::print_receiver_command;
-use crate::core::transfer::{
+use super::common::{
+    generate_pin, generate_transfer_id, PORT_RANGE_END, PORT_RANGE_START, SERVICE_TYPE,
+    TXT_FILENAME, TXT_FILE_SIZE, TXT_TRANSFER_ID, TXT_TRANSFER_TYPE,
+};
+use wormhole_common::auth::spake2::handshake_as_responder;
+use wormhole_common::core::transfer::{
     format_bytes, format_resume_progress, handle_receiver_response, prepare_file_for_send,
     prepare_folder_for_send, recv_control, send_encrypted_header, send_file_data,
     setup_temp_file_cleanup_handler, ControlSignal, FileHeader, ResumeResponse, TransferType,
-};
-use crate::mdns::common::{
-    generate_pin, generate_transfer_id, PORT_RANGE_END, PORT_RANGE_START, SERVICE_TYPE,
-    TXT_FILENAME, TXT_FILE_SIZE, TXT_TRANSFER_ID, TXT_TRANSFER_TYPE,
 };
 
 /// Display receiver instructions and PIN to the user.

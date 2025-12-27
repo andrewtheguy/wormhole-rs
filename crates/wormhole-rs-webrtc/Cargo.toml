@@ -1,0 +1,37 @@
+[package]
+name = "wormhole-rs-webrtc"
+version = "0.2.0"
+edition = "2021"
+publish = false  # Not ready for publishing
+
+# NOTE: This crate is NOT in the workspace members list.
+# It can be built manually with: cargo build -p wormhole-rs-webrtc
+# This isolates WebRTC so it doesn't interfere with the main build.
+
+[[bin]]
+name = "wormhole-rs-webrtc"
+path = "src/main.rs"
+
+[dependencies]
+# Common library
+wormhole-common = { path = "../wormhole-common" }
+
+# Core dependencies
+tokio = { version = "1", features = ["full"] }
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+base64 = "0.22"
+hex = "0.4"
+rand = "0.8"
+futures = "0.3"
+log = "0.4"
+
+# Nostr signaling
+nostr-sdk = "0.44.1"
+
+# WebRTC
+webrtc = "0.11"
+tokio-tungstenite = { version = "0.21", features = ["native-tls"] }
+uuid = { version = "1", features = ["v4"] }
+bytes = "1"

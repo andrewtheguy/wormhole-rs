@@ -10,13 +10,13 @@ use tor_cell::relaycell::msg::Connected;
 use tor_hsservice::{config::OnionServiceConfigBuilder, handle_rend_requests};
 
 use crate::cli::instructions::print_receiver_command;
-use crate::core::crypto::generate_key;
-use crate::core::transfer::{
+use wormhole_common::core::crypto::generate_key;
+use wormhole_common::core::transfer::{
     format_resume_progress, handle_receiver_response, prepare_file_for_send,
     prepare_folder_for_send, recv_control, send_encrypted_header, send_file_data,
     setup_temp_file_cleanup_handler, ControlSignal, FileHeader, ResumeResponse, TransferType,
 };
-use crate::core::wormhole::generate_tor_code;
+use wormhole_common::core::wormhole::generate_tor_code;
 
 /// Internal helper for common Tor transfer logic.
 /// Handles Tor bootstrap, onion service, connection, data transfer, and acknowledgment.
@@ -78,7 +78,7 @@ async fn transfer_data_tor_internal(
     if use_pin {
         // Generate ephemeral keys for PIN exchange
         let keys = nostr_sdk::Keys::generate();
-        let pin = crate::auth::nostr_pin::publish_wormhole_code_via_pin(
+        let pin = wormhole_common::auth::nostr_pin::publish_wormhole_code_via_pin(
             &keys,
             &code,
             "tor-transfer", // Transfer id not critical for tor bootstrap, just needs to be non-empty

@@ -17,18 +17,18 @@ use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
-use crate::auth::spake2::handshake_as_initiator;
-use crate::core::folder::{
+use super::common::{
+    MdnsServiceInfo, SERVICE_TYPE, TXT_FILENAME, TXT_FILE_SIZE, TXT_TRANSFER_ID, TXT_TRANSFER_TYPE,
+};
+use wormhole_common::auth::spake2::handshake_as_initiator;
+use wormhole_common::core::folder::{
     extract_tar_archive_returning_reader, get_extraction_dir, print_skipped_entries,
     print_tar_extraction_info, StreamingReader,
 };
-use crate::core::transfer::{
+use wormhole_common::core::transfer::{
     finalize_file_receiver, format_bytes, format_resume_progress, num_chunks,
     prepare_file_receiver, receive_file_data, recv_encrypted_header, send_abort, send_ack,
     send_proceed, send_resume, setup_resumable_cleanup_handler, ControlSignal, TransferType,
-};
-use crate::mdns::common::{
-    MdnsServiceInfo, SERVICE_TYPE, TXT_FILENAME, TXT_FILE_SIZE, TXT_TRANSFER_ID, TXT_TRANSFER_TYPE,
 };
 
 /// Timeout for mDNS browsing (seconds)
@@ -453,7 +453,7 @@ fn prompt_selection(max: usize) -> Result<Option<usize>> {
 
 /// Prompt user for PIN with checksum validation.
 fn prompt_pin() -> Result<String> {
-    crate::auth::pin::prompt_pin().context("Failed to read PIN")
+    wormhole_common::auth::pin::prompt_pin().context("Failed to read PIN")
 }
 
 /// Set up Ctrl+C handler for extraction directory cleanup.

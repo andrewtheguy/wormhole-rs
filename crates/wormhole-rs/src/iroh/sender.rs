@@ -5,14 +5,14 @@ use tokio::fs::File;
 use tokio::io::AsyncSeekExt;
 
 use crate::cli::instructions::print_receiver_command;
-use crate::core::crypto::generate_key;
-use crate::core::transfer::{
+use super::common::create_sender_endpoint;
+use wormhole_common::core::crypto::generate_key;
+use wormhole_common::core::transfer::{
     format_bytes, handle_receiver_response, prepare_file_for_send, prepare_folder_for_send,
     recv_control, send_encrypted_header, send_file_data, setup_temp_file_cleanup_handler,
     ControlSignal, FileHeader, ResumeResponse, TransferType,
 };
-use crate::core::wormhole::generate_code;
-use crate::iroh::common::create_sender_endpoint;
+use wormhole_common::core::wormhole::generate_code;
 
 /// Internal helper for common transfer logic.
 /// Handles encryption setup, endpoint creation, connection, data transfer, and acknowledgment.
@@ -48,7 +48,7 @@ async fn transfer_data_internal(
     if use_pin {
         // Generate ephemeral keys for PIN exchange
         let keys = nostr_sdk::Keys::generate();
-        let pin = crate::auth::nostr_pin::publish_wormhole_code_via_pin(
+        let pin = wormhole_common::auth::nostr_pin::publish_wormhole_code_via_pin(
             &keys,
             &code,
             "iroh-transfer", // Transfer id not critical for iroh, just needs to be non-empty

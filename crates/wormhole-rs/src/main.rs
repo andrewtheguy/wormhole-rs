@@ -4,21 +4,22 @@ use std::io::{self, Write};
 use std::path::PathBuf;
 use tracing_subscriber::EnvFilter;
 
-use wormhole_rs::core::wormhole;
+use wormhole_common::core::wormhole;
 
 #[cfg(feature = "iroh")]
-use wormhole_rs::iroh::{receiver as iroh_receiver, sender as iroh_sender};
+mod iroh;
+#[cfg(feature = "iroh")]
+use iroh::{receiver as iroh_receiver, sender as iroh_sender};
 
 #[cfg(feature = "onion")]
-use wormhole_rs::onion::{receiver as onion_receiver, sender as onion_sender};
+mod onion;
+#[cfg(feature = "onion")]
+use onion::{receiver as onion_receiver, sender as onion_sender};
 
-#[cfg(feature = "webrtc")]
-use wormhole_rs::webrtc::{
-    offline_receiver as webrtc_offline_receiver, receiver as webrtc_receiver,
-    sender as webrtc_sender,
-};
+mod mdns;
+use mdns::{receiver as mdns_receiver, sender as mdns_sender};
 
-use wormhole_rs::mdns::{receiver as mdns_receiver, sender as mdns_sender};
+mod cli;
 
 #[derive(Parser)]
 #[command(name = "wormhole-rs")]
@@ -31,65 +32,9 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    #[cfg(feature = "webrtc")]
-    /// Send a file or folder via WebRTC (recommended, alias for send-webrtc)
-    Send {
-        /// Path to file or folder
-        path: PathBuf,
-
-        /// Send a folder (creates tar archive)
-        #[arg(long)]
-        folder: bool,
-
-        /// Use PIN-based code exchange for Nostr (prompts for PIN input)
-        #[arg(long)]
-        pin: bool,
-
-        /// Custom Nostr relay URLs for signaling/fallback
-        #[arg(long = "nostr-relay")]
-        nostr_relay: Vec<String>,
-
-        /// Use default hardcoded Nostr relays instead of running relay discovery
-        #[arg(long)]
-        use_default_relays: bool,
-
-        /// Use manual copy/paste signaling instead of Nostr relays
-        #[arg(long)]
-        manual_signaling: bool,
-    },
-
-    #[cfg(feature = "webrtc")]
-    /// Send a file or folder via WebRTC with Nostr signaling (recommended)
-    #[command(name = "send-webrtc")]
-    SendWebrtc {
-        /// Path to file or folder
-        path: PathBuf,
-
-        /// Send a folder (creates tar archive)
-        #[arg(long)]
-        folder: bool,
-
-        /// Use PIN-based code exchange for Nostr (prompts for PIN input)
-        #[arg(long)]
-        pin: bool,
-
-        /// Custom Nostr relay URLs for signaling/fallback
-        #[arg(long = "nostr-relay")]
-        nostr_relay: Vec<String>,
-
-        /// Use default hardcoded Nostr relays instead of running relay discovery
-        #[arg(long)]
-        use_default_relays: bool,
-
-        /// Use manual copy/paste signaling instead of Nostr relays
-        #[arg(long)]
-        manual_signaling: bool,
-    },
-
     #[cfg(feature = "iroh")]
-    /// Send a file or folder via iroh peer-to-peer network
-    #[command(name = "send-iroh")]
-    SendIroh {
+    /// Send a file or folder via iroh (default, recommended)
+    Send {
         /// Path to file or folder
         path: PathBuf,
 
@@ -154,11 +99,6 @@ enum Commands {
         /// Disable resumable transfers (don't save partial downloads)
         #[arg(long)]
         no_resume: bool,
-
-        /// Use manual copy/paste signaling instead of Nostr relays (WebRTC)
-        #[cfg(feature = "webrtc")]
-        #[arg(long)]
-        manual_signaling: bool,
     },
 
     /// Receive via local network (mDNS discovery)
@@ -203,44 +143,6 @@ fn validate_output_dir(output: &Option<PathBuf>) -> Result<()> {
     Ok(())
 }
 
-/// Helper to send via WebRTC
-#[cfg(feature = "webrtc")]
-async fn do_send_webrtc(
-    path: PathBuf,
-    folder: bool,
-    pin: bool,
-    nostr_relay: Vec<String>,
-    use_default_relays: bool,
-    manual_signaling: bool,
-) -> Result<()> {
-    validate_path(&path, folder)?;
-    let custom_relays = if nostr_relay.is_empty() {
-        None
-    } else {
-        Some(nostr_relay)
-    };
-    if folder {
-        webrtc_sender::send_folder_webrtc(
-            &path,
-            custom_relays,
-            use_default_relays,
-            pin,
-            manual_signaling,
-        )
-        .await?;
-    } else {
-        webrtc_sender::send_file_webrtc(
-            &path,
-            custom_relays,
-            use_default_relays,
-            pin,
-            manual_signaling,
-        )
-        .await?;
-    }
-    Ok(())
-}
-
 #[tokio::main]
 async fn main() -> Result<()> {
     // Set up tracing subscriber with filters for noisy iroh internals
@@ -262,23 +164,14 @@ async fn main() -> Result<()> {
             .add_directive("arti_client=warn".parse().unwrap())
             .add_directive("tor_proto=warn".parse().unwrap())
             .add_directive("tor_chanmgr=warn".parse().unwrap())
-            .add_directive("tor_circmgr=off".parse().unwrap()) // Suppress cleanup errors on drop
+            .add_directive("tor_circmgr=off".parse().unwrap())
             .add_directive("tor_guardmgr=warn".parse().unwrap())
             .add_directive("tor_netdir=warn".parse().unwrap())
             .add_directive("tor_dirmgr=warn".parse().unwrap())
             .add_directive("tor_hsservice=warn".parse().unwrap())
             .add_directive("tor_hsclient=warn".parse().unwrap())
             .add_directive("tor_rtcompat=warn".parse().unwrap())
-            .add_directive("tor_persist=off".parse().unwrap()) // Suppress state persistence errors
-            // Suppress noisy webrtc internal logs
-            .add_directive("webrtc=error".parse().unwrap())
-            .add_directive("webrtc_ice=error".parse().unwrap())
-            .add_directive("webrtc_srtp=off".parse().unwrap()) // Suppress SRTP close warnings
-            .add_directive("webrtc_sctp=error".parse().unwrap())
-            .add_directive("ice=error".parse().unwrap())
-            .add_directive("stun=error".parse().unwrap())
-            .add_directive("turn=error".parse().unwrap())
-            .add_directive("dtls=error".parse().unwrap())
+            .add_directive("tor_persist=off".parse().unwrap())
     });
 
     tracing_subscriber::fmt()
@@ -290,48 +183,8 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        #[cfg(feature = "webrtc")]
-        Commands::Send {
-            path,
-            folder,
-            pin,
-            nostr_relay,
-            use_default_relays,
-            manual_signaling,
-        } => {
-            do_send_webrtc(
-                path,
-                folder,
-                pin,
-                nostr_relay,
-                use_default_relays,
-                manual_signaling,
-            )
-            .await?;
-        }
-
-        #[cfg(feature = "webrtc")]
-        Commands::SendWebrtc {
-            path,
-            folder,
-            pin,
-            nostr_relay,
-            use_default_relays,
-            manual_signaling,
-        } => {
-            do_send_webrtc(
-                path,
-                folder,
-                pin,
-                nostr_relay,
-                use_default_relays,
-                manual_signaling,
-            )
-            .await?;
-        }
-
         #[cfg(feature = "iroh")]
-        Commands::SendIroh {
+        Commands::Send {
             path,
             folder,
             pin,
@@ -369,53 +222,6 @@ async fn main() -> Result<()> {
             mdns_receiver::receive_mdns(output).await?;
         }
 
-        #[cfg(feature = "webrtc")]
-        Commands::Receive {
-            mut code,
-            output,
-            relay_url,
-            pin,
-            no_resume,
-            manual_signaling,
-        } => {
-            // Validate output directory if provided
-            validate_output_dir(&output)?;
-
-            // Handle manual signaling mode (WebRTC with copy/paste)
-            if manual_signaling {
-                webrtc_offline_receiver::receive_file_offline(output).await?;
-                return Ok(());
-            }
-
-            // Handle PIN mode if requested
-            if pin {
-                let pin_str = wormhole_rs::auth::pin::prompt_pin()?;
-
-                eprintln!("Searching for wormhole token via Nostr...");
-
-                // Fetch encrypted token from Nostr
-                let token_str =
-                    wormhole_rs::auth::nostr_pin::fetch_wormhole_code_via_pin(&pin_str).await?;
-                eprintln!("Token found and decrypted!");
-                code = Some(token_str);
-            }
-
-            // Get code from argument or prompt
-            let code = match code {
-                Some(c) => c,
-                None => {
-                    print!("Enter wormhole code: ");
-                    io::stdout().flush()?;
-                    let mut input = String::new();
-                    io::stdin().read_line(&mut input)?;
-                    input.trim().to_string()
-                }
-            };
-
-            receive_with_code(&code, output, relay_url, no_resume).await?;
-        }
-
-        #[cfg(not(feature = "webrtc"))]
         Commands::Receive {
             mut code,
             output,
@@ -428,13 +234,13 @@ async fn main() -> Result<()> {
 
             // Handle PIN mode if requested
             if pin {
-                let pin_str = wormhole_rs::auth::pin::prompt_pin()?;
+                let pin_str = wormhole_common::auth::pin::prompt_pin()?;
 
                 eprintln!("Searching for wormhole token via Nostr...");
 
                 // Fetch encrypted token from Nostr
                 let token_str =
-                    wormhole_rs::auth::nostr_pin::fetch_wormhole_code_via_pin(&pin_str).await?;
+                    wormhole_common::auth::nostr_pin::fetch_wormhole_code_via_pin(&pin_str).await?;
                 eprintln!("Token found and decrypted!");
                 code = Some(token_str);
             }
@@ -480,10 +286,6 @@ async fn receive_with_code(
         wormhole::PROTOCOL_TOR => {
             onion_receiver::receive_tor(code, output).await?;
         }
-        #[cfg(feature = "webrtc")]
-        wormhole::PROTOCOL_WEBRTC => {
-            webrtc_receiver::receive_webrtc(code, output).await?;
-        }
         proto => {
             #[cfg(not(feature = "iroh"))]
             if proto == wormhole::PROTOCOL_IROH {
@@ -499,14 +301,6 @@ async fn receive_with_code(
                     "This wormhole code uses Tor transport, but Tor support is disabled.\n\
                      To enable Tor support, rebuild with: cargo build --features onion\n\
                      Or run with: cargo run --features onion -- receive"
-                );
-            }
-            #[cfg(not(feature = "webrtc"))]
-            if proto == wormhole::PROTOCOL_WEBRTC {
-                anyhow::bail!(
-                    "This wormhole code uses webrtc transport, but WebRTC support is disabled.\n\
-                     To enable WebRTC support, rebuild with: cargo build --features webrtc\n\
-                     Or run with: cargo run --features webrtc -- receive"
                 );
             }
             anyhow::bail!("Unknown protocol in wormhole code: {}", proto);

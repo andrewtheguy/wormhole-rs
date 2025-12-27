@@ -6,7 +6,7 @@
 use std::net::IpAddr;
 
 // Re-export PIN utilities from common pin module
-pub use crate::auth::pin::{generate_pin, PIN_LENGTH};
+pub use wormhole_common::auth::pin::generate_pin;
 
 /// mDNS service type for wormhole file transfers
 pub const SERVICE_TYPE: &str = "_wormhole._tcp.local.";

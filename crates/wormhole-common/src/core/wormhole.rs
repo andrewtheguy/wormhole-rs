@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-#[cfg(feature = "iroh")]
+#[cfg(feature = "iroh-addr")]
 use iroh::{EndpointAddr, RelayUrl};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -31,7 +31,7 @@ pub struct MinimalAddr {
 }
 
 impl MinimalAddr {
-    #[cfg(feature = "iroh")]
+    #[cfg(feature = "iroh-addr")]
     /// Create from a full EndpointAddr, stripping IP addresses
     pub fn from_endpoint_addr(addr: &EndpointAddr) -> Self {
         let relay = addr.relay_urls().next().map(|r| r.to_string());
@@ -41,7 +41,7 @@ impl MinimalAddr {
         }
     }
 
-    #[cfg(feature = "iroh")]
+    #[cfg(feature = "iroh-addr")]
 
     /// Convert back to EndpointAddr
     pub fn to_endpoint_addr(&self) -> Result<EndpointAddr> {
@@ -114,7 +114,7 @@ fn current_timestamp() -> u64 {
 /// # Arguments
 /// * `addr` - The endpoint address to connect to
 /// * `key` - The encryption key (required)
-#[cfg(feature = "iroh")]
+#[cfg(feature = "iroh-addr")]
 pub fn generate_code(addr: &EndpointAddr, key: &[u8; 32]) -> Result<String> {
     // Use MinimalAddr to strip IP addresses - they're auto-discovered by iroh
     let minimal_addr = MinimalAddr::from_endpoint_addr(addr);
