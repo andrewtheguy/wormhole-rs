@@ -280,28 +280,66 @@ fn read_marked_input(begin: &str, end: &str) -> Result<String> {
     extract_marked_payload(collected, begin, end)
 }
 
+/// Maximum number of retry attempts for user input
+const MAX_INPUT_RETRIES: usize = 5;
+
 /// Decode base64 input with CRC32 checksum validation, with retry on error
 fn decode_with_checksum(prompt: &str, begin: &str, end: &str) -> Result<String> {
+    let mut retries = 0;
+
     loop {
         println!("{}", prompt);
-        std::io::stdout().flush()?;
+        std::io::stdout()
+            .flush()
+            .context("Failed to flush stdout")?;
 
         let encoded = match read_marked_input(begin, end) {
             Ok(payload) => payload,
             Err(err) => {
+                // Check for EOF or stdin closed - don't retry, propagate immediately
+                let err_str = err.to_string();
+                if err_str.contains("Failed to read line")
+                    || err_str.contains("end of file")
+                    || err_str.contains("EOF")
+                {
+                    return Err(err).context("EOF reached while reading input");
+                }
+
+                retries += 1;
+                if retries >= MAX_INPUT_RETRIES {
+                    return Err(err).context(format!(
+                        "Failed to read valid input after {} attempts",
+                        MAX_INPUT_RETRIES
+                    ));
+                }
                 eprintln!("{err}\nPlease try again.\n");
                 continue;
             }
         };
 
         if encoded.is_empty() {
+            retries += 1;
+            if retries >= MAX_INPUT_RETRIES {
+                anyhow::bail!(
+                    "No valid input received after {} attempts",
+                    MAX_INPUT_RETRIES
+                );
+            }
             eprintln!("No input received. Please try again.\n");
             continue;
         }
 
         let decoded = match URL_SAFE_NO_PAD.decode(&encoded) {
             Ok(d) => d,
-            Err(_) => {
+            Err(e) => {
+                retries += 1;
+                if retries >= MAX_INPUT_RETRIES {
+                    anyhow::bail!(
+                        "Invalid base64 format after {} attempts: {}",
+                        MAX_INPUT_RETRIES,
+                        e
+                    );
+                }
                 eprintln!("Invalid code format. Please try again.\n");
                 continue;
             }
@@ -309,6 +347,14 @@ fn decode_with_checksum(prompt: &str, begin: &str, end: &str) -> Result<String> 
 
         // Need at least CRC32 (4 bytes) + minimal JSON
         if decoded.len() < 4 + 2 {
+            retries += 1;
+            if retries >= MAX_INPUT_RETRIES {
+                anyhow::bail!(
+                    "Code too short after {} attempts (got {} bytes, need at least 6)",
+                    MAX_INPUT_RETRIES,
+                    decoded.len()
+                );
+            }
             eprintln!("Code too short. Please try again.\n");
             continue;
         }
@@ -318,6 +364,13 @@ fn decode_with_checksum(prompt: &str, begin: &str, end: &str) -> Result<String> 
         let actual = crc32fast::hash(json_bytes);
 
         if expected != actual {
+            retries += 1;
+            if retries >= MAX_INPUT_RETRIES {
+                anyhow::bail!(
+                    "Checksum mismatch after {} attempts - code may have been corrupted",
+                    MAX_INPUT_RETRIES
+                );
+            }
             eprintln!("Checksum mismatch - code may have been corrupted during copy/paste.");
             eprintln!("Please try again.\n");
             continue;
