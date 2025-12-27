@@ -539,6 +539,18 @@ function Main {
         }
         Apply-FallbackArgs -ArgList $fallbackArgs
 
+        # Extra guard: honor env flags even if tokenization failed
+        $envArgs = $env:WORMHOLE_INSTALL_ARGS
+        if ($envArgs) {
+            if (-not $WebRTC -and $envArgs -match '(?i)(^|\s)--?webrtc(\s|$)') { $WebRTC = $true }
+            if (-not $PreRelease -and $envArgs -match '(?i)(^|\s)--?prerelease(\s|$)') { $PreRelease = $true }
+            if (-not $DownloadOnly -and $envArgs -match '(?i)(^|\s)--?downloadonly(\s|$)') { $DownloadOnly = $true }
+            if (-not $Admin -and $envArgs -match '(?i)(^|\s)--?admin(\s|$)') { $Admin = $true }
+            if (-not $ReleaseTag -and $envArgs -match '^(\s*[^-][^\s]+)') {
+                $ReleaseTag = $matches[1].Trim()
+            }
+        }
+
     # Handle help flags - check both parameter and ReleaseTag value
     if ($args -contains "--help" -or $args -contains "-h" -or $args -contains "-?" -or $args -contains "/?" -or $args -contains "/h" -or
         $ReleaseTag -eq "--help" -or $ReleaseTag -eq "-h" -or $ReleaseTag -eq "-?" -or $ReleaseTag -eq "/?" -or $ReleaseTag -eq "/h") {
