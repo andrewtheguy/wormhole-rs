@@ -2,6 +2,8 @@ use anyhow::{Context, Result};
 use iroh::endpoint::{ConnectError, ConnectWithOptsError, ConnectingError, ConnectionError};
 use iroh::Watcher;
 use std::path::PathBuf;
+use std::time::Duration;
+use tokio::time::timeout;
 
 use super::common::{create_receiver_endpoint, OwnedIrohDuplex, ALPN};
 use wormhole_common::core::transfer::run_receiver_transfer;
@@ -85,9 +87,23 @@ pub async fn receive(
         .finish()
         .context("Failed to finish send stream")?;
 
-    // Close connection gracefully
-    conn.closed().await;
-    endpoint.close().await;
+    // Close connection gracefully with timeout to avoid hanging indefinitely
+    const CLOSE_TIMEOUT: Duration = Duration::from_secs(5);
+
+    match timeout(CLOSE_TIMEOUT, conn.closed()).await {
+        Ok(_) => {}
+        Err(_) => {
+            log::warn!("Connection close timed out after {:?}", CLOSE_TIMEOUT);
+        }
+    }
+
+    // Always close the endpoint, even if connection close timed out
+    match timeout(CLOSE_TIMEOUT, endpoint.close()).await {
+        Ok(_) => {}
+        Err(_) => {
+            log::warn!("Endpoint close timed out after {:?}", CLOSE_TIMEOUT);
+        }
+    }
 
     eprintln!("Connection closed.");
 
