@@ -15,9 +15,9 @@ This guide describes common scenarios where `wormhole-rs` shines and which mode 
   # Receiver
   wormhole-rs receive-local
   ```
-- **Experience**: The sender sets a passphrase (e.g., "secret"). The receiver finds the sender automatically and prompts for that passphrase.
+- **Experience**: The sender is shown a random 12-character PIN. The receiver finds the sender automatically and is prompted for that PIN.
 
-> **Note**: iroh Mode and Tor Mode both require internet access for DHT/relay/network operations and will not work in air-gapped environments.
+> **Note**: iroh Mode and Tor Mode both require internet access for discovery/relay network operations and will not work in air-gapped environments.
 
 ---
 
@@ -25,7 +25,7 @@ This guide describes common scenarios where `wormhole-rs` shines and which mode 
 **Scenario**: mDNS discovery doesn't work because peers are on different subnets, across VPNs, or on networks that block multicast.
 
 **Solution**: **iroh Mode**
-- **Why**: iroh automatically discovers peers across network boundaries using its distributed hash table (DHT) and relay infrastructure—no manual IP input required. Requires internet access.
+- **Why**: iroh discovers peers across network boundaries using DNS/pkarr discovery plus relay infrastructure—no manual IP input required. Requires internet access.
 - **Command**:
   ```bash
   # Sender
@@ -143,4 +143,4 @@ See [ROADMAP.md](ROADMAP.md) for planned features and development priorities.
 
 ## WebRTC Mode
 
-WebRTC mode provides P2P transfers with Nostr signaling for NAT traversal. See [main README](../README.md#3-webrtc-mode---send-webrtc) for usage details.
+WebRTC mode provides P2P transfers with Nostr signaling for NAT traversal. See [main README](../README.md#3-webrtc-mode---wormhole-rs-webrtc-send) for usage details.

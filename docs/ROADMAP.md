@@ -21,8 +21,8 @@ Ideas and feature requests for future consideration.
 
 ### Make Nostr an Opt-In Feature
 **Domain:** Core / Feature Flags
-- **Feature:** Decouple Nostr dependencies completely (currently used by WebRTC mode for signaling).
-- **Benefit:** Users who only want to use iroh or Tor (or Local mode) shouldn't be required to build/include the Nostr stack.
+- **Feature:** Decouple Nostr dependencies completely (currently used for WebRTC signaling and PIN-based code exchange).
+- **Benefit:** Users who only want iroh/Tor/Local transfers without PIN exchange shouldn't be required to build/include the Nostr stack.
 
 ### Support Custom Iroh DNS Server
 **Domain:** Iroh Mode

@@ -5,7 +5,7 @@ A secure peer-to-peer file transfer tool with two main transport categories:
 **1. Internet Transfers** (Wormhole Code)
 - **iroh mode** (Recommended) - Direct P2P transfers using [iroh](https://github.com/n0-computer/iroh) with QUIC/TLS (automatic relay fallback) - requires `iroh` feature
 - **Tor mode** - Anonymous transfers via Tor hidden services (.onion addresses), also serves as relay when P2P fails - requires `onion` feature
-- **WebRTC mode** - Direct P2P via WebRTC DataChannels with Nostr signaling - requires `webrtc` feature
+- **WebRTC mode** - Direct P2P via WebRTC DataChannels with Nostr signaling - use the `wormhole-rs-webrtc` binary
 
 **2. Local Transfers** (PIN + SPAKE2)
 - **Local mode** - LAN transfers using mDNS discovery, SPAKE2 key exchange from a 12-character PIN, and TCP transport (no internet required)
@@ -18,7 +18,7 @@ A secure peer-to-peer file transfer tool with two main transport categories:
     - **Local**: Private LAN transfers using mDNS
 - **File and folder transfers** - Send individual files or entire directories (automatically archived)
 - **Local discovery** - mDNS for same-network transfers
-- **NAT traversal** - STUN for WebRTC mode; relay fallback for Iroh; use Tor mode as relay when direct P2P fails
+- **NAT traversal** - STUN for WebRTC mode; relay fallback for Iroh; use Tor mode as a manual fallback when direct P2P fails
 - **PIN-based Transfers** - Use short 12-character PINs (with checksum) instead of long wormhole codes for easier typing
 - **Cross-platform** - Single, standalone native binary for macOS, Linux, and Windows (zero-dependency install)
 
@@ -41,6 +41,9 @@ The release installers fetch a native, standalone executable. You only need the 
 
 ### Quick Install (Linux & macOS)
 
+> **Note:** This installs the `wormhole-rs` binary only. The `wormhole-rs-webrtc` binary
+> must be downloaded manually from the [GitHub Releases](https://github.com/andrewtheguy/wormhole-rs/releases) page.
+
 ```bash
 curl -sSL https://andrewtheguy.github.io/wormhole-rs/install.sh | bash
 ```
@@ -61,6 +64,9 @@ curl -sSL https://andrewtheguy.github.io/wormhole-rs/install.sh | bash -s 202512
 ```
 
 ### Quick Install (Windows)
+
+> **Note:** This installs the `wormhole-rs` binary only. The `wormhole-rs-webrtc` binary
+> must be downloaded manually from the [GitHub Releases](https://github.com/andrewtheguy/wormhole-rs/releases) page.
 
 ```powershell
 irm https://andrewtheguy.github.io/wormhole-rs/install.ps1 | iex
@@ -84,19 +90,22 @@ irm https://andrewtheguy.github.io/wormhole-rs/install.ps1 | iex -Args 202512101
 ### From Source
 
 ```bash
-# Default build (Local mode only - lightweight)
+# Default build (iroh + Tor + local; default features)
 cargo build --release
 
-# With Iroh support (recommended)
-cargo build --release --features iroh
+# Local-only (no iroh/tor)
+cargo build --release --no-default-features
 
-# With WebRTC support
-cargo build --release --features webrtc
+# iroh only
+cargo build --release --no-default-features --features iroh
 
-# With Tor support
-cargo build --release --features onion
+# Tor only
+cargo build --release --no-default-features --features onion
 
-# Full feauture set
+# WebRTC binary (separate crate)
+cargo build --release -p wormhole-rs-webrtc
+
+# Full feature set
 cargo build --release --all-features
 ```
 
@@ -139,9 +148,9 @@ wormhole-rs send-tor /path/to/file
 wormhole-rs send-tor --pin /path/to/file
 ```
 
-#### 3. WebRTC Mode - `send-webrtc`
+#### 3. WebRTC Mode - `wormhole-rs-webrtc send`
 *WebRTC transfers with Nostr signaling for NAT traversal.*
-> Requires building with `--features webrtc`. WebRTC crate is NOT in the main workspace - build separately with `cargo build -p wormhole-rs-webrtc`.
+> Built as a separate binary in this workspace: `cargo build -p wormhole-rs-webrtc`.
 
 ```bash
 # Send with default Nostr relays

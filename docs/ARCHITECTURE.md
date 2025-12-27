@@ -33,7 +33,8 @@ sequenceDiagram
     Sender->>Discovery: 3. Publish NodeID via Pkarr/DNS (IPs auto-discovered)
     
     Sender->>Sender: 4. Generate wormhole code
-    Note over Sender: Code = base64url(JSON: AES_key + NodeID + Relay URL)
+    Note over Sender: Code = base64url(JSON token: version, protocol, created_at, AES_key, minimal addr)
+    Note over Sender: Minimal addr = NodeID + optional relay URL
     Note over Sender: (IPs NOT in code - discovered via Pkarr/DNS/mDNS)
 
     Receiver->>Receiver: 5. Parse Code -> NodeAddr
@@ -75,7 +76,7 @@ sequenceDiagram
     Sender->>Sender: 1. Bootstrap Tor client (ephemeral)
     Sender->>Tor: 2. Create .onion hidden service
     Sender->>Sender: 3. Generate wormhole code
-    Note over Sender: Code = base64(onion_addr + optional_key)
+    Note over Sender: Code = base64url(JSON token: version, protocol, created_at, AES_key, onion_addr)
 
     Receiver->>Receiver: 4. Bootstrap Tor client
     Receiver->>Tor: 5. Connect to .onion address
@@ -115,7 +116,7 @@ sequenceDiagram
     Sender->>Nostr: 3. Connect & Subscribe
     Sender->>Nostr: 4. Publish Offer (SDP)
 
-    Note over Sender: Display wormhole code (transfer-id, pubkey, relays)
+    Note over Sender: Display wormhole code (transfer-id, pubkey, relays, AES key)
     Note over Sender: Gathering ICE candidates...
 
     Sender-->>Nostr: (async) Publish ICE candidates as gathered
@@ -136,21 +137,18 @@ sequenceDiagram
 
     Note over Sender,Receiver: ICE connectivity checks, WebRTC connection established
 
-    Sender->>Receiver: 11. SPAKE2 handshake (transfer-id as password)
-    Note over Sender,Receiver: Shared key derived
-
-    Sender->>Receiver: 12. Send Encrypted Header (AES-256-GCM)
+    Note over Sender,Receiver: Shared AES-256-GCM key is embedded in the wormhole code
+    Sender->>Receiver: 11. Send Encrypted Header (AES-256-GCM)
     alt User accepts transfer
-        Receiver->>Sender: 13. Send Encrypted PROCEED
+        Receiver->>Sender: 12. Send Encrypted PROCEED
     else User declines
-        Receiver->>Sender: 13. Send Encrypted ABORT
+        Receiver->>Sender: 12. Send Encrypted ABORT
     end
 
     loop 16KB chunks
         Sender->>Receiver: Send Encrypted Chunk
     end
 
-    Sender->>Receiver: DONE
     Receiver->>Sender: ACK
 ```
 
@@ -219,7 +217,7 @@ sequenceDiagram
 - **Discovery**: Onion Address
 - **Encryption**: Tor circuit encryption plus mandatory AES-256-GCM at the application layer.
 
-### WebRTC Mode (`wormhole-rs send-webrtc`)
+### WebRTC Mode (`wormhole-rs-webrtc send`)
 - **Transport**: WebRTC DataChannel over DTLS
 - **Discovery**: Nostr relays for SDP/ICE signaling (or manual copy-paste)
 - **NAT Traversal**: ICE with STUN server (`stun:stun.l.google.com:19302`)
@@ -232,15 +230,12 @@ sequenceDiagram
 iroh mode uses two encryption layers for defense in depth:
 
 **Transport Layer (iroh/QUIC)**:
-- TLS 1.3/QUIC encryption (ChaCha20-Poly1305)
-- Key exchange via NodeID (Ed25519 public key in wormhole code)
-- Mutual authentication between peers
+- TLS 1.3/QUIC encryption (cipher negotiated by iroh/quinn)
+- Mutual authentication via iroh node identities (NodeID in wormhole code)
 
 **Application Layer (wormhole-rs)**:
 - AES-256-GCM encryption for all data: headers, chunks, and control signals
 - 256-bit key generated per transfer, embedded in wormhole code
-- Nonce derived from chunk number (prevents replay attacks)
-- Control signals (PROCEED, ABORT, ACK) are encrypted using reserved chunk numbers
 
 ### WebRTC Mode Encryption (Dual Layer)
 WebRTC mode uses two encryption layers for defense in depth:
@@ -250,9 +245,8 @@ WebRTC mode uses two encryption layers for defense in depth:
 - ICE consent for periodic connectivity verification
 
 **Application Layer (wormhole-rs)**:
-- SPAKE2 key exchange using transfer ID as shared password
 - AES-256-GCM encryption for all data: headers, chunks, and control signals
-- Forward secrecy (new key per transfer)
+- Per-transfer random key embedded in the wormhole code
 
 ### PIN-based Key Exchange (Local Mode)
 - **Format**: 12 characters (11 random + 1 checksum) from an unambiguous charset; the checksum catches typos before attempting a connection.
@@ -272,7 +266,7 @@ WebRTC mode uses two encryption layers for defense in depth:
 All wormhole codes and signaling offers include a creation timestamp and are validated against a TTL to prevent replay attacks and stale session establishment.
 
 **Implementation:**
-- **Token Version**: v3+ tokens include a `created_at` Unix timestamp
+- **Token Version**: v4 tokens include a `created_at` Unix timestamp
 - **TTL Duration**: 30 minutes (`CODE_TTL_SECS = 1800`)
 - **Clock Skew**: Allows up to 60 seconds into the future to handle minor clock drift
 
@@ -297,62 +291,36 @@ TTL validation is not applied to local mDNS transfers because it is unnecessary:
 All encrypted messages (used by Iroh, Tor, and mDNS modes) follow this format:
 
 ```
-[length: 4 bytes BE][nonce: 12 bytes][ciphertext][tag: 16 bytes]
+[length: 4 bytes BE][encrypted_payload]
 ```
 
-- **length**: Big-endian u32 indicating total size of encrypted payload (nonce + ciphertext + tag)
-- **nonce**: 12-byte AES-GCM nonce derived from session key and chunk number (see [Nonce Derivation](#nonce-derivation))
-- **ciphertext**: Encrypted data
-- **tag**: 16-byte AES-GCM authentication tag
+- **length**: Big-endian u32 indicating total size of `encrypted_payload`
+- **encrypted_payload**: `nonce (12 bytes) || ciphertext || tag (16 bytes)`
 
-### Chunk Numbers and Control Signals
+### Control Signals
 
-Each encrypted message uses a chunk number combined with the session key to derive a unique nonce (see [Nonce Derivation](#nonce-derivation) below):
+Control signals are encrypted messages sent over the same length-prefixed framing as data:
 
-| Message Type | Chunk Number | Plaintext Content | Encrypted |
-|-------------|--------------|-------------------|-----------|
-| Header | 0 | File metadata (type, name, size) | Yes |
-| Data Chunk 1 | 1 | First 16KB of file data | Yes |
-| Data Chunk N | N | Nth chunk of file data | Yes |
-| PROCEED | `u64::MAX` | `b"PROCEED"` | Yes |
-| ABORT | `u64::MAX - 1` | `b"ABORT"` | Yes |
-| ACK | `u64::MAX - 2` | `b"ACK"` | Yes |
-| Done | `u64::MAX - 3` | `b"DONE"` | Yes* |
+- **PROCEED**: receiver accepts transfer
+- **ABORT**: receiver declines transfer
+- **ACK**: receiver confirms all expected bytes were received
+- **RESUME:<offset>**: receiver requests resume from a byte offset (files only)
 
-*Done is defined for packet-based transports (WebRTC) where message boundaries are preserved. Stream-based transports (iroh, Tor, mDNS) do not use an explicit Done signal—transfer completion is determined by receiving all expected bytes based on the file size in the header.
-
-Using reserved high chunk numbers for control signals ensures:
-- Same encryption infrastructure for all messages
-- No collision with data chunk numbers (even for files with billions of chunks)
-- Full end-to-end encryption of the transfer protocol
+These signals are not tied to chunk numbers and use fresh random nonces like all other encrypted messages.
 
 ### WebRTC Message Format
 
-WebRTC uses the same unified transfer protocol as other transports:
-
-```
-Header:   [length: 4 bytes BE][encrypted JSON header]
-Data:     [encrypted 16KB chunk]...
-Control:  [encrypted PROCEED/ABORT/DONE/ACK]
-```
-
-The `DataChannelStream` adapter bridges WebRTC's `RTCDataChannel` to tokio's `AsyncRead/AsyncWrite`, allowing the unified protocol to work seamlessly.
+WebRTC uses the same length-prefixed encrypted framing as stream transports. The
+`DataChannelStream` adapter bridges WebRTC's `RTCDataChannel` to tokio's
+`AsyncRead/AsyncWrite`, so the unified protocol works without special-casing.
 
 ### Nonce Derivation
 
-AES-256-GCM requires a unique 12-byte nonce for each encryption operation with the same key. The nonce is derived deterministically from the session key and chunk number:
-
-```
-nonce_prefix = SHA256("wormhole-nonce-prefix-v1" || session_key)[0..12]
-nonce = nonce_prefix XOR (chunk_num as little-endian bytes, zero-padded to 12 bytes)
-```
-
-This construction ensures:
-- **Cross-session uniqueness**: Different session keys produce different nonce prefixes (via the SHA256 hash)
-- **Intra-session uniqueness**: Different chunk numbers produce different nonces (via XOR with counter)
-- **Deterministic verification**: Receiver can verify expected nonce matches transmitted nonce
-
-Control signals are single-use per session (one PROCEED/ABORT, one ACK), so their fixed chunk numbers never collide with data chunks or each other.
+AES-256-GCM requires a unique 12-byte nonce for each encryption operation with
+the same key. wormhole-rs generates a fresh random 96-bit nonce per message and
+prefixes it to the ciphertext, so the receiver can decrypt directly. With 16KB
+chunks and a per-transfer key, the conservative 2^32 random-nonce limit
+corresponds to ~64 TiB per transfer.
 
 ### Confirmation Handshake
 
@@ -370,4 +338,3 @@ This handshake prevents:
 - Accidental file overwrites without user consent
 - Wasted bandwidth on declined transfers
 - Sender continuing after receiver has disconnected
-
