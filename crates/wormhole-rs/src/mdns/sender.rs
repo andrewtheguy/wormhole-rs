@@ -194,6 +194,22 @@ async fn transfer_data_internal(
     const MAX_FAILED_ATTEMPTS: u32 = 10;
     let mut failed_attempts: u32 = 0;
 
+    // Helper to handle failed connection attempts (handshake failure or timeout)
+    let handle_failed_attempt =
+        |stream: TcpStream, failed_attempts: &mut u32, reason: &str| -> Result<()> {
+            eprintln!("{}", reason);
+            *failed_attempts += 1;
+            if *failed_attempts >= MAX_FAILED_ATTEMPTS {
+                anyhow::bail!(
+                    "Too many failed connection attempts ({}/{})",
+                    *failed_attempts,
+                    MAX_FAILED_ATTEMPTS
+                );
+            }
+            drop(stream);
+            Ok(())
+        };
+
     // Loop to handle invalid connections gracefully
     loop {
         let (mut stream, peer_addr) = listener
@@ -230,29 +246,13 @@ async fn transfer_data_internal(
                 break;
             }
             Ok(Err(e)) => {
-                eprintln!("SPAKE2 handshake failed from {}: {}", peer_addr, e);
-                failed_attempts += 1;
-                if failed_attempts >= MAX_FAILED_ATTEMPTS {
-                    anyhow::bail!(
-                        "Too many failed connection attempts ({}/{})",
-                        failed_attempts,
-                        MAX_FAILED_ATTEMPTS
-                    );
-                }
-                drop(stream);
+                let reason = format!("SPAKE2 handshake failed from {}: {}", peer_addr, e);
+                handle_failed_attempt(stream, &mut failed_attempts, &reason)?;
                 continue;
             }
             Err(_) => {
-                eprintln!("Handshake timeout from {}, closing connection", peer_addr);
-                failed_attempts += 1;
-                if failed_attempts >= MAX_FAILED_ATTEMPTS {
-                    anyhow::bail!(
-                        "Too many failed connection attempts ({}/{})",
-                        failed_attempts,
-                        MAX_FAILED_ATTEMPTS
-                    );
-                }
-                drop(stream);
+                let reason = format!("Handshake timeout from {}, closing connection", peer_addr);
+                handle_failed_attempt(stream, &mut failed_attempts, &reason)?;
                 continue;
             }
         }
