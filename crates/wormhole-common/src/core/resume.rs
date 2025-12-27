@@ -113,29 +113,32 @@ pub fn try_exclusive_lock(file: &File) -> Result<bool> {
 /// Create a new resume temp file with metadata header.
 /// The file is created with an exclusive lock.
 pub fn create_resume_file(temp_path: &Path, metadata: &ResumeMetadata) -> Result<File> {
-    // Check if file exists and try to acquire lock before truncating
+    // If file exists, acquire lock and truncate while holding the lock
     // This prevents TOCTOU race where we truncate another process's in-progress file
     if temp_path.exists() {
-        if let Ok(existing) = OpenOptions::new().read(true).write(true).open(temp_path) {
-            if !try_exclusive_lock(&existing)? {
+        if let Ok(file) = OpenOptions::new().read(true).write(true).open(temp_path) {
+            if !try_exclusive_lock(&file)? {
                 anyhow::bail!("Another transfer is in progress for this file");
             }
-            // Lock acquired on existing file, we can proceed to truncate
-            // Drop the existing handle - we'll reopen with truncate
-            drop(existing);
+            // Lock acquired, truncate this handle (keeping the lock)
+            file.set_len(0).context("Failed to truncate temp file")?;
+            let mut file = file;
+            file.seek(SeekFrom::Start(0))
+                .context("Failed to seek after truncate")?;
+            write_metadata_header(&mut file, metadata)?;
+            return Ok(file);
         }
     }
 
-    // Create or truncate the temp file
+    // File doesn't exist, create it exclusively
     let mut file = OpenOptions::new()
         .read(true)
         .write(true)
-        .create(true)
-        .truncate(true)
+        .create_new(true)
         .open(temp_path)
         .context("Failed to create temp file")?;
 
-    // Acquire exclusive lock on the new/truncated file
+    // Acquire exclusive lock on the new file
     if !try_exclusive_lock(&file)? {
         anyhow::bail!("Another transfer is in progress for this file");
     }
