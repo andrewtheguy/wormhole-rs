@@ -159,19 +159,19 @@ impl<R: tokio::io::AsyncReadExt + Unpin + Send> Read for StreamingReader<R> {
             match chunk_result {
                 Ok(chunk) => {
                     self.bytes_remaining = self.bytes_remaining.saturating_sub(chunk.len() as u64);
-                    self.chunk_num += 1;
                     log::trace!(
                         "Received chunk {}, {} bytes remaining",
                         self.chunk_num,
                         self.bytes_remaining
                     );
+                    self.chunk_num += 1;
                     self.buffer = chunk;
                     self.buffer_pos = 0;
                 }
                 Err(e) => {
                     return Err(std::io::Error::new(
                         std::io::ErrorKind::Other,
-                        format!("Failed to receive chunk {}: {}", self.chunk_num + 1, e),
+                        format!("Failed to receive chunk {}: {}", self.chunk_num, e),
                     ));
                 }
             }

@@ -11,6 +11,7 @@ use wormhole_common::core::transfer::{
     setup_temp_file_cleanup_handler, FileHeader, Interrupted, TransferResult, TransferType,
 };
 use wormhole_common::core::wormhole::generate_code;
+use wormhole_common::signaling::nostr_protocol::generate_transfer_id;
 
 /// Internal helper for common transfer logic.
 /// Handles encryption setup, endpoint creation, connection, data transfer, and acknowledgment.
@@ -46,10 +47,12 @@ async fn transfer_data_internal(
     if use_pin {
         // Generate ephemeral keys for PIN exchange
         let keys = nostr_sdk::Keys::generate();
+        // Generate unique transfer ID to avoid collisions with concurrent transfers
+        let transfer_id = generate_transfer_id();
         let pin = wormhole_common::auth::nostr_pin::publish_wormhole_code_via_pin(
             &keys,
             &code,
-            "iroh-transfer", // Transfer id not critical for iroh, just needs to be non-empty
+            &transfer_id,
         )
         .await?;
 
