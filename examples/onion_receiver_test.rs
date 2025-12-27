@@ -49,7 +49,12 @@ async fn main() -> anyhow::Result<()> {
     let mut last_error = None;
 
     for attempt in 1..=MAX_RETRIES {
-        log::info!("Connecting to {} (attempt {}/{})...", onion_addr, attempt, MAX_RETRIES);
+        log::info!(
+            "Connecting to {} (attempt {}/{})...",
+            onion_addr,
+            attempt,
+            MAX_RETRIES
+        );
 
         match tor_client.connect((onion_addr.as_str(), 80)).await {
             Ok(s) => {

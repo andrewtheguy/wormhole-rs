@@ -1,6 +1,11 @@
 # Project Roadmap
 
 ---
+## In Scope
+- Add file lock to the file being received to prevent multiple receivers writing to the same file simultaneously.
+- Add resumable transfers for large files on top of file locking above.
+
+---
 
 ## Backlog
 
