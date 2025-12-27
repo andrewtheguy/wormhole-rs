@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use iroh::endpoint::{ConnectionError, ConnectingError};
 use iroh::Watcher;
 use std::path::Path;
 use tokio::fs::File;
@@ -13,6 +14,74 @@ use wormhole_common::core::transfer::{
 };
 use wormhole_common::core::wormhole::generate_code;
 use wormhole_common::signaling::nostr_protocol::generate_transfer_id;
+
+/// QUIC application close codes for connection termination.
+///
+/// These codes are sent to the peer when closing the connection to indicate
+/// the reason for closure. Peers can use these to distinguish between normal
+/// completion, errors, and cancellation.
+mod close_codes {
+    use iroh::endpoint::VarInt;
+
+    /// Normal successful completion of the transfer.
+    pub const OK: VarInt = VarInt::from_u32(0);
+
+    /// Transfer was cancelled by user or receiver (abort).
+    pub const CANCELLED: VarInt = VarInt::from_u32(1);
+
+    /// An error occurred during transfer.
+    pub const ERROR: VarInt = VarInt::from_u32(2);
+}
+
+/// Determine if a ConnectingError indicates a relay or network connectivity issue.
+///
+/// This function inspects the structured error types from iroh/quinn to identify
+/// errors that suggest relay failures, network unreachability, or similar issues
+/// where Tor mode might be a better alternative.
+fn is_relay_or_network_error(e: &ConnectingError) -> bool {
+    // First, try to match on structured error variants
+    match e {
+        ConnectingError::ConnectionError { source, .. } => {
+            return is_connection_error_network_related(source);
+        }
+        ConnectingError::HandshakeFailure { .. } => {
+            // Handshake failures can indicate ALPN/relay issues
+            return true;
+        }
+        _ => {}
+    }
+
+    // Fallback: check error message as a last resort for cases not covered
+    // by the structured matching above. This is a best-effort heuristic for
+    // error conditions that iroh/quinn don't expose as distinct variants.
+    let err_str = e.to_string().to_lowercase();
+    err_str.contains("relay")
+        || err_str.contains("alpn")
+        || err_str.contains("no route")
+        || err_str.contains("unreachable")
+        || err_str.contains("network")
+}
+
+/// Check if a quinn ConnectionError indicates a network-related issue.
+fn is_connection_error_network_related(e: &ConnectionError) -> bool {
+    match e {
+        ConnectionError::TimedOut => true,
+        ConnectionError::Reset => true,
+        ConnectionError::TransportError(te) => {
+            // Transport errors can indicate network issues
+            let msg = te.to_string().to_lowercase();
+            msg.contains("no route")
+                || msg.contains("unreachable")
+                || msg.contains("network")
+                || msg.contains("connection refused")
+        }
+        ConnectionError::VersionMismatch => false,
+        ConnectionError::ConnectionClosed(_) => false,
+        ConnectionError::ApplicationClosed(_) => false,
+        ConnectionError::LocallyClosed => false,
+        ConnectionError::CidsExhausted => false,
+    }
+}
 
 /// Internal helper for common transfer logic.
 /// Handles encryption setup, endpoint creation, connection, data transfer, and acknowledgment.
@@ -84,13 +153,8 @@ async fn transfer_data_internal(
         })?
         .await
         .map_err(|e| {
-            let err_str = e.to_string().to_lowercase();
-            let is_relay_error = err_str.contains("relay")
-                || err_str.contains("alpn")
-                || err_str.contains("no route")
-                || err_str.contains("unreachable");
-
-            if is_relay_error {
+            // Use structured error types to determine if this is a relay/network issue
+            if is_relay_or_network_error(&e) {
                 anyhow::anyhow!(
                     "Failed to accept connection: {}\n\n\
                      Relay connection failed. Try Tor mode instead:\n  \
@@ -135,7 +199,7 @@ async fn transfer_data_internal(
             _ = shutdown_rx => {
                 // Graceful shutdown requested - notify receiver and close connection
                 eprintln!("\nShutdown requested, cancelling transfer...");
-                conn.close(0u32.into(), b"cancelled");
+                conn.close(close_codes::CANCELLED, b"cancelled");
                 endpoint.close().await;
                 return Err(Interrupted.into());
             }
@@ -147,7 +211,7 @@ async fn transfer_data_internal(
     // Handle transfer result - ensure cleanup on all paths
     match transfer_result {
         Ok(TransferResult::Aborted) => {
-            conn.close(0u32.into(), b"cancelled");
+            conn.close(close_codes::CANCELLED, b"cancelled");
             endpoint.close().await;
             anyhow::bail!("Transfer cancelled by receiver");
         }
@@ -156,18 +220,21 @@ async fn transfer_data_internal(
         }
         Err(e) => {
             // Transfer error - close connection and propagate error
-            conn.close(0u32.into(), b"error");
+            conn.close(close_codes::ERROR, b"error");
             endpoint.close().await;
             return Err(e);
         }
     }
 
     // Finish the send stream to signal we're done sending (QUIC-specific)
-    send_stream.finish().context("Failed to finish stream")?;
+    let finish_result = send_stream.finish().context("Failed to finish stream");
 
-    // Close connection gracefully
-    conn.close(0u32.into(), b"done");
+    // Always close connection and endpoint, even if finish failed
+    conn.close(close_codes::OK, b"done");
     endpoint.close().await;
+
+    // Propagate finish error after cleanup
+    finish_result?;
 
     eprintln!("Connection closed.");
 

@@ -172,7 +172,8 @@ pub fn display_offer_json(offer: &OfflineOffer) -> Result<()> {
     println!();
     println!("=== SENDER STEP 2: Press Enter to show response code and then copy it to send to receiver ===");
     std::io::stdout().flush()?;
-    let _ = std::io::stdin().read_line(&mut String::new());
+    std::io::stdin()
+        .read_line(&mut String::new())?;
     println!("{}", OFFER_BEGIN_MARKER);
     println!("{}", wrapped);
     println!("{}", OFFER_END_MARKER);
