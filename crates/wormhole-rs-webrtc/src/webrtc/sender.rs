@@ -25,14 +25,37 @@ use crate::webrtc::common::{DataChannelStream, WebRtcPeer};
 /// Connection timeout for WebRTC handshake
 const WEBRTC_CONNECTION_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// Check if an error is a signaling-related error (vs file/transfer error)
+/// Check if an error is a signaling-related error (vs file/transfer error).
+///
+/// Uses specific phrase matching to avoid false positives from generic terms
+/// like "connection" or "timeout" which could appear in unrelated errors.
 fn is_signaling_error(err: &anyhow::Error) -> bool {
     let err_msg = err.to_string().to_lowercase();
-    err_msg.contains("relay")
-        || err_msg.contains("nostr")
-        || err_msg.contains("signaling")
-        || err_msg.contains("connection")
-        || err_msg.contains("timeout")
+
+    // Specific signaling-related terms (always indicate signaling issues)
+    if err_msg.contains("nostr") || err_msg.contains("signaling") {
+        return true;
+    }
+
+    // "relay" alone is specific enough (Nostr relays, not generic relays)
+    if err_msg.contains("relay") {
+        return true;
+    }
+
+    // Require compound phrases for generic terms to avoid false positives
+    // e.g., "relay connection" but not "webrtc connection"
+    let signaling_phrases = [
+        "nostr connection",
+        "relay connection",
+        "signaling timeout",
+        "signaling failed",
+        "relay timeout",
+        "failed to connect to relay",
+        "failed to publish",
+        "failed to subscribe",
+    ];
+
+    signaling_phrases.iter().any(|phrase| err_msg.contains(phrase))
 }
 
 /// Handle signaling error with fallback to manual mode
