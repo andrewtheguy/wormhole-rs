@@ -363,6 +363,8 @@ pub fn update_resume_metadata(file: &mut File, metadata: &ResumeMetadata) -> Res
         write_result.context("Failed to write metadata")?;
         flush_result.context("Failed to flush metadata")?;
         restore_result.context("Failed to restore file position after metadata update")?;
+
+        file.sync_data().context("Failed to sync metadata")?;
     }
 
     Ok(())
