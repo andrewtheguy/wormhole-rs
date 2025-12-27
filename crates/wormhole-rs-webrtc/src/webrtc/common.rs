@@ -388,20 +388,21 @@ pub struct WebRtcConnectionInfo {
 
 use bytes::Bytes;
 use std::collections::VecDeque;
+use std::future::Future;
 use std::io;
 use std::pin::Pin;
 use std::task::{Context as TaskContext, Poll};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
-use tokio::sync::Mutex;
-
 /// A stream adapter that wraps a WebRTC data channel to implement AsyncRead + AsyncWrite.
 ///
 /// This allows using the common transfer protocol with WebRTC data channels.
 pub struct DataChannelStream {
     data_channel: Arc<RTCDataChannel>,
-    message_rx: Arc<Mutex<mpsc::Receiver<Vec<u8>>>>,
+    message_rx: mpsc::Receiver<Vec<u8>>,
     read_buffer: VecDeque<u8>,
     closed: Arc<std::sync::atomic::AtomicBool>,
+    /// Pending write operation result receiver
+    write_pending: Option<tokio::sync::oneshot::Receiver<Result<usize, String>>>,
 }
 
 impl DataChannelStream {
@@ -429,14 +430,28 @@ impl DataChannelStream {
         }
 
         // On message - forward to channel
+        // Use blocking_send via spawn_blocking to avoid async issues in callback
         let tx = message_tx.clone();
         data_channel.on_message(Box::new(move |msg: DataChannelMessage| {
+            let data = msg.data.to_vec();
             let tx = tx.clone();
-            Box::pin(async move {
-                if tx.send(msg.data.to_vec()).await.is_err() {
+            // Try to send immediately without blocking
+            match tx.try_send(data) {
+                Ok(_) => {}
+                Err(tokio::sync::mpsc::error::TrySendError::Full(data)) => {
+                    // Channel full, spawn a task to send asynchronously
+                    let tx = tx.clone();
+                    tokio::spawn(async move {
+                        if tx.send(data).await.is_err() {
+                            log::warn!("Failed to forward data channel message - receiver dropped");
+                        }
+                    });
+                }
+                Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
                     log::warn!("Failed to forward data channel message - receiver dropped");
                 }
-            })
+            }
+            Box::pin(async {})
         }));
 
         // On error
@@ -456,9 +471,10 @@ impl DataChannelStream {
 
         Self {
             data_channel,
-            message_rx: Arc::new(Mutex::new(message_rx)),
+            message_rx,
             read_buffer: VecDeque::new(),
             closed,
+            write_pending: None,
         }
     }
 
@@ -477,6 +493,12 @@ impl AsyncRead for DataChannelStream {
         // First, drain any buffered data
         if !self.read_buffer.is_empty() {
             let to_read = std::cmp::min(buf.remaining(), self.read_buffer.len());
+            log::trace!(
+                "DataChannelStream: draining {} bytes from buffer (buffer has {}, requested {})",
+                to_read,
+                self.read_buffer.len(),
+                buf.remaining()
+            );
             for _ in 0..to_read {
                 if let Some(byte) = self.read_buffer.pop_front() {
                     buf.put_slice(&[byte]);
@@ -487,46 +509,40 @@ impl AsyncRead for DataChannelStream {
 
         // Check if channel is closed
         if self.is_closed() {
+            log::debug!("DataChannelStream: closed flag set, returning EOF");
             return Poll::Ready(Ok(())); // EOF
         }
 
-        // Try to receive more data
-        let message_rx = self.message_rx.clone();
-
-        // We need to poll the receiver
-        // Since we can't hold the lock across await points in poll, we use try_lock
-        let result = match message_rx.try_lock() {
-            Ok(mut rx) => {
-                match rx.poll_recv(cx) {
-                    Poll::Ready(Some(data)) => Some(data),
-                    Poll::Ready(None) => None,
-                    Poll::Pending => return Poll::Pending,
-                }
-            }
-            Err(_) => {
-                // Lock is held, wake up later
-                cx.waker().wake_by_ref();
-                return Poll::Pending;
-            }
-        };
-
-        match result {
-            Some(data) => {
+        // Poll the receiver directly - we have &mut self so exclusive access
+        // Get a mutable reference to the inner data
+        let this = self.as_mut().get_mut();
+        match this.message_rx.poll_recv(cx) {
+            Poll::Ready(Some(data)) => {
+                log::debug!(
+                    "DataChannelStream: received {} bytes, requested {}",
+                    data.len(),
+                    buf.remaining()
+                );
                 // Buffer the data
-                self.read_buffer.extend(data);
+                this.read_buffer.extend(data);
 
                 // Now read from buffer
-                let to_read = std::cmp::min(buf.remaining(), self.read_buffer.len());
+                let to_read = std::cmp::min(buf.remaining(), this.read_buffer.len());
                 for _ in 0..to_read {
-                    if let Some(byte) = self.read_buffer.pop_front() {
+                    if let Some(byte) = this.read_buffer.pop_front() {
                         buf.put_slice(&[byte]);
                     }
                 }
                 Poll::Ready(Ok(()))
             }
-            None => {
+            Poll::Ready(None) => {
                 // Channel closed - EOF
+                log::debug!("DataChannelStream: channel closed (recv returned None)");
                 Poll::Ready(Ok(()))
+            }
+            Poll::Pending => {
+                log::trace!("DataChannelStream: poll_recv returned Pending");
+                Poll::Pending
             }
         }
     }
@@ -534,7 +550,7 @@ impl AsyncRead for DataChannelStream {
 
 impl AsyncWrite for DataChannelStream {
     fn poll_write(
-        self: Pin<&mut Self>,
+        mut self: Pin<&mut Self>,
         cx: &mut TaskContext<'_>,
         buf: &[u8],
     ) -> Poll<io::Result<usize>> {
@@ -545,24 +561,75 @@ impl AsyncWrite for DataChannelStream {
             )));
         }
 
-        // WebRTC data channel send is async, but we need to block here
-        // We'll spawn a task to send and use a oneshot to get the result
-        let data_channel = self.data_channel.clone();
+        let this = self.as_mut().get_mut();
+
+        // Check if we have a pending write operation
+        if let Some(ref mut pending_rx) = this.write_pending {
+            // Poll the pending operation
+            match Pin::new(pending_rx).poll(cx) {
+                Poll::Ready(Ok(Ok(len))) => {
+                    this.write_pending = None;
+                    log::trace!("DataChannelStream: write completed, {} bytes", len);
+                    return Poll::Ready(Ok(len));
+                }
+                Poll::Ready(Ok(Err(e))) => {
+                    this.write_pending = None;
+                    return Poll::Ready(Err(io::Error::new(io::ErrorKind::Other, e)));
+                }
+                Poll::Ready(Err(_)) => {
+                    // Channel closed unexpectedly
+                    this.write_pending = None;
+                    return Poll::Ready(Err(io::Error::new(
+                        io::ErrorKind::BrokenPipe,
+                        "Write operation cancelled",
+                    )));
+                }
+                Poll::Pending => {
+                    return Poll::Pending;
+                }
+            }
+        }
+
+        // Start a new write operation
+        let data_channel = this.data_channel.clone();
         let data = Bytes::copy_from_slice(buf);
         let len = buf.len();
 
-        // Use a waker-based approach
-        let waker = cx.waker().clone();
+        let (tx, mut rx) = tokio::sync::oneshot::channel();
 
         // Spawn the send operation
         tokio::spawn(async move {
-            let _ = data_channel.send(&data).await;
-            waker.wake();
+            match data_channel.send(&data).await {
+                Ok(_) => {
+                    let _ = tx.send(Ok(len));
+                }
+                Err(e) => {
+                    let _ = tx.send(Err(e.to_string()));
+                }
+            }
         });
 
-        // Return the length immediately since WebRTC data channels are reliable
-        // and will buffer the data
-        Poll::Ready(Ok(len))
+        // Poll immediately to register the waker, then store if still pending
+        match Pin::new(&mut rx).poll(cx) {
+            Poll::Ready(Ok(Ok(len))) => {
+                log::trace!("DataChannelStream: write completed immediately, {} bytes", len);
+                Poll::Ready(Ok(len))
+            }
+            Poll::Ready(Ok(Err(e))) => {
+                Poll::Ready(Err(io::Error::new(io::ErrorKind::Other, e)))
+            }
+            Poll::Ready(Err(_)) => {
+                Poll::Ready(Err(io::Error::new(
+                    io::ErrorKind::BrokenPipe,
+                    "Write operation cancelled",
+                )))
+            }
+            Poll::Pending => {
+                // Store the receiver for future polls - waker is now registered
+                this.write_pending = Some(rx);
+                Poll::Pending
+            }
+        }
     }
 
     fn poll_flush(self: Pin<&mut Self>, _cx: &mut TaskContext<'_>) -> Poll<io::Result<()>> {

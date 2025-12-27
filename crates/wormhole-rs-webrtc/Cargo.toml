@@ -33,6 +33,9 @@ uuid = { version = "1", features = ["v4"] }
 bytes = "1"
 crc32fast = "1"
 
+# Async utilities
+tokio-util = { version = "0.7", features = ["io", "compat"] }
+
 # CLI
 clap = { workspace = true }
 env_logger = { workspace = true }

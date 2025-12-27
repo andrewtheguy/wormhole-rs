@@ -9062,6 +9062,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "tokio-tungstenite 0.21.0",
+ "tokio-util",
  "uuid",
  "webrtc",
  "wormhole-common",
