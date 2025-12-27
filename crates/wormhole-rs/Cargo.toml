@@ -1,0 +1,43 @@
+[package]
+name = "wormhole-rs"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "wormhole-rs"
+path = "src/main.rs"
+
+[features]
+default = ["iroh", "onion"]
+iroh = ["dep:iroh", "wormhole-common/iroh-addr"]
+onion = ["dep:arti-client", "dep:tor-hsservice", "dep:tor-cell", "dep:safelog", "dep:rusqlite"]
+
+[dependencies]
+# Common library
+wormhole-common = { path = "../wormhole-common" }
+
+# Core dependencies (workspace)
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+anyhow = { workspace = true }
+clap = { workspace = true }
+rand = { workspace = true }
+hex = { workspace = true }
+futures = { workspace = true }
+log = { workspace = true }
+nostr-sdk = { workspace = true }
+tempfile = { workspace = true }
+
+# iroh transport (optional)
+iroh = { version = "0.95.1", features = ["discovery-local-network"], optional = true }
+
+# Crate-specific dependencies
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+mdns-sd = "0.15"
+
+# Tor/Onion transport (optional, crate-specific)
+arti-client = { version = "0.37", features = ["onion-service-service", "onion-service-client", "tokio"], optional = true }
+tor-hsservice = { version = "0.37", optional = true }
+tor-cell = { version = "0.37", optional = true }
+safelog = { version = "0.7.1", optional = true }
+rusqlite = { version = "0.37", features = ["bundled"], optional = true }
