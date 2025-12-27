@@ -457,17 +457,26 @@ impl DataChannelStream {
             }));
         }
 
-        // On message - forward to channel
-        // Always spawn to preserve ordering and avoid blocking the callback
+        // On message - forward to channel synchronously to preserve ordering.
+        // try_send is non-blocking and maintains message order. If the channel
+        // is full (which shouldn't happen with our 1000-message buffer), we log
+        // a warning and drop the message rather than spawn a task that could
+        // reorder messages.
         let tx = message_tx.clone();
         data_channel.on_message(Box::new(move |msg: DataChannelMessage| {
             let data = msg.data.to_vec();
-            let tx = tx.clone();
-            tokio::spawn(async move {
-                if tx.send(data).await.is_err() {
+            match tx.try_send(data) {
+                Ok(_) => {}
+                Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
+                    log::error!(
+                        "Data channel message buffer full - this should not happen. \
+                         Dropping message to preserve ordering."
+                    );
+                }
+                Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
                     log::warn!("Failed to forward data channel message - receiver dropped");
                 }
-            });
+            }
             Box::pin(async {})
         }));
 
