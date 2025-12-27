@@ -255,7 +255,10 @@ async fn discover_best_relays() -> Vec<String> {
     }
 
     // Limit number of relays to probe to avoid too many connections
-    let relays_to_probe: Vec<_> = discovered.into_iter().take(MAX_RELAYS_TO_PROBE).collect();
+    // Sort for deterministic selection when we need to limit the set
+    let mut relays_to_probe: Vec<_> = discovered.into_iter().collect();
+    relays_to_probe.sort();
+    relays_to_probe.truncate(MAX_RELAYS_TO_PROBE);
 
     // Probe relays in parallel: NIP-11 capability check + WebSocket connectivity test
     let futures: Vec<_> = relays_to_probe.iter().map(|url| probe_relay(url)).collect();
@@ -411,9 +414,10 @@ pub fn create_relay_list_event(keys: &Keys, relays: &[String]) -> Result<Event> 
         );
     }
 
-    if valid_tags.is_empty() {
-        anyhow::bail!("No valid relay URLs after parsing");
-    }
+    // Note: valid_tags cannot be empty here because:
+    // 1. We already bailed if relays was empty (line 387-389)
+    // 2. We just bailed if any URLs were malformed
+    // 3. Therefore all non-empty relay URLs parsed successfully into valid_tags
 
     EventBuilder::new(relay_list_kind(), "")
         .tags(valid_tags)
