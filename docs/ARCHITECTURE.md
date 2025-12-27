@@ -111,29 +111,39 @@ sequenceDiagram
     participant Receiver
 
     Sender->>Sender: 1. Create RTCPeerConnection + data channel
-    Sender->>Sender: 2. Create SDP offer, gather ICE candidates
+    Sender->>Sender: 2. Create SDP offer
     Sender->>Nostr: 3. Connect & Subscribe
+    Sender->>Nostr: 4. Publish Offer (SDP)
 
-    Note over Sender: Display transfer-id, pubkey, relay
+    Note over Sender: Display wormhole code (transfer-id, pubkey, relays)
+    Note over Sender: Gathering ICE candidates...
 
-    Receiver->>Receiver: 4. Create RTCPeerConnection
-    Receiver->>Nostr: 5. Connect & Subscribe
-    Receiver->>Nostr: 6. Publish Answer (SDP + ICE candidates)
+    Sender-->>Nostr: (async) Publish ICE candidates as gathered
 
-    Nostr->>Sender: 7. Receive Answer
-    Sender->>Nostr: 8. Publish Offer (SDP + ICE candidates)
-    Nostr->>Receiver: 9. Receive Offer
+    Receiver->>Nostr: 5. Connect & Subscribe (using wormhole code)
+    Nostr->>Receiver: 6. Receive Offer (SDP)
+    Nostr-->>Receiver: (async) Receive Sender's ICE candidates
 
-    Note over Sender,Receiver: WebRTC connection established
+    Receiver->>Receiver: 7. Create RTCPeerConnection
+    Receiver->>Receiver: 8. Set remote description, create SDP answer
+    Receiver->>Nostr: 9. Publish Answer (SDP)
 
-    Sender->>Receiver: 10. SPAKE2 handshake (transfer-id as password)
+    Note over Receiver: Gathering ICE candidates...
+    Receiver-->>Nostr: (async) Publish ICE candidates as gathered
+
+    Nostr->>Sender: 10. Receive Answer (SDP)
+    Nostr-->>Sender: (async) Receive Receiver's ICE candidates
+
+    Note over Sender,Receiver: ICE connectivity checks, WebRTC connection established
+
+    Sender->>Receiver: 11. SPAKE2 handshake (transfer-id as password)
     Note over Sender,Receiver: Shared key derived
 
-    Sender->>Receiver: 11. Send Encrypted Header (AES-256-GCM)
+    Sender->>Receiver: 12. Send Encrypted Header (AES-256-GCM)
     alt User accepts transfer
-        Receiver->>Sender: 12. Send Encrypted PROCEED
+        Receiver->>Sender: 13. Send Encrypted PROCEED
     else User declines
-        Receiver->>Sender: 12. Send Encrypted ABORT
+        Receiver->>Sender: 13. Send Encrypted ABORT
     end
 
     loop 16KB chunks
