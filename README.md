@@ -13,6 +13,7 @@ A secure peer-to-peer file transfer tool with two main transport categories:
 ## Features
 
 - **End-to-end encryption** - All connections use strong encryption (AES-256-GCM / ChaCha20-Poly1305)
+- **Resumable transfers** - Interrupted file transfers can be resumed from where they left off, even after network disconnections or restarts
 - **Two Transfer Categories**
     - **Internet**: Global P2P via Iroh, WebRTC, or Tor
     - **Local**: Private LAN transfers using mDNS
