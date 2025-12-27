@@ -5,6 +5,7 @@
 //! - Data channel handlers
 
 use anyhow::{Context, Result};
+use webrtc::ice::candidate::CandidateType;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -31,6 +32,21 @@ use webrtc::stats::StatsReportType;
 
 /// Google STUN server for NAT traversal
 const STUN_SERVER: &str = "stun:stun.l.google.com:19302";
+
+// ============================================================================
+// Helper Functions
+// ============================================================================
+
+/// Convert a CandidateType to a human-readable string
+fn candidate_type_to_str(ct: CandidateType) -> &'static str {
+    match ct {
+        CandidateType::Host => "Host",
+        CandidateType::ServerReflexive => "ServerReflexive",
+        CandidateType::PeerReflexive => "PeerReflexive",
+        CandidateType::Relay => "Relay",
+        CandidateType::Unspecified => "Unspecified",
+    }
+}
 
 // ============================================================================
 // WebRTC Peer Connection
@@ -301,8 +317,8 @@ impl WebRtcPeer {
     pub async fn get_connection_info(&self) -> WebRtcConnectionInfo {
         let stats = self.peer_connection.get_stats().await;
 
-        let mut local_candidate_type = None;
-        let mut remote_candidate_type = None;
+        let mut local_candidate_type: Option<CandidateType> = None;
+        let mut remote_candidate_type: Option<CandidateType> = None;
         let mut local_address = None;
         let mut remote_address = None;
         let mut nominated_pair_local_id = None;
@@ -324,13 +340,13 @@ impl WebRtcPeer {
             match report {
                 StatsReportType::LocalCandidate(candidate) => {
                     if nominated_pair_local_id.as_ref() == Some(id) {
-                        local_candidate_type = Some(format!("{:?}", candidate.candidate_type));
+                        local_candidate_type = Some(candidate.candidate_type);
                         local_address = Some(format!("{}:{}", candidate.ip, candidate.port));
                     }
                 }
                 StatsReportType::RemoteCandidate(candidate) => {
                     if nominated_pair_remote_id.as_ref() == Some(id) {
-                        remote_candidate_type = Some(format!("{:?}", candidate.candidate_type));
+                        remote_candidate_type = Some(candidate.candidate_type);
                         remote_address = Some(format!("{}:{}", candidate.ip, candidate.port));
                     }
                 }
@@ -339,20 +355,32 @@ impl WebRtcPeer {
         }
 
         // Determine connection type based on candidate types
-        let connection_type = match (&local_candidate_type, &remote_candidate_type) {
+        let connection_type = match (local_candidate_type, remote_candidate_type) {
             (Some(local), Some(remote)) => {
-                let local_lower = local.to_lowercase();
-                let remote_lower = remote.to_lowercase();
-                if local_lower.contains("relay") || remote_lower.contains("relay") {
+                // If either side uses a relay, the connection is relayed
+                if matches!(local, CandidateType::Relay)
+                    || matches!(remote, CandidateType::Relay)
+                {
                     "Relay (TURN)".to_string()
-                } else if local_lower.contains("host") && remote_lower.contains("host") {
+                } else if matches!(local, CandidateType::Host)
+                    && matches!(remote, CandidateType::Host)
+                {
                     "Direct (Host)".to_string()
-                } else if local_lower.contains("srflx") || remote_lower.contains("srflx") {
+                } else if matches!(local, CandidateType::ServerReflexive)
+                    || matches!(remote, CandidateType::ServerReflexive)
+                {
                     "Direct (STUN)".to_string()
-                } else if local_lower.contains("prflx") || remote_lower.contains("prflx") {
+                } else if matches!(local, CandidateType::PeerReflexive)
+                    || matches!(remote, CandidateType::PeerReflexive)
+                {
                     "Direct (Peer Reflexive)".to_string()
                 } else {
-                    format!("Unknown ({}/{})", local, remote)
+                    // Fallback for Unspecified or any future variants
+                    format!(
+                        "Unknown ({}/{})",
+                        candidate_type_to_str(local),
+                        candidate_type_to_str(remote)
+                    )
                 }
             }
             _ => "Unknown".to_string(),

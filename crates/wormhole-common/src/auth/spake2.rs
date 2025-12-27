@@ -11,6 +11,9 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 /// SPAKE2 message length for Ed25519 group
 const SPAKE2_MSG_LEN: usize = 33;
 
+/// Maximum transfer ID length (enforced by both initiator and responder)
+const MAX_TRANSFER_ID_LEN: usize = 256;
+
 /// Identity string for wormhole protocol (used in SPAKE2 derivation)
 const IDENTITY_SENDER: &[u8] = b"wormhole-rs-sender";
 const IDENTITY_RECEIVER: &[u8] = b"wormhole-rs-receiver";
@@ -49,11 +52,11 @@ where
 
     // Send: transfer_id_len (2 bytes BE) + transfer_id + spake2_msg (33 bytes)
     let transfer_id_bytes = transfer_id.as_bytes();
-    if transfer_id_bytes.len() > u16::MAX as usize {
+    if transfer_id_bytes.len() > MAX_TRANSFER_ID_LEN {
         anyhow::bail!(
             "Transfer ID too long: {} bytes (max: {})",
             transfer_id_bytes.len(),
-            u16::MAX
+            MAX_TRANSFER_ID_LEN
         );
     }
     let mut msg = Vec::with_capacity(2 + transfer_id_bytes.len() + SPAKE2_MSG_LEN);
@@ -121,8 +124,12 @@ where
     let transfer_id_len = u16::from_be_bytes(len_buf) as usize;
 
     // Sanity check on transfer ID length
-    if transfer_id_len > 256 {
-        anyhow::bail!("Invalid transfer ID length: {}", transfer_id_len);
+    if transfer_id_len > MAX_TRANSFER_ID_LEN {
+        anyhow::bail!(
+            "Transfer ID too long: {} bytes (max: {})",
+            transfer_id_len,
+            MAX_TRANSFER_ID_LEN
+        );
     }
 
     let mut transfer_id_buf = vec![0u8; transfer_id_len];
@@ -168,6 +175,9 @@ where
         .map_err(|_| anyhow::anyhow!("SPAKE2 key derivation failed"))?;
 
     let mut key = [0u8; 32];
+    if key_bytes.len() != 32 {
+        anyhow::bail!("Unexpected key length: {} (expected 32)", key_bytes.len());
+    }
     key.copy_from_slice(&key_bytes);
     Ok(key)
 }

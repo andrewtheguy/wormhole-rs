@@ -17,8 +17,8 @@ This guide describes common scenarios where `wormhole-rs` shines and which mode 
   ```
 - **Experience**: The sender sets a passphrase (e.g., "secret"). The receiver finds the sender automatically and prompts for that passphrase.
 
-**Solution B**: **iroh Mode with Manual IP**
-- **Why**: When mDNS discovery doesn't work (different subnets, VPN issues), use iroh mode which supports discovery across subnets.
+**Solution B**: **iroh Mode** (Cross-subnet discovery)
+- **Why**: When mDNS discovery doesn't work (different subnets, VPN issues), iroh mode automatically discovers peers across network boundaries using iroh's distributed hash table (DHT) and relay infrastructure—no manual IP input required.
 - **Command**:
   ```bash
   # Sender
@@ -27,7 +27,7 @@ This guide describes common scenarios where `wormhole-rs` shines and which mode 
   # Receiver
   wormhole-rs receive --code <WORMHOLE_CODE>
   ```
-- **Experience**: Share the wormhole code via any channel (chat, paper, verbal). iroh handles NAT traversal automatically.
+- **Experience**: Share the wormhole code via any channel (chat, paper, verbal). iroh handles peer discovery and NAT traversal automatically without needing IP addresses.
 
 ---
 
