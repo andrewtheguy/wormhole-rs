@@ -42,10 +42,12 @@ The release installers fetch a native, standalone executable. You only need the 
 ### Quick Install (Linux & macOS)
 
 ```bash
-# Install wormhole-rs
 curl -sSL https://andrewtheguy.github.io/wormhole-rs/install.sh | bash
+```
 
-# Install wormhole-rs-webrtc
+To install the WebRTC binary instead:
+
+```bash
 curl -sSL https://andrewtheguy.github.io/wormhole-rs/install.sh | bash -s -- --webrtc
 ```
 
@@ -62,10 +64,12 @@ curl -sSL https://andrewtheguy.github.io/wormhole-rs/install.sh | bash -s 202512
 ### Quick Install (Windows)
 
 ```powershell
-# Install wormhole-rs
 irm https://andrewtheguy.github.io/wormhole-rs/install.ps1 | iex
+```
 
-# Install wormhole-rs-webrtc
+To install the WebRTC binary instead:
+
+```powershell
 irm https://andrewtheguy.github.io/wormhole-rs/install.ps1 | iex -Args -WebRTC
 ```
 
