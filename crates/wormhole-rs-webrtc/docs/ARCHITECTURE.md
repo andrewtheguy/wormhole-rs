@@ -1,8 +1,8 @@
-# ICE Transport Architecture
+# WebRTC Transport Architecture
 
 ## Overview
 
-The ICE transport uses `webrtc-ice` for NAT traversal with TCP candidates, providing a reliable byte stream for the unified transfer protocol.
+The WebRTC transport uses `webrtc-ice` for NAT traversal with TCP candidates, providing a reliable byte stream for the unified transfer protocol.
 
 ## Why ICE Instead of Full WebRTC?
 

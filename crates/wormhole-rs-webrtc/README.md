@@ -1,12 +1,12 @@
 # wormhole-rs-webrtc
 
-ICE transport for wormhole-rs file transfers with NAT traversal.
+WebRTC transport for wormhole-rs file transfers with NAT traversal.
 
 > **Note**: This crate is NOT in the main workspace. Build with: `cargo build -p wormhole-rs-webrtc`
 
 ## Features
 
-- ICE (Interactive Connectivity Establishment) for NAT traversal
+- WebRTC ICE (Interactive Connectivity Establishment) for NAT traversal
 - TCP candidates for reliable, ordered byte streams
 - Nostr relay signaling for credential/candidate exchange
 - Uses unified transfer protocol (same as iroh, Tor, mDNS transports)
@@ -81,7 +81,7 @@ The sender displays the transfer ID, sender pubkey, and relay URL for the receiv
 
 | Transport | NAT Traversal | Relay | Protocol |
 |-----------|---------------|-------|----------|
-| **ICE** | STUN/TURN | Nostr signaling | Unified |
+| **WebRTC** | STUN/TURN | Nostr signaling | Unified |
 | iroh | STUN + relay | iroh network | Unified |
 | mDNS | LAN only | None | Unified |
 | Tor | .onion | Tor network | Unified |

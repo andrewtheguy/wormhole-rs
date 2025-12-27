@@ -5,7 +5,7 @@ A secure peer-to-peer file transfer tool with two main transport categories:
 **1. Internet Transfers** (Wormhole Code)
 - **iroh mode** (Recommended) - Direct P2P transfers using [iroh](https://github.com/n0-computer/iroh) with QUIC/TLS (automatic relay fallback) - requires `iroh` feature
 - **Tor mode** - Anonymous transfers via Tor hidden services (.onion addresses), also serves as relay when P2P fails - requires `onion` feature
-- **WebRTC mode** (Legacy) - WebRTC transfers with Nostr signaling - requires `webrtc` feature (see [webrtc crate docs](crates/wormhole-rs-webrtc/README.md))
+- **WebRTC mode** (Legacy) - ICE/STUN transfers with Nostr signaling - requires `webrtc` feature (see [WebRTC crate docs](crates/wormhole-rs-webrtc/README.md))
 
 **2. Local Transfers** (PIN + SPAKE2)
 - **Local mode** - LAN transfers using mDNS discovery, SPAKE2 key exchange from a 12-character PIN, and TCP transport (no internet required)
@@ -18,7 +18,7 @@ A secure peer-to-peer file transfer tool with two main transport categories:
     - **Local**: Private LAN transfers using mDNS
 - **File and folder transfers** - Send individual files or entire directories (automatically archived)
 - **Local discovery** - mDNS for same-network transfers
-- **NAT traversal** - STUN for WebRTC; relay fallback for Iroh; use Tor mode as relay when direct P2P fails
+- **NAT traversal** - STUN for WebRTC mode; relay fallback for Iroh; use Tor mode as relay when direct P2P fails
 - **PIN-based Transfers** - Use short 12-character PINs (with checksum) instead of long wormhole codes for easier typing
 - **Cross-platform** - Single, standalone native binary for macOS, Linux, and Windows (zero-dependency install)
 
@@ -106,24 +106,23 @@ cargo build --release --all-features
 
 Use these modes for transfers over the internet. They all use a **Wormhole Code** for connection.
 
-#### 1. iroh Mode (Recommended) - `send-iroh`
+#### 1. iroh Mode (Recommended) - `send`
 *Direct P2P transport using QUIC/TLS with automatic relay fallback. Most reliable for both small and large files.*
 > Requires building with `--features iroh`.
 
 ```bash
 # Send file
-wormhole-rs send-iroh /path/to/file
+wormhole-rs send /path/to/file
 
 # Send folder
-wormhole-rs send-iroh /path/to/folder --folder
-
+wormhole-rs send /path/to/folder --folder
 ```
 
 ##### Custom Iroh Relays
 - Default behavior uses iroh's public relay fallback plus direct P2P.
 - For self-hosted setups, point both sides at your own DERP relay(s):
     ```bash
-    wormhole-rs send-iroh --relay-url https://relay1.example.com /path/to/file
+    wormhole-rs send --relay-url https://relay1.example.com /path/to/file
     wormhole-rs receive --relay-url https://relay1.example.com
     ```
 - Multiple `--relay-url` flags are supported for failover.
