@@ -90,10 +90,17 @@ pub async fn receive(
     // Close connection gracefully with timeout to avoid hanging indefinitely
     const CLOSE_TIMEOUT: Duration = Duration::from_secs(5);
 
+    // Initiate connection close (non-async, just signals intent to close)
+    conn.close(0u32.into(), b"transfer complete");
+
+    // Wait for the connection to fully close, with timeout
     match timeout(CLOSE_TIMEOUT, conn.closed()).await {
         Ok(_) => {}
         Err(_) => {
-            log::warn!("Connection close timed out after {:?}", CLOSE_TIMEOUT);
+            log::warn!(
+                "Waiting for connection close timed out after {:?}",
+                CLOSE_TIMEOUT
+            );
         }
     }
 
