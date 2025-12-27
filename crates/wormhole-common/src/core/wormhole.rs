@@ -316,7 +316,7 @@ pub fn parse_code(code: &str) -> Result<WormholeToken> {
         }
     }
 
-    // For webrtc protocol, ensure webrtc fields are present
+    // For webrtc protocol, ensure webrtc fields are present and valid
     if token.protocol == PROTOCOL_WEBRTC {
         if token.webrtc_sender_pubkey.is_none() {
             anyhow::bail!("Invalid webrtc token: missing sender pubkey");
@@ -327,8 +327,17 @@ pub fn parse_code(code: &str) -> Result<WormholeToken> {
         if token.webrtc_filename.is_none() {
             anyhow::bail!("Invalid webrtc token: missing filename");
         }
-        if token.webrtc_transfer_type.is_none() {
-            anyhow::bail!("Invalid webrtc token: missing transfer type");
+        match token.webrtc_transfer_type.as_deref() {
+            Some("file") | Some("folder") => {}
+            Some(invalid) => {
+                anyhow::bail!(
+                    "Invalid webrtc token: unsupported transfer type '{}' (expected 'file' or 'folder')",
+                    invalid
+                );
+            }
+            None => {
+                anyhow::bail!("Invalid webrtc token: missing transfer type");
+            }
         }
     }
 
