@@ -319,6 +319,14 @@ pub fn update_resume_metadata(file: &mut File, metadata: &ResumeMetadata) -> Res
 }
 
 /// Finalize a completed transfer: strip metadata header and rename to final path.
+///
+/// Uses atomic rename for safety:
+/// 1. Write to a staging file (final_path.partial) in the same directory
+/// 2. Sync the staging file and parent directory
+/// 3. Atomically rename staging file to final path
+/// 4. Only after successful rename, remove the original temp file
+///
+/// If any step fails, the original temp file is preserved for resume.
 pub fn finalize_resume_file(
     mut temp_file: File,
     temp_path: &Path,
@@ -346,44 +354,93 @@ pub fn finalize_resume_file(
     // 2. Use platform-specific APIs to truncate from beginning (not portable)
     // 3. Memory map and copy (complex)
     //
-    // For simplicity, we'll use approach 1: copy data to final file
+    // For safety, we use atomic rename:
+    // - Write to a staging file (.partial) in the same directory as final_path
+    // - This ensures rename is atomic (same filesystem)
+    // - Only remove temp file after successful rename
 
-    // Create final file
-    let mut final_file = File::create(final_path).context("Failed to create final file")?;
+    // Create staging path in the same directory as final_path
+    let staging_path = {
+        let mut staging = final_path.as_os_str().to_owned();
+        staging.push(".partial");
+        PathBuf::from(staging)
+    };
 
-    // Seek past metadata in temp file
-    temp_file
-        .seek(SeekFrom::Start(data_offset))
-        .context("Failed to seek past metadata")?;
+    // Get parent directory for fsync
+    let parent_dir = final_path
+        .parent()
+        .context("Final path has no parent directory")?;
 
-    // Copy data in chunks
-    let mut buffer = vec![0u8; CHUNK_SIZE];
-    let mut remaining = data_size;
+    // Write to staging file
+    // Scope the staging_file so it's dropped before rename
+    {
+        let mut staging_file =
+            File::create(&staging_path).context("Failed to create staging file")?;
 
-    while remaining > 0 {
-        let to_read = std::cmp::min(remaining as usize, buffer.len());
-        let bytes_read = temp_file
-            .read(&mut buffer[..to_read])
-            .context("Failed to read from temp file")?;
-        if bytes_read == 0 {
-            anyhow::bail!(
-                "Temp file truncated: expected {} bytes, but {} bytes remaining (copied {} of {} bytes)",
-                data_size,
-                remaining,
-                data_size - remaining,
-                data_size
-            );
+        // Seek past metadata in temp file
+        temp_file
+            .seek(SeekFrom::Start(data_offset))
+            .context("Failed to seek past metadata")?;
+
+        // Copy data in chunks
+        let mut buffer = vec![0u8; CHUNK_SIZE];
+        let mut remaining = data_size;
+
+        while remaining > 0 {
+            let to_read = std::cmp::min(remaining as usize, buffer.len());
+            let bytes_read = temp_file
+                .read(&mut buffer[..to_read])
+                .context("Failed to read from temp file")?;
+            if bytes_read == 0 {
+                // Clean up staging file on error, but preserve temp file
+                drop(staging_file);
+                let _ = std::fs::remove_file(&staging_path);
+                anyhow::bail!(
+                    "Temp file truncated: expected {} bytes, but {} bytes remaining (copied {} of {} bytes)",
+                    data_size,
+                    remaining,
+                    data_size - remaining,
+                    data_size
+                );
+            }
+            staging_file
+                .write_all(&buffer[..bytes_read])
+                .with_context(|| {
+                    // Clean up staging file on error, but preserve temp file
+                    let _ = std::fs::remove_file(&staging_path);
+                    "Failed to write to staging file"
+                })?;
+            remaining -= bytes_read as u64;
         }
-        final_file
-            .write_all(&buffer[..bytes_read])
-            .context("Failed to write to final file")?;
-        remaining -= bytes_read as u64;
+
+        // Sync staging file to disk
+        staging_file
+            .sync_all()
+            .context("Failed to sync staging file")?;
     }
 
-    final_file.flush().context("Failed to flush final file")?;
-    drop(final_file);
+    // Sync parent directory to ensure staging file entry is persisted
+    // This is important for crash safety on some filesystems
+    if let Ok(dir) = File::open(parent_dir) {
+        let _ = dir.sync_all();
+    }
 
-    // Remove temp file
+    // Atomically rename staging file to final path
+    // This is atomic on POSIX systems when src and dst are on the same filesystem
+    std::fs::rename(&staging_path, final_path).with_context(|| {
+        // Don't clean up staging file on rename failure - user may want to recover it
+        format!(
+            "Failed to rename staging file {:?} to {:?}",
+            staging_path, final_path
+        )
+    })?;
+
+    // Sync parent directory again to persist the rename
+    if let Ok(dir) = File::open(parent_dir) {
+        let _ = dir.sync_all();
+    }
+
+    // Only now that everything succeeded, remove the temp file
     drop(temp_file);
     std::fs::remove_file(temp_path).context("Failed to remove temp file")?;
 
