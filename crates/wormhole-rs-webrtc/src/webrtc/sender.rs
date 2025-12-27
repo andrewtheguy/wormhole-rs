@@ -332,7 +332,7 @@ async fn transfer_data_webrtc_internal(
             anyhow::bail!(
                 "WebRTC connection failed: {}\n\n\
                  If direct P2P connection is not possible, try:\n  \
-                 - Use manual signaling: wormhole-rs-webrtc send --manual-signaling <file>",
+                 - Use manual mode: wormhole-rs-webrtc send-manual <file>",
                 reason
             );
         }
@@ -345,13 +345,7 @@ pub async fn send_file_webrtc(
     custom_relays: Option<Vec<String>>,
     use_default_relays: bool,
     use_pin: bool,
-    manual_signaling: bool,
 ) -> Result<()> {
-    // If manual signaling mode, use offline sender directly
-    if manual_signaling {
-        return crate::webrtc::offline_sender::send_file_offline(file_path).await;
-    }
-
     // Try normal Nostr signaling path
     match send_file_webrtc_internal(file_path, custom_relays, use_default_relays, use_pin).await {
         Ok(()) => Ok(()),
@@ -396,13 +390,7 @@ pub async fn send_folder_webrtc(
     custom_relays: Option<Vec<String>>,
     use_default_relays: bool,
     use_pin: bool,
-    manual_signaling: bool,
 ) -> Result<()> {
-    // If manual signaling mode, use offline sender directly
-    if manual_signaling {
-        return crate::webrtc::offline_sender::send_folder_offline(folder_path).await;
-    }
-
     // Try normal Nostr signaling path
     match send_folder_webrtc_internal(folder_path, custom_relays, use_default_relays, use_pin).await
     {

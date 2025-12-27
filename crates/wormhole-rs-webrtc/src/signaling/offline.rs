@@ -168,20 +168,21 @@ pub fn display_offer_json(offer: &OfflineOffer) -> Result<()> {
 
     println!();
     println!("=== SENDER STEP 1: Ask the receiver to run ===");
-    println!("  wormhole-rs-webrtc receive --manual-signaling");
+    println!("  wormhole-rs-webrtc receive-manual");
     println!();
-    println!("=== SENDER STEP 2: Press Enter to show response code and then copy it to send to receiver ===");
+    println!("=== SENDER STEP 2: Press Enter to show the offer code ===");
     std::io::stdout().flush()?;
-    std::io::stdin()
-        .read_line(&mut String::new())?;
+    std::io::stdin().read_line(&mut String::new())?;
+    println!();
+    println!("WARNING: The code below contains the encryption key.");
+    println!("         Only share it through secure channels (e.g., SSH session,");
+    println!("         remote desktop, or encrypted chat).");
+    println!();
     println!("{}", OFFER_BEGIN_MARKER);
     println!("{}", wrapped);
     println!("{}", OFFER_END_MARKER);
     println!();
-    println!(
-        "Copy the code above and send to receiver, then wait for their response code for STEP 3..."
-    );
-    println!();
+    println!("Copy the code above and send to receiver, then wait for their response code...");
 
     Ok(())
 }
@@ -197,15 +198,19 @@ pub fn display_answer_json(answer: &OfflineAnswer) -> Result<()> {
     let wrapped = wrap_lines(&encoded, LINE_WIDTH);
 
     println!();
-    println!("=== RECEIVER STEP 2: Press Enter to show response code and then copy it to send to sender ===");
+    println!("=== RECEIVER STEP 2: Press Enter to show the answer code ===");
     std::io::stdout().flush()?;
     let _ = std::io::stdin().read_line(&mut String::new());
+    println!();
+    println!("WARNING: The code below contains the encryption key.");
+    println!("         Only share it through secure channels (e.g., SSH session,");
+    println!("         remote desktop, or encrypted chat).");
+    println!();
     println!("{}", ANSWER_BEGIN_MARKER);
     println!("{}", wrapped);
     println!("{}", ANSWER_END_MARKER);
     println!();
-    println!("Copy the code above and send to sender, after sending the code above, wait for connection...");
-    println!();
+    println!("Copy the code above and send to sender, then wait for connection...");
 
     Ok(())
 }

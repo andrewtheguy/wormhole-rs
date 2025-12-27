@@ -239,7 +239,7 @@ pub async fn receive_webrtc(
             anyhow::bail!(
                 "WebRTC connection failed: {}\n\n\
                  If direct P2P connection is not possible, ask the sender to try:\n  \
-                 - Manual signaling: wormhole-rs-webrtc send --manual-signaling <file>",
+                 - Manual mode: wormhole-rs-webrtc send-manual <file>",
                 reason
             );
         }
