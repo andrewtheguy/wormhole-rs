@@ -388,14 +388,17 @@ pub async fn publish_wormhole_code_via_pin(
         }
     }
 
+    client.disconnect().await;
+
     if !verified {
-        log::warn!(
-            "Could not verify PIN exchange event, but {} relay(s) acknowledged",
+        // Even though relays acknowledged the event, we couldn't verify it's actually
+        // retrievable. This means the receiver likely won't be able to find it.
+        anyhow::bail!(
+            "PIN exchange event was acknowledged by {} relay(s) but could not be verified. \
+             The receiver may not be able to retrieve the code. Please try again.",
             output.success.len()
         );
     }
-
-    client.disconnect().await;
 
     Ok(pin)
 }
