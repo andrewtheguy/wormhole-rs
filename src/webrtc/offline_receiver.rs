@@ -5,10 +5,9 @@
 
 use anyhow::{Context, Result};
 use bytes::Bytes;
-use std::io::Write;
+use std::io::{Seek, SeekFrom, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
-use tempfile::NamedTempFile;
 use tokio::sync::{mpsc, Mutex};
 use tokio::time::Duration;
 use webrtc::data_channel::RTCDataChannel;
@@ -18,10 +17,14 @@ use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 
 use crate::core::crypto::decrypt;
 use crate::core::folder::{extract_tar_archive, print_tar_extraction_info};
+use crate::core::resume::{
+    check_resume, create_resume_file, finalize_resume_file, get_data_offset, temp_file_path,
+    ResumeMetadata,
+};
 use crate::core::transfer::{
     find_available_filename, format_bytes, make_webrtc_abort_msg, make_webrtc_ack_msg,
-    make_webrtc_proceed_msg, num_chunks, parse_webrtc_control_msg, prompt_file_exists,
-    ControlSignal, FileExistsChoice, FileHeader, TransferType,
+    make_webrtc_proceed_msg, make_webrtc_resume_msg, num_chunks, parse_webrtc_control_msg,
+    prompt_file_exists, ControlSignal, FileExistsChoice, FileHeader, TransferType,
 };
 use crate::signaling::offline::{
     display_answer_json, ice_candidates_to_payloads, read_offer_json, OfflineAnswer,
@@ -287,17 +290,10 @@ pub async fn receive_file_offline(output_dir: Option<PathBuf>) -> Result<()> {
         output_dir.clone()
     };
 
-    // Send encrypted PROCEED signal to sender
-    let proceed_msg = make_webrtc_proceed_msg(&key)?;
-    data_channel
-        .send(&Bytes::from(proceed_msg))
-        .await
-        .context("Failed to send proceed signal")?;
-    eprintln!("Ready to receive data...");
-
     // Dispatch based on transfer type
     match header.transfer_type {
         TransferType::File => {
+            // File transfer handles proceed/resume signal in receive_file_impl
             receive_file_impl(
                 &mut message_rx,
                 &header,
@@ -308,6 +304,14 @@ pub async fn receive_file_offline(output_dir: Option<PathBuf>) -> Result<()> {
             .await?;
         }
         TransferType::Folder => {
+            // Folders are not resumable, send proceed immediately
+            let proceed_msg = make_webrtc_proceed_msg(&key)?;
+            data_channel
+                .send(&Bytes::from(proceed_msg))
+                .await
+                .context("Failed to send proceed signal")?;
+            eprintln!("Ready to receive data...");
+
             receive_folder_impl(message_rx, &header, &key, Some(output_dir), &data_channel).await?;
         }
     }
@@ -327,24 +331,94 @@ async fn receive_file_impl(
     output_path: PathBuf,
     data_channel: &Arc<RTCDataChannel>,
 ) -> Result<()> {
-    // Get output directory for temp file
-    let output_dir = output_path.parent().unwrap_or(std::path::Path::new("."));
+    // Get temp file path for resume support
+    let temp_path = temp_file_path(&output_path);
 
-    // Create temp file in same directory
-    let temp_file = NamedTempFile::new_in(output_dir).context("Failed to create temporary file")?;
-    let temp_path = temp_file.path().to_path_buf();
+    // Check for resume file if checksum is present (files are resumable)
+    let is_resumable = header.checksum != 0;
 
-    // Set up cleanup handler
-    let cleanup_path: TempFileCleanup = Arc::new(Mutex::new(Some(temp_path.clone())));
+    // Create metadata for fresh transfer
+    let fresh_metadata = ResumeMetadata {
+        checksum: header.checksum,
+        file_size: header.file_size,
+        bytes_received: 0,
+        filename: header.filename.clone(),
+    };
+
+    let (mut temp_file, resume_offset, data_offset) = if is_resumable {
+        match check_resume(&temp_path, header.checksum, header.file_size) {
+            Ok(Some(resume_check)) => {
+                // Valid resume file found
+                let offset = resume_check.metadata.bytes_received;
+                eprintln!(
+                    "Resuming from {} ({:.1}%)...",
+                    format_bytes(offset),
+                    offset as f64 / header.file_size as f64 * 100.0
+                );
+                (resume_check.file, offset, resume_check.data_offset)
+            }
+            Ok(None) => {
+                // No valid resume file, create new one
+                let file = create_resume_file(&temp_path, &fresh_metadata)?;
+                let data_offset = get_data_offset(&fresh_metadata);
+                (file, 0, data_offset)
+            }
+            Err(e) => {
+                // Error checking resume (likely locked) - abort
+                anyhow::bail!(
+                    "Cannot access temp file: {}. Another transfer may be in progress.",
+                    e
+                );
+            }
+        }
+    } else {
+        // Not resumable, create temp file
+        let file = create_resume_file(&temp_path, &fresh_metadata)?;
+        let data_offset = get_data_offset(&fresh_metadata);
+        (file, 0, data_offset)
+    };
+
+    // Set up cleanup handler (keep temp file if resumable and interrupted)
+    let cleanup_path: TempFileCleanup = Arc::new(Mutex::new(if is_resumable {
+        None // Don't delete on interrupt - we want to resume
+    } else {
+        Some(temp_path.clone())
+    }));
     setup_file_cleanup_handler(cleanup_path.clone());
 
-    let mut temp_file = temp_file;
+    // Send appropriate control signal
+    if resume_offset > 0 {
+        let resume_msg = make_webrtc_resume_msg(key, resume_offset)?;
+        data_channel
+            .send(&Bytes::from(resume_msg))
+            .await
+            .context("Failed to send resume signal")?;
+        eprintln!("Ready to receive data (resuming)...");
+    } else {
+        let proceed_msg = make_webrtc_proceed_msg(key)?;
+        data_channel
+            .send(&Bytes::from(proceed_msg))
+            .await
+            .context("Failed to send proceed signal")?;
+        eprintln!("Ready to receive data...");
+    }
+
+    // Seek to end of file for appending (in case of resume)
+    if resume_offset > 0 {
+        temp_file.seek(SeekFrom::End(0))?;
+    }
 
     // Receive chunks
     let total_chunks = num_chunks(header.file_size);
-    let mut bytes_received = 0u64;
+    let mut bytes_received = resume_offset;
 
-    eprintln!("Receiving {} chunks...", total_chunks);
+    let remaining_chunks = if resume_offset > 0 {
+        let chunks_received = resume_offset / crate::core::crypto::CHUNK_SIZE as u64;
+        total_chunks.saturating_sub(chunks_received)
+    } else {
+        total_chunks
+    };
+    eprintln!("Receiving {} chunks...", remaining_chunks);
 
     while bytes_received < header.file_size {
         let msg = tokio::time::timeout(Duration::from_secs(30), message_rx.recv())
@@ -428,11 +502,9 @@ async fn receive_file_impl(
         );
     }
 
-    // Persist temp file to final path
+    // Finalize: flush file and copy data to final path (stripping metadata header)
     temp_file.flush().context("Failed to flush file")?;
-    temp_file
-        .persist(&output_path)
-        .map_err(|e| anyhow::anyhow!("Failed to persist temp file: {}", e))?;
+    finalize_resume_file(temp_file, &temp_path, &output_path, data_offset)?;
 
     eprintln!("\nFile received successfully!");
     eprintln!("Saved to: {}", output_path.display());

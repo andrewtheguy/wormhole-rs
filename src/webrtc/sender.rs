@@ -11,7 +11,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::fs::File;
-use tokio::io::{AsyncBufReadExt, AsyncReadExt};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncSeekExt};
 use tokio::sync::{mpsc, Mutex};
 use tokio::time::{timeout, Duration};
 use webrtc::ice_transport::ice_candidate::RTCIceCandidateInit;
@@ -138,6 +138,7 @@ async fn try_webrtc_transfer(
     file: &mut File,
     filename: &str,
     file_size: u64,
+    checksum: u64,
     transfer_type: TransferType,
     key: &[u8; 32],
     signaling: &NostrSignaling,
@@ -262,8 +263,8 @@ async fn try_webrtc_transfer(
     // Small delay to ensure connection is stable
     tokio::time::sleep(Duration::from_millis(100)).await;
 
-    // Send file header as first message
-    let header = FileHeader::new(transfer_type, filename.to_string(), file_size);
+    // Send file header as first message (with checksum for resume support)
+    let header = FileHeader::new(transfer_type, filename.to_string(), file_size, checksum);
     let header_bytes = header.to_bytes();
     let encrypted_header = encrypt(key, &header_bytes)?;
 
@@ -293,48 +294,63 @@ async fn try_webrtc_transfer(
             match message_rx.recv().await {
                 Some(data) => {
                     match parse_webrtc_control_msg(&data, &key_for_confirm) {
-                        Ok(Some(ControlSignal::Proceed)) => return Ok(true),
-                        Ok(Some(ControlSignal::Abort)) => return Ok::<bool, ()>(false),
+                        Ok(Some(ControlSignal::Proceed)) => return Ok((true, 0u64)),
+                        Ok(Some(ControlSignal::Abort)) => return Ok::<(bool, u64), ()>((false, 0)),
+                        Ok(Some(ControlSignal::Resume(offset))) => {
+                            return Ok((true, offset));
+                        }
                         Ok(Some(ControlSignal::Ack | ControlSignal::Done)) => continue, // Unexpected, ignore
                         Ok(None) => continue, // Not a control message
                         Err(_) => continue,   // Parse error, ignore
                     }
                 }
-                None => return Ok(false), // Channel closed
+                None => return Ok((false, 0)), // Channel closed
             }
         }
     })
     .await;
 
-    match confirm_result {
+    let start_offset = match confirm_result {
         Err(_) => {
             return Ok(WebRtcResult::Failed(
                 "Timeout waiting for receiver confirmation".to_string(),
             ));
         }
-        Ok(Ok(false)) => {
+        Ok(Ok((false, _))) => {
             println!("Receiver declined transfer");
             return Ok(WebRtcResult::Failed(
                 "Transfer cancelled by receiver".to_string(),
             ));
         }
-        Ok(Ok(true)) => {
+        Ok(Ok((true, offset))) if offset > 0 => {
+            println!(
+                "Resuming transfer from {} ({:.1}%)...",
+                format_bytes(offset),
+                offset as f64 / file_size as f64 * 100.0
+            );
+            file.seek(std::io::SeekFrom::Start(offset)).await?;
+            offset
+        }
+        Ok(Ok((true, _))) => {
             println!("Receiver confirmed, starting transfer...");
+            0
         }
         Ok(Err(_)) => {
             return Ok(WebRtcResult::Failed(
                 "Confirmation channel error".to_string(),
             ));
         }
-    }
+    };
 
     // Send chunks
     let total_chunks = num_chunks(file_size);
+    let chunks_already_sent = start_offset / CHUNK_SIZE as u64;
+    let remaining_chunks = total_chunks.saturating_sub(chunks_already_sent);
     let mut buffer = vec![0u8; CHUNK_SIZE];
-    let mut chunk_num = 1u64;
-    let mut bytes_sent = 0u64;
+    let mut chunk_num = (start_offset / CHUNK_SIZE as u64) + 1;
+    let mut bytes_sent = start_offset;
 
-    println!("Sending {} chunks...", total_chunks);
+    println!("Sending {} chunks...", remaining_chunks);
 
     loop {
         let bytes_read = file
@@ -453,6 +469,7 @@ async fn transfer_data_webrtc_internal(
     mut file: File,
     filename: String,
     file_size: u64,
+    checksum: u64,
     transfer_type: TransferType,
     custom_relays: Option<Vec<String>>,
     use_default_relays: bool,
@@ -497,6 +514,7 @@ async fn transfer_data_webrtc_internal(
         &mut file,
         &filename,
         file_size,
+        checksum,
         transfer_type,
         &key,
         &signaling,
@@ -564,6 +582,7 @@ async fn send_file_webrtc_internal(
         prepared.file,
         prepared.filename,
         prepared.file_size,
+        prepared.checksum,
         TransferType::File,
         custom_relays,
         use_default_relays,
@@ -620,6 +639,7 @@ async fn send_folder_webrtc_internal(
         prepared.file,
         prepared.filename,
         prepared.file_size,
+        0, // Folders are not resumable
         TransferType::Folder,
         custom_relays,
         use_default_relays,

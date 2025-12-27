@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::fs::File;
-use tokio::io::AsyncReadExt;
+use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tokio::sync::{mpsc, Mutex};
 use tokio::time::Duration;
 use webrtc::ice_transport::ice_candidate::RTCIceCandidateInit;
@@ -78,6 +78,7 @@ pub async fn send_file_offline(file_path: &Path) -> Result<()> {
         prepared.file,
         prepared.filename,
         prepared.file_size,
+        prepared.checksum,
         TransferType::File,
         None,
     )
@@ -100,6 +101,7 @@ pub async fn send_folder_offline(folder_path: &Path) -> Result<()> {
         prepared.file,
         prepared.filename,
         prepared.file_size,
+        0, // Folders are not resumable
         TransferType::Folder,
         Some(&temp_path),
     )
@@ -117,6 +119,7 @@ async fn transfer_offline_internal(
     mut file: File,
     filename: String,
     file_size: u64,
+    checksum: u64,
     transfer_type: TransferType,
     _temp_file: Option<&Path>,
 ) -> Result<()> {
@@ -245,8 +248,8 @@ async fn transfer_offline_internal(
     // Small delay to ensure connection is stable
     tokio::time::sleep(Duration::from_millis(100)).await;
 
-    // Send file header as first message
-    let header = FileHeader::new(transfer_type, filename.clone(), file_size);
+    // Send file header as first message (with checksum for resume support)
+    let header = FileHeader::new(transfer_type, filename.clone(), file_size, checksum);
     let header_bytes = header.to_bytes();
     let encrypted_header = encrypt(&key, &header_bytes)?;
 
@@ -274,24 +277,37 @@ async fn transfer_offline_internal(
             match message_rx.recv().await {
                 Some(data) => {
                     match parse_webrtc_control_msg(&data, &key_for_confirm) {
-                        Ok(Some(ControlSignal::Proceed)) => return Ok(true),
-                        Ok(Some(ControlSignal::Abort)) => return Ok::<bool, ()>(false),
+                        Ok(Some(ControlSignal::Proceed)) => return Ok((true, 0u64)),
+                        Ok(Some(ControlSignal::Abort)) => return Ok::<(bool, u64), ()>((false, 0)),
+                        Ok(Some(ControlSignal::Resume(offset))) => {
+                            return Ok((true, offset));
+                        }
                         Ok(Some(ControlSignal::Ack | ControlSignal::Done)) => continue, // Unexpected, ignore
                         Ok(None) => continue, // Not a control message
                         Err(_) => continue,   // Parse error, ignore
                     }
                 }
-                None => return Ok(false),
+                None => return Ok((false, 0)),
             }
         }
     })
     .await;
 
-    match confirm_result {
-        Ok(Ok(true)) => {
-            eprintln!("Receiver ready, starting transfer...");
+    let start_offset = match confirm_result {
+        Ok(Ok((true, offset))) if offset > 0 => {
+            eprintln!(
+                "Resuming transfer from {} ({:.1}%)...",
+                format_bytes(offset),
+                offset as f64 / file_size as f64 * 100.0
+            );
+            file.seek(std::io::SeekFrom::Start(offset)).await?;
+            offset
         }
-        Ok(Ok(false)) | Ok(Err(_)) => {
+        Ok(Ok((true, _))) => {
+            eprintln!("Receiver ready, starting transfer...");
+            0
+        }
+        Ok(Ok((false, _))) | Ok(Err(_)) => {
             eprintln!("Receiver declined transfer");
             let _ = rtc_peer_arc.close().await;
             anyhow::bail!("Transfer cancelled by receiver");
@@ -301,15 +317,17 @@ async fn transfer_offline_internal(
             let _ = rtc_peer_arc.close().await;
             anyhow::bail!("Timed out waiting for receiver confirmation");
         }
-    }
+    };
 
     // Send chunks
     let total_chunks = num_chunks(file_size);
+    let chunks_already_sent = start_offset / CHUNK_SIZE as u64;
+    let remaining_chunks = total_chunks.saturating_sub(chunks_already_sent);
     let mut buffer = vec![0u8; CHUNK_SIZE];
-    let mut chunk_num = 1u64;
-    let mut bytes_sent = 0u64;
+    let mut chunk_num = chunks_already_sent + 1;
+    let mut bytes_sent = start_offset;
 
-    eprintln!("Sending {} chunks...", total_chunks);
+    eprintln!("Sending {} chunks...", remaining_chunks);
 
     loop {
         let bytes_read = file

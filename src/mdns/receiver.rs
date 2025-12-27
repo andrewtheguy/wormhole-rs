@@ -12,8 +12,6 @@ use std::net::IpAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::fs::File;
-use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
@@ -25,8 +23,9 @@ use crate::core::folder::{
     print_tar_extraction_info, StreamingReader,
 };
 use crate::core::transfer::{
-    find_available_filename, format_bytes, num_chunks, prompt_file_exists, recv_encrypted_chunk,
-    recv_encrypted_header, send_abort, send_ack, send_proceed, FileExistsChoice, TransferType,
+    finalize_file_receiver, format_bytes, num_chunks, prepare_file_receiver, receive_file_data,
+    recv_encrypted_header, send_abort, send_ack, send_proceed, send_resume,
+    setup_resumable_cleanup_handler, ControlSignal, TransferType,
 };
 use crate::mdns::common::{
     MdnsServiceInfo, SERVICE_TYPE, TXT_FILENAME, TXT_FILE_SIZE, TXT_TRANSFER_ID, TXT_TRANSFER_TYPE,
@@ -34,9 +33,6 @@ use crate::mdns::common::{
 
 /// Timeout for mDNS browsing (seconds)
 const BROWSE_TIMEOUT_SECS: u64 = 30;
-
-/// Shared state for temp file cleanup on interrupt
-type TempFileCleanup = Arc<Mutex<Option<PathBuf>>>;
 
 /// Shared state for extraction directory cleanup on interrupt
 type ExtractDirCleanup = Arc<Mutex<Option<PathBuf>>>;
@@ -286,73 +282,84 @@ async fn receive_data_over_tcp(
     // Determine output directory
     let output_dir = output_dir.unwrap_or_else(|| PathBuf::from("."));
 
-    // Check file existence and get final output path (for files only)
-    // This happens BEFORE data transfer, so user can cancel without wasting bandwidth
-    let final_output_path = if header.transfer_type == TransferType::File {
-        let output_path = output_dir.join(&header.filename);
+    // Dispatch based on transfer type
+    match header.transfer_type {
+        TransferType::File => {
+            let final_output_path = output_dir.join(&header.filename);
 
-        if output_path.exists() {
-            // Prompt user in blocking context
-            let path_clone = output_path.clone();
-            let choice = tokio::task::spawn_blocking(move || prompt_file_exists(&path_clone))
-                .await
-                .context("Prompt task panicked")??;
+            // Use shared file receiver component (resume enabled by default for mDNS)
+            let (mut receiver, control_signal) =
+                prepare_file_receiver(&final_output_path, &header, false)?;
 
-            match choice {
-                FileExistsChoice::Overwrite => {
-                    tokio::fs::remove_file(&output_path)
+            // Set up cleanup handler (resumable if checksum is present)
+            let is_resumable = header.checksum != 0;
+            let cleanup_path =
+                setup_resumable_cleanup_handler(receiver.temp_path.clone(), is_resumable);
+
+            // Send appropriate control signal to sender
+            match &control_signal {
+                ControlSignal::Proceed => {
+                    send_proceed(&mut stream, key)
                         .await
-                        .context("Failed to remove existing file")?;
-                    output_path
+                        .context("Failed to send proceed signal")?;
+                    println!("Ready to receive data...");
                 }
-                FileExistsChoice::Rename => {
-                    let new_path = find_available_filename(&output_path);
-                    println!("Will save as: {}", new_path.display());
-                    new_path
+                ControlSignal::Resume(offset) => {
+                    send_resume(&mut stream, key, *offset)
+                        .await
+                        .context("Failed to send resume signal")?;
+                    println!(
+                        "Resuming from {} ({:.1}%)...",
+                        format_bytes(*offset),
+                        *offset as f64 / header.file_size as f64 * 100.0
+                    );
                 }
-                FileExistsChoice::Cancel => {
-                    // Send encrypted ABORT signal to sender
+                ControlSignal::Abort => {
                     send_abort(&mut stream, key)
                         .await
                         .context("Failed to send abort signal")?;
                     anyhow::bail!("Transfer cancelled by user");
                 }
+                _ => unreachable!(),
             }
-        } else {
-            output_path
-        }
-    } else {
-        // For folders, we extract to a directory - handled separately
-        output_dir.clone()
-    };
 
-    // Send encrypted confirmation to sender that we're ready to receive data
-    send_proceed(&mut stream, key)
-        .await
-        .context("Failed to send proceed signal")?;
-    println!("Ready to receive data...");
+            // Receive file data using shared component
+            receive_file_data(&mut stream, &mut receiver, key, header.file_size, 10, 100).await?;
 
-    // Dispatch based on transfer type
-    let stream = match header.transfer_type {
-        TransferType::File => {
-            receive_file_impl(&mut stream, header.file_size, key, final_output_path).await?;
-            stream
+            // Clear cleanup and finalize
+            cleanup_path.lock().await.take();
+            finalize_file_receiver(receiver)?;
+
+            println!("\nFile received successfully!");
         }
         TransferType::Folder => {
+            // Folders are not resumable - always send proceed
+            send_proceed(&mut stream, key)
+                .await
+                .context("Failed to send proceed signal")?;
+            println!("Ready to receive data...");
+
             // Folder impl takes ownership and returns stream after extraction
-            receive_folder_impl(
+            let stream = receive_folder_impl(
                 stream,
                 &header.filename,
                 header.file_size,
                 key,
                 Some(output_dir),
             )
-            .await?
-        }
-    };
+            .await?;
 
-    // Send encrypted ACK
-    let mut stream = stream;
+            // Send encrypted ACK
+            let mut stream = stream;
+            send_ack(&mut stream, key)
+                .await
+                .context("Failed to send ACK")?;
+            println!("Sent confirmation to sender");
+            return Ok(());
+        }
+    }
+
+    // Send encrypted ACK for file transfers
     send_ack(&mut stream, key)
         .await
         .context("Failed to send ACK")?;
@@ -361,84 +368,6 @@ async fn receive_data_over_tcp(
     Ok(())
 }
 
-/// Receive a file implementation (streams directly to disk).
-async fn receive_file_impl(
-    stream: &mut TcpStream,
-    file_size: u64,
-    key: &[u8; 32],
-    output_path: PathBuf,
-) -> Result<()> {
-    // Get output directory for temp file
-    let output_dir = output_path.parent().unwrap_or(std::path::Path::new("."));
-
-    // Create temp file path with unique suffix
-    let temp_path = output_dir.join(format!(".wormhole-{}.tmp", std::process::id()));
-
-    // Create async temp file
-    let mut temp_file = File::create(&temp_path)
-        .await
-        .context("Failed to create temp file")?;
-
-    let cleanup_path: TempFileCleanup = Arc::new(Mutex::new(Some(temp_path.clone())));
-    let cleanup_cancel = CancellationToken::new();
-    let _cleanup_handle = setup_file_cleanup_handler(cleanup_path.clone(), cleanup_cancel.clone());
-
-    // Receive chunks and write directly to file (streaming, non-blocking)
-    let total_chunks = num_chunks(file_size);
-    let mut chunk_num = 1u64;
-    let mut bytes_received = 0u64;
-
-    println!("Receiving {} chunks...", total_chunks);
-
-    while bytes_received < file_size {
-        // Receive encrypted chunk
-        let chunk = recv_encrypted_chunk(stream, key)
-            .await
-            .context("Failed to receive chunk - wrong passphrase?")?;
-
-        // Write to temp file (async, non-blocking)
-        temp_file
-            .write_all(&chunk)
-            .await
-            .context("Failed to write to file")?;
-
-        chunk_num += 1;
-        bytes_received += chunk.len() as u64;
-
-        // Progress
-        if chunk_num % 10 == 0 || bytes_received == file_size {
-            let percent = if file_size == 0 {
-                100
-            } else {
-                (bytes_received as f64 / file_size as f64 * 100.0) as u32
-            };
-            print!(
-                "\r   Progress: {}% ({}/{})",
-                percent,
-                format_bytes(bytes_received),
-                format_bytes(file_size)
-            );
-            let _ = std::io::stdout().flush();
-        }
-    }
-
-    // Clear cleanup and cancel handler before persist
-    cleanup_path.lock().await.take();
-    cleanup_cancel.cancel();
-
-    // Flush and atomically rename temp file to final path
-    temp_file.flush().await.context("Failed to flush file")?;
-    drop(temp_file); // Close file before rename
-
-    tokio::fs::rename(&temp_path, &output_path)
-        .await
-        .context("Failed to persist temp file")?;
-
-    println!("\nFile received successfully!");
-    println!("Saved to: {}", output_path.display());
-
-    Ok(())
-}
 
 /// Receive a folder implementation (streams directly to tar extractor).
 /// Takes ownership of stream and returns it after extraction for ACK.
@@ -528,33 +457,6 @@ fn prompt_selection(max: usize) -> Result<Option<usize>> {
 /// Prompt user for PIN with checksum validation.
 fn prompt_pin() -> Result<String> {
     crate::auth::pin::prompt_pin().context("Failed to read PIN")
-}
-
-/// Set up Ctrl+C handler for temp file cleanup.
-///
-/// Returns a JoinHandle that can be aborted when cleanup is no longer needed.
-/// The handler uses select! to race between Ctrl+C and cancellation.
-/// On Ctrl+C: cleans up the temp file and returns (does not exit).
-/// On cancellation: returns immediately without cleanup.
-fn setup_file_cleanup_handler(
-    cleanup_path: TempFileCleanup,
-    cancel_token: CancellationToken,
-) -> JoinHandle<()> {
-    tokio::spawn(async move {
-        tokio::select! {
-            _ = cancel_token.cancelled() => {
-                // Cancelled by caller - cleanup no longer needed
-            }
-            result = tokio::signal::ctrl_c() => {
-                if result.is_ok() {
-                    if let Some(path) = cleanup_path.lock().await.take() {
-                        let _ = tokio::fs::remove_file(&path).await;
-                        eprintln!("\nInterrupted. Cleaned up temp file.");
-                    }
-                }
-            }
-        }
-    })
 }
 
 /// Set up Ctrl+C handler for extraction directory cleanup.

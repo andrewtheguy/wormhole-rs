@@ -1,26 +1,22 @@
 use anyhow::{Context, Result};
 use arti_client::{config::TorClientConfigBuilder, ErrorKind, HasKind, TorClient};
-use std::io::Write;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex as StdMutex};
-use tempfile::NamedTempFile;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::sync::Mutex;
 
 use crate::core::folder::{
     extract_tar_archive_returning_reader, get_extraction_dir, print_skipped_entries,
     print_tar_extraction_info, StreamingReader,
 };
 use crate::core::transfer::{
-    find_available_filename, format_bytes, num_chunks, prompt_file_exists, recv_encrypted_chunk,
-    recv_encrypted_header, send_abort, send_ack, send_proceed, FileExistsChoice, TransferType,
+    finalize_file_receiver, find_available_filename, format_bytes, prepare_file_receiver,
+    prompt_file_exists, receive_file_data, recv_encrypted_header, send_abort, send_ack,
+    send_proceed, send_resume, setup_resumable_cleanup_handler, ControlSignal, FileExistsChoice,
+    TransferType,
 };
 use crate::core::wormhole::{decode_key, parse_code, PROTOCOL_TOR};
 
 const MAX_RETRIES: u32 = 5;
 const RETRY_DELAY_SECS: u64 = 5;
-/// Number of chunks to buffer before flushing to disk via spawn_blocking
-const WRITE_BATCH_SIZE: usize = 10;
 
 /// Check if error is retryable (timeout, temporary network issues)
 fn is_retryable(e: &arti_client::Error) -> bool {
@@ -31,25 +27,6 @@ fn is_retryable(e: &arti_client::Error) -> bool {
             | ErrorKind::TransientFailure
             | ErrorKind::LocalNetworkError
     )
-}
-
-/// Shared state for temp file cleanup on interrupt
-type TempFileCleanup = Arc<Mutex<Option<PathBuf>>>;
-
-/// Set up Ctrl+C handler to clean up temp file.
-///
-/// Note: Spawns a task that lives until Ctrl+C or program exit. This is appropriate
-/// for CLI tools but would accumulate tasks if called repeatedly in a long-running process.
-fn setup_cleanup_handler(cleanup_path: TempFileCleanup) {
-    tokio::spawn(async move {
-        if tokio::signal::ctrl_c().await.is_ok() {
-            if let Some(path) = cleanup_path.lock().await.take() {
-                let _ = tokio::fs::remove_file(&path).await;
-                log::error!("\nInterrupted. Cleaned up temp file.");
-            }
-            std::process::exit(130); // Standard exit code for Ctrl+C
-        }
-    });
 }
 
 /// Receive a file via Tor hidden service
@@ -181,104 +158,59 @@ pub async fn receive_file_tor(code: &str, output_dir: Option<PathBuf>) -> Result
         output_dir.clone()
     };
 
-    // Send encrypted confirmation to sender that we're ready to receive data
-    send_proceed(&mut stream, &key)
-        .await
-        .context("Failed to send proceed signal")?;
-    eprintln!("Ready to receive data...");
-
     // Check transfer type
     if header.transfer_type == TransferType::Folder {
+        // Folders are not resumable, send proceed immediately
+        send_proceed(&mut stream, &key)
+            .await
+            .context("Failed to send proceed signal")?;
+        eprintln!("Ready to receive data...");
+
         // Handle as folder transfer
         return receive_folder_stream(stream, header, key, Some(final_output_path)).await;
     }
 
-    // Get output directory from path for temp file
-    let output_dir_for_temp = final_output_path
-        .parent()
-        .unwrap_or(std::path::Path::new("."));
+    // File transfer with resume support
+    let (mut receiver, control_signal) =
+        prepare_file_receiver(&final_output_path, &header, false)?;
 
-    // Create temp file in same directory
-    let temp_file =
-        NamedTempFile::new_in(&output_dir_for_temp).context("Failed to create temporary file")?;
-    let temp_path = temp_file.path().to_path_buf();
+    // Set up cleanup handler (resumable if checksum is present)
+    let is_resumable = header.checksum != 0;
+    let cleanup_path = setup_resumable_cleanup_handler(receiver.temp_path.clone(), is_resumable);
 
-    // Set up cleanup handler for Ctrl+C
-    let cleanup_path: TempFileCleanup = Arc::new(Mutex::new(Some(temp_path.clone())));
-    setup_cleanup_handler(cleanup_path.clone());
-
-    // Wrap temp_file in Arc<StdMutex> for spawn_blocking access
-    let temp_file = Arc::new(StdMutex::new(temp_file));
-
-    // Receive chunks
-    let total_chunks = num_chunks(header.file_size);
-    let mut chunk_num = 1u64;
-    let mut bytes_received = 0u64;
-
-    // Buffer for batching writes to avoid blocking async runtime
-    let mut chunk_buffer: Vec<Vec<u8>> = Vec::with_capacity(WRITE_BATCH_SIZE);
-
-    eprintln!("Receiving {} chunks...", total_chunks);
-
-    while bytes_received < header.file_size {
-        let chunk = recv_encrypted_chunk(&mut stream, &key)
-            .await
-            .context("Failed to receive chunk")?;
-
-        bytes_received += chunk.len() as u64;
-        chunk_buffer.push(chunk);
-
-        // Write batch to file using spawn_blocking when buffer is full or transfer complete
-        if chunk_buffer.len() >= WRITE_BATCH_SIZE || bytes_received == header.file_size {
-            let buffer = std::mem::take(&mut chunk_buffer);
-            let file = Arc::clone(&temp_file);
-            tokio::task::spawn_blocking(move || {
-                let mut guard = file
-                    .lock()
-                    .map_err(|e| anyhow::anyhow!("Lock poisoned: {}", e))?;
-                for chunk in buffer {
-                    guard.write_all(&chunk)?;
-                }
-                Ok::<(), anyhow::Error>(())
-            })
-            .await
-            .context("Write task panicked")??;
+    // Send appropriate control signal to sender
+    match &control_signal {
+        ControlSignal::Proceed => {
+            send_proceed(&mut stream, &key)
+                .await
+                .context("Failed to send proceed signal")?;
+            eprintln!("Ready to receive data...");
         }
-
-        // Progress update
-        if (chunk_num - 1) % 10 == 9 || bytes_received == header.file_size {
-            let percent = (bytes_received as f64 / header.file_size as f64 * 100.0) as u32;
-            print!(
-                "\r   Progress: {}% ({}/{})",
-                percent,
-                format_bytes(bytes_received),
-                format_bytes(header.file_size)
+        ControlSignal::Resume(offset) => {
+            send_resume(&mut stream, &key, *offset)
+                .await
+                .context("Failed to send resume signal")?;
+            eprintln!(
+                "Resuming from {} ({:.1}%)...",
+                format_bytes(*offset),
+                *offset as f64 / header.file_size as f64 * 100.0
             );
-            let _ = std::io::stdout().flush();
         }
-
-        chunk_num += 1;
+        ControlSignal::Abort => {
+            send_abort(&mut stream, &key)
+                .await
+                .context("Failed to send abort signal")?;
+            anyhow::bail!("Transfer cancelled by user");
+        }
+        _ => unreachable!(),
     }
 
-    // Clear cleanup path before persist (transfer succeeded)
+    // Receive file data using shared component
+    receive_file_data(&mut stream, &mut receiver, &key, header.file_size, 10, 100).await?;
+
+    // Clear cleanup and finalize
     cleanup_path.lock().await.take();
-
-    // Extract file from Arc<StdMutex> for persist
-    let temp_file = Arc::try_unwrap(temp_file)
-        .map_err(|_| anyhow::anyhow!("Failed to unwrap Arc - file still in use"))?
-        .into_inner()
-        .map_err(|e| anyhow::anyhow!("Mutex poisoned: {}", e))?;
-
-    // Persist temp file using spawn_blocking to avoid blocking async runtime
-    let output_path_for_persist = final_output_path.clone();
-    tokio::task::spawn_blocking(move || {
-        let mut file = temp_file;
-        file.flush().context("Failed to flush file")?;
-        file.persist(&output_path_for_persist)
-            .map_err(|e| anyhow::anyhow!("Failed to persist temp file: {}", e))
-    })
-    .await
-    .context("Persist task panicked")??;
+    finalize_file_receiver(receiver)?;
 
     eprintln!("\nFile received successfully!");
     eprintln!("Saved to: {}", final_output_path.display());

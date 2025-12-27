@@ -1,9 +1,7 @@
 use anyhow::{Context, Result};
 use iroh::Watcher;
-use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tempfile::NamedTempFile;
 use tokio::sync::Mutex;
 
 use crate::core::folder::{
@@ -11,41 +9,18 @@ use crate::core::folder::{
     StreamingReader,
 };
 use crate::core::transfer::{
-    find_available_filename, format_bytes, num_chunks, prompt_file_exists, recv_encrypted_chunk,
-    recv_encrypted_header, send_abort, send_ack, send_proceed, FileExistsChoice, TransferType,
+    finalize_file_receiver, find_available_filename, format_bytes, prepare_file_receiver,
+    prompt_file_exists, receive_file_data, recv_encrypted_header, send_abort, send_ack,
+    send_proceed, send_resume, setup_resumable_cleanup_handler, ControlSignal, FileExistsChoice,
+    TransferType,
 };
 use crate::core::wormhole::parse_code;
 use crate::iroh::common::{create_receiver_endpoint, ALPN};
 
-/// Shared state for temp file cleanup on interrupt
-type TempFileCleanup = Arc<Mutex<Option<PathBuf>>>;
-
 /// Shared state for extraction directory cleanup on interrupt
 type ExtractDirCleanup = Arc<Mutex<Option<PathBuf>>>;
 
-/// Set up Ctrl+C handler to clean up temp file.
-///
-/// # Task Lifecycle
-/// This spawns a task that waits for Ctrl+C and lives until the signal is received
-/// or the program exits. This design is appropriate for CLI tools where `receive()`
-/// is called once per process. If `receive()` were called multiple times in a
-/// long-running process, these tasks would accumulate (though they're lightweight).
-/// For such use cases, consider using `tokio::select!` or a global signal handler
-/// with registration/unregistration.
-fn setup_file_cleanup_handler(cleanup_path: TempFileCleanup) {
-    tokio::spawn(async move {
-        if tokio::signal::ctrl_c().await.is_ok() {
-            if let Some(path) = cleanup_path.lock().await.take() {
-                let _ = tokio::fs::remove_file(&path).await;
-                log::error!("Interrupted. Cleaned up temp file.");
-            }
-            std::process::exit(130);
-        }
-    });
-}
-
 /// Set up Ctrl+C handler to clean up extraction directory.
-/// See [`setup_file_cleanup_handler`] for task lifecycle notes.
 fn setup_dir_cleanup_handler(cleanup_path: ExtractDirCleanup) {
     tokio::spawn(async move {
         if tokio::signal::ctrl_c().await.is_ok() {
@@ -64,6 +39,7 @@ pub async fn receive(
     code: &str,
     output_dir: Option<PathBuf>,
     relay_urls: Vec<String>,
+    no_resume: bool,
 ) -> Result<()> {
     eprintln!("Parsing wormhole code...");
 
@@ -140,59 +116,96 @@ pub async fn receive(
     // Determine output directory
     let output_dir = output_dir.unwrap_or_else(|| PathBuf::from("."));
 
-    // Check file existence and get final output path (for files only)
-    // This happens BEFORE data transfer, so user can cancel without wasting bandwidth
-    let final_output_path = if header.transfer_type == TransferType::File {
-        let output_path = output_dir.join(&header.filename);
-
-        if output_path.exists() {
-            // Prompt user in blocking context
-            let path_clone = output_path.clone();
-            let choice = tokio::task::spawn_blocking(move || prompt_file_exists(&path_clone))
-                .await
-                .context("Prompt task panicked")??;
-
-            match choice {
-                FileExistsChoice::Overwrite => {
-                    tokio::fs::remove_file(&output_path)
-                        .await
-                        .context("Failed to remove existing file")?;
-                    output_path
-                }
-                FileExistsChoice::Rename => {
-                    let new_path = find_available_filename(&output_path);
-                    eprintln!("Will save as: {}", new_path.display());
-                    new_path
-                }
-                FileExistsChoice::Cancel => {
-                    // Send ABORT signal to sender
-                    send_abort(&mut send_stream, &key)
-                        .await
-                        .context("Failed to send abort signal")?;
-                    anyhow::bail!("Transfer cancelled by user");
-                }
-            }
-        } else {
-            output_path
-        }
-    } else {
-        // For folders, we extract to a directory - handled separately
-        output_dir.clone()
-    };
-
-    // Send confirmation to sender that we're ready to receive data
-    send_proceed(&mut send_stream, &key)
-        .await
-        .context("Failed to send proceed signal")?;
-    eprintln!("Ready to receive data...");
-
     // Dispatch based on transfer type
     match header.transfer_type {
         TransferType::File => {
-            receive_file_impl(&mut recv_stream, &header, key, final_output_path).await?;
+            // Determine final output path, handling file existence
+            let output_path = output_dir.join(&header.filename);
+            let final_output_path = if output_path.exists() {
+                // Prompt user in blocking context
+                let path_clone = output_path.clone();
+                let choice = tokio::task::spawn_blocking(move || prompt_file_exists(&path_clone))
+                    .await
+                    .context("Prompt task panicked")??;
+
+                match choice {
+                    FileExistsChoice::Overwrite => {
+                        tokio::fs::remove_file(&output_path)
+                            .await
+                            .context("Failed to remove existing file")?;
+                        output_path
+                    }
+                    FileExistsChoice::Rename => {
+                        let new_path = find_available_filename(&output_path);
+                        eprintln!("Will save as: {}", new_path.display());
+                        new_path
+                    }
+                    FileExistsChoice::Cancel => {
+                        // Send ABORT signal to sender
+                        send_abort(&mut send_stream, &key)
+                            .await
+                            .context("Failed to send abort signal")?;
+                        anyhow::bail!("Transfer cancelled by user");
+                    }
+                }
+            } else {
+                output_path
+            };
+
+            // Prepare file receiver (checks for resume)
+            let (mut receiver, control_signal) =
+                prepare_file_receiver(&final_output_path, &header, no_resume)?;
+
+            // Set up cleanup handler (keeps temp file for resumable transfers on interrupt)
+            let is_resumable = !no_resume && header.checksum != 0;
+            let cleanup_path =
+                setup_resumable_cleanup_handler(receiver.temp_path.clone(), is_resumable);
+
+            // Send control signal to sender (PROCEED or RESUME)
+            match &control_signal {
+                ControlSignal::Proceed => {
+                    send_proceed(&mut send_stream, &key)
+                        .await
+                        .context("Failed to send proceed signal")?;
+                    eprintln!("Ready to receive data...");
+                }
+                ControlSignal::Resume(offset) => {
+                    send_resume(&mut send_stream, &key, *offset)
+                        .await
+                        .context("Failed to send resume signal")?;
+                    eprintln!("Resuming from offset {}...", format_bytes(*offset));
+                }
+                _ => unreachable!(),
+            }
+
+            // Receive file data
+            receive_file_data(
+                &mut recv_stream,
+                &mut receiver,
+                &key,
+                header.file_size,
+                10,  // progress_interval
+                100, // metadata_update_interval
+            )
+            .await?;
+
+            // Clear cleanup path before finalize (transfer succeeded)
+            cleanup_path.lock().await.take();
+
+            // Finalize transfer (strip metadata header, rename to final path)
+            finalize_file_receiver(receiver)?;
+
+            eprintln!("File received successfully!");
+            eprintln!("Saved to: {}", final_output_path.display());
         }
         TransferType::Folder => {
-            receive_folder_impl(recv_stream, &header, key, Some(final_output_path)).await?;
+            // Send confirmation to sender that we're ready to receive data
+            send_proceed(&mut send_stream, &key)
+                .await
+                .context("Failed to send proceed signal")?;
+            eprintln!("Ready to receive data...");
+
+            receive_folder_impl(recv_stream, &header, key, Some(output_dir)).await?;
         }
     }
 
@@ -213,78 +226,6 @@ pub async fn receive(
     Ok(())
 }
 
-/// Internal implementation for receiving a file
-/// output_path is the final destination path (file existence already checked)
-async fn receive_file_impl<R>(
-    recv_stream: &mut R,
-    header: &crate::core::transfer::FileHeader,
-    key: [u8; 32],
-    output_path: PathBuf,
-) -> Result<()>
-where
-    R: tokio::io::AsyncReadExt + Unpin,
-{
-    // Get output directory from path
-    let output_dir = output_path.parent().unwrap_or(std::path::Path::new("."));
-
-    // Create temp file in same directory (ensures rename works, auto-deletes on drop)
-    let temp_file =
-        NamedTempFile::new_in(&output_dir).context("Failed to create temporary file")?;
-    let temp_path = temp_file.path().to_path_buf();
-
-    // Set up cleanup handler for Ctrl+C
-    let cleanup_path: TempFileCleanup = Arc::new(Mutex::new(Some(temp_path.clone())));
-    setup_file_cleanup_handler(cleanup_path.clone());
-
-    let mut temp_file = temp_file;
-
-    // Receive chunks (starting at chunk_num 1)
-    let total_chunks = num_chunks(header.file_size);
-    let mut chunk_num = 1u64; // Start at 1, header used 0
-    let mut bytes_received = 0u64;
-
-    eprintln!("Receiving {} chunks...", total_chunks);
-
-    while bytes_received < header.file_size {
-        let chunk = recv_encrypted_chunk(recv_stream, &key)
-            .await
-            .context("Failed to receive chunk")?;
-
-        // Write synchronously (tempfile uses std::fs::File)
-        temp_file
-            .write_all(&chunk)
-            .context("Failed to write to file")?;
-
-        chunk_num += 1;
-        bytes_received += chunk.len() as u64;
-
-        // Progress update every 10 chunks or on last chunk
-        if chunk_num % 10 == 0 || bytes_received == header.file_size {
-            let percent = (bytes_received as f64 / header.file_size as f64 * 100.0) as u32;
-            print!(
-                "\r   Progress: {}% ({}/{})",
-                percent,
-                format_bytes(bytes_received),
-                format_bytes(header.file_size)
-            );
-            let _ = std::io::stdout().flush();
-        }
-    }
-
-    // Clear cleanup path before persist (transfer succeeded)
-    cleanup_path.lock().await.take();
-
-    // Flush and persist temp file to final path (atomic move)
-    temp_file.flush().context("Failed to flush file")?;
-    temp_file
-        .persist(&output_path)
-        .map_err(|e| anyhow::anyhow!("Failed to persist temp file: {}", e))?;
-
-    eprintln!("\nFile received successfully!");
-    eprintln!("Saved to: {}", output_path.display());
-
-    Ok(())
-}
 
 /// Internal implementation for receiving a folder (tar archive)
 async fn receive_folder_impl<R>(

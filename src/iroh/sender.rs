@@ -1,17 +1,17 @@
 use anyhow::{Context, Result};
 use iroh::Watcher;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::fs::File;
-use tokio::io::AsyncReadExt;
+use tokio::io::AsyncSeekExt;
 use tokio::sync::Mutex;
 
 use crate::cli::instructions::print_receiver_command;
-use crate::core::crypto::{generate_key, CHUNK_SIZE};
+use crate::core::crypto::generate_key;
 use crate::core::transfer::{
-    format_bytes, num_chunks, prepare_file_for_send, prepare_folder_for_send, recv_control,
-    send_encrypted_chunk, send_encrypted_header, ControlSignal, FileHeader, TransferType,
+    format_bytes, handle_receiver_response, prepare_file_for_send, prepare_folder_for_send,
+    recv_control, send_encrypted_header, send_file_data, ControlSignal, FileHeader,
+    ResumeResponse, TransferType,
 };
 use crate::core::wormhole::generate_code;
 use crate::iroh::common::create_sender_endpoint;
@@ -41,6 +41,7 @@ async fn transfer_data_internal(
     mut file: File,
     filename: String,
     file_size: u64,
+    checksum: u64,
     transfer_type: TransferType,
     relay_urls: Vec<String>,
     use_pin: bool,
@@ -137,72 +138,38 @@ async fn transfer_data_internal(
     let (mut send_stream, mut recv_stream) =
         conn.open_bi().await.context("Failed to open stream")?;
 
-    // Send file header
-    let header = FileHeader::new(transfer_type, filename, file_size);
+    // Send file header with checksum
+    let header = FileHeader::new(transfer_type, filename, file_size, checksum);
     send_encrypted_header(&mut send_stream, &key, &header)
         .await
         .context("Failed to send header")?;
 
-    // Wait for receiver confirmation before sending data
-    // This allows receiver to check if file exists and prompt user
+    // Wait for receiver confirmation (PROCEED, RESUME, or ABORT)
     eprintln!("Waiting for receiver to confirm...");
-    match recv_control(&mut recv_stream, &key).await? {
-        ControlSignal::Proceed => {
+    let start_offset = match handle_receiver_response(&mut recv_stream, &key).await? {
+        ResumeResponse::Fresh => {
             eprintln!("Receiver ready, starting transfer...");
+            0
         }
-        ControlSignal::Abort => {
+        ResumeResponse::Resume { offset, .. } => {
+            eprintln!("Resuming transfer from offset {}...", format_bytes(offset));
+            // Seek file to resume position
+            file.seek(std::io::SeekFrom::Start(offset)).await?;
+            offset
+        }
+        ResumeResponse::Aborted => {
             eprintln!("Receiver declined transfer");
             conn.close(0u32.into(), b"cancelled");
             endpoint.close().await;
             anyhow::bail!("Transfer cancelled by receiver");
         }
-        ControlSignal::Ack | ControlSignal::Done => {
-            anyhow::bail!("Unexpected control signal during confirmation");
-        }
-    }
+    };
 
-    // Send chunks
-    let total_chunks = num_chunks(file_size);
-    let mut buffer = vec![0u8; CHUNK_SIZE];
-    let mut chunk_num = 1u64; // Start at 1, header used 0
-    let mut bytes_sent = 0u64;
+    // Send file data using shared component
+    eprintln!("Sending data...");
+    send_file_data(&mut file, &mut send_stream, &key, file_size, start_offset, 10).await?;
 
-    eprintln!("Sending {} chunks...", total_chunks);
-
-    loop {
-        let bytes_read = file
-            .read(&mut buffer)
-            .await
-            .context("Failed to read data")?;
-        if bytes_read == 0 {
-            break;
-        }
-
-        send_encrypted_chunk(&mut send_stream, &key, &buffer[..bytes_read])
-            .await
-            .context("Failed to send chunk")?;
-
-        chunk_num += 1;
-        bytes_sent += bytes_read as u64;
-
-        // Progress update every 10 chunks or on last chunk
-        if chunk_num % 10 == 0 || bytes_sent == file_size {
-            let percent = if file_size == 0 {
-                100 // Empty file is 100% complete
-            } else {
-                (bytes_sent as f64 / file_size as f64 * 100.0) as u32
-            };
-            print!(
-                "\r   Progress: {}% ({}/{})",
-                percent,
-                format_bytes(bytes_sent),
-                format_bytes(file_size)
-            );
-            let _ = std::io::stdout().flush();
-        }
-    }
-
-    eprintln!("\nTransfer complete!");
+    eprintln!("Transfer complete!");
 
     // Finish the send stream to signal we're done sending
     send_stream.finish().context("Failed to finish stream")?;
@@ -238,6 +205,7 @@ pub async fn send_file(file_path: &Path, relay_urls: Vec<String>, use_pin: bool)
         prepared.file,
         prepared.filename,
         prepared.file_size,
+        prepared.checksum,
         TransferType::File,
         relay_urls,
         use_pin,
@@ -266,6 +234,7 @@ pub async fn send_folder(folder_path: &Path, relay_urls: Vec<String>, use_pin: b
         prepared.file,
         prepared.filename,
         prepared.file_size,
+        prepared.checksum, // 0 for folders (not resumable)
         TransferType::Folder,
         relay_urls,
         use_pin,

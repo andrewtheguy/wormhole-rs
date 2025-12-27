@@ -6,21 +6,20 @@
 use anyhow::{Context, Result};
 use mdns_sd::{ServiceDaemon, ServiceInfo};
 use std::collections::HashMap;
-use std::io::Write;
 use std::net::TcpListener;
 use std::path::Path;
 use std::sync::Arc;
 use tokio::fs::File;
-use tokio::io::AsyncReadExt;
+use tokio::io::AsyncSeekExt;
 use tokio::net::TcpStream;
 use tokio::sync::Mutex;
 
 use crate::auth::spake2::handshake_as_responder;
 use crate::cli::instructions::print_receiver_command;
-use crate::core::crypto::CHUNK_SIZE;
 use crate::core::transfer::{
-    format_bytes, num_chunks, prepare_file_for_send, prepare_folder_for_send, recv_control,
-    send_encrypted_chunk, send_encrypted_header, ControlSignal, FileHeader, TransferType,
+    format_bytes, handle_receiver_response, prepare_file_for_send, prepare_folder_for_send,
+    recv_control, send_encrypted_header, send_file_data, ControlSignal, FileHeader,
+    ResumeResponse, TransferType,
 };
 use crate::mdns::common::{
     generate_pin, generate_transfer_id, PORT_RANGE_END, PORT_RANGE_START, SERVICE_TYPE,
@@ -79,6 +78,7 @@ pub async fn send_file_mdns(file_path: &Path) -> Result<()> {
         prepared.file,
         prepared.filename,
         prepared.file_size,
+        prepared.checksum,
         TransferType::File,
         pin,
     )
@@ -110,6 +110,7 @@ pub async fn send_folder_mdns(folder_path: &Path) -> Result<()> {
         prepared.file,
         prepared.filename,
         prepared.file_size,
+        0, // Folders are not resumable
         TransferType::Folder,
         pin,
     )
@@ -126,6 +127,7 @@ async fn transfer_data_internal(
     mut file: File,
     filename: String,
     file_size: u64,
+    checksum: u64,
     transfer_type: TransferType,
     pin: String,
 ) -> Result<()> {
@@ -213,6 +215,7 @@ async fn transfer_data_internal(
                     &mut file,
                     filename.clone(),
                     file_size,
+                    checksum,
                     transfer_type,
                     &key,
                 )
@@ -246,11 +249,12 @@ async fn send_data_over_tcp(
     file: &mut File,
     filename: String,
     file_size: u64,
+    checksum: u64,
     transfer_type: TransferType,
     key: &[u8; 32],
 ) -> Result<()> {
-    // Send encrypted header (chunk_num = 0)
-    let header = FileHeader::new(transfer_type, filename, file_size);
+    // Send encrypted header with checksum
+    let header = FileHeader::new(transfer_type, filename, file_size, checksum);
     send_encrypted_header(&mut stream, key, &header)
         .await
         .context("Failed to send header")?;
@@ -259,60 +263,30 @@ async fn send_data_over_tcp(
 
     // Wait for receiver confirmation before sending data
     eprintln!("Waiting for receiver to confirm...");
-    match recv_control(&mut stream, key).await? {
-        ControlSignal::Proceed => {
+    let response = handle_receiver_response(&mut stream, key).await?;
+
+    let start_offset = match response {
+        ResumeResponse::Fresh => {
             eprintln!("Receiver ready, starting transfer...");
+            0
         }
-        ControlSignal::Abort => {
+        ResumeResponse::Resume { offset, .. } => {
+            eprintln!(
+                "Resuming transfer from {} ({:.1}%)...",
+                format_bytes(offset),
+                offset as f64 / file_size as f64 * 100.0
+            );
+            file.seek(std::io::SeekFrom::Start(offset)).await?;
+            offset
+        }
+        ResumeResponse::Aborted => {
             eprintln!("Receiver declined transfer");
             anyhow::bail!("Transfer cancelled by receiver");
         }
-        ControlSignal::Ack | ControlSignal::Done => {
-            anyhow::bail!("Unexpected control signal during confirmation");
-        }
-    }
+    };
 
-    // Send chunks
-    let total_chunks = num_chunks(file_size);
-    let mut buffer = vec![0u8; CHUNK_SIZE];
-    let mut chunk_num = 1u64;
-    let mut bytes_sent = 0u64;
-
-    eprintln!("Sending {} chunks...", total_chunks);
-
-    loop {
-        let bytes_read = file
-            .read(&mut buffer)
-            .await
-            .context("Failed to read data")?;
-        if bytes_read == 0 {
-            break;
-        }
-
-        // Send encrypted chunk
-        send_encrypted_chunk(&mut stream, key, &buffer[..bytes_read])
-            .await
-            .context("Failed to send chunk")?;
-
-        chunk_num += 1;
-        bytes_sent += bytes_read as u64;
-
-        // Progress update
-        if chunk_num % 10 == 0 || bytes_sent == file_size {
-            let percent = if file_size == 0 {
-                100
-            } else {
-                (bytes_sent as f64 / file_size as f64 * 100.0) as u32
-            };
-            print!(
-                "\r   Progress: {}% ({}/{})",
-                percent,
-                format_bytes(bytes_sent),
-                format_bytes(file_size)
-            );
-            let _ = std::io::stdout().flush();
-        }
-    }
+    // Send file data using shared component
+    send_file_data(&mut stream, file, key, file_size, start_offset, 10).await?;
 
     eprintln!("\nAll data sent!");
 

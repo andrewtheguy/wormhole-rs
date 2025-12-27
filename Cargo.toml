@@ -53,6 +53,10 @@ log = { version = "0.4"}
 env_logger = "0.11"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
+# Resumable file transfers
+fs4 = "0.12"
+xxhash-rust = { version = "0.8", features = ["xxh64"] }
+
 # mDNS - enabled by default for local network transfers
 mdns-sd = "0.15"
 tokio-util = "0.7"

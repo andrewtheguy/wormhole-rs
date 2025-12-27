@@ -151,6 +151,10 @@ enum Commands {
         #[arg(long)]
         pin: bool,
 
+        /// Disable resumable transfers (don't save partial downloads)
+        #[arg(long)]
+        no_resume: bool,
+
         /// Use manual copy/paste signaling instead of Nostr relays (WebRTC)
         #[cfg(feature = "webrtc")]
         #[arg(long)]
@@ -371,6 +375,7 @@ async fn main() -> Result<()> {
             output,
             relay_url,
             pin,
+            no_resume,
             manual_signaling,
         } => {
             // Validate output directory if provided
@@ -407,7 +412,7 @@ async fn main() -> Result<()> {
                 }
             };
 
-            receive_with_code(&code, output, relay_url).await?;
+            receive_with_code(&code, output, relay_url, no_resume).await?;
         }
 
         #[cfg(not(feature = "webrtc"))]
@@ -416,6 +421,7 @@ async fn main() -> Result<()> {
             output,
             relay_url,
             pin,
+            no_resume,
         } => {
             // Validate output directory if provided
             validate_output_dir(&output)?;
@@ -445,7 +451,7 @@ async fn main() -> Result<()> {
                 }
             };
 
-            receive_with_code(&code, output, relay_url).await?;
+            receive_with_code(&code, output, relay_url, no_resume).await?;
         }
     }
 
@@ -457,6 +463,7 @@ async fn receive_with_code(
     code: &str,
     output: Option<PathBuf>,
     relay_url: Vec<String>,
+    no_resume: bool,
 ) -> Result<()> {
     // Validate code format
     wormhole::validate_code_format(code)?;
@@ -467,7 +474,7 @@ async fn receive_with_code(
     match token.protocol.as_str() {
         #[cfg(feature = "iroh")]
         wormhole::PROTOCOL_IROH => {
-            iroh_receiver::receive(code, output, relay_url).await?;
+            iroh_receiver::receive(code, output, relay_url, no_resume).await?;
         }
         #[cfg(feature = "onion")]
         wormhole::PROTOCOL_TOR => {
