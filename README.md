@@ -67,20 +67,20 @@ curl -sSL https://andrewtheguy.github.io/wormhole-rs/install.sh | bash -s 202512
 irm https://andrewtheguy.github.io/wormhole-rs/install.ps1 | iex
 ```
 
-To install the WebRTC binary instead:
+To install the WebRTC binary instead (single line):
 
 ```powershell
-irm https://andrewtheguy.github.io/wormhole-rs/install.ps1 | iex -Args -WebRTC
+$env:WORMHOLE_INSTALL_ARGS='-WebRTC'; irm https://andrewtheguy.github.io/wormhole-rs/install.ps1 | iex
 ```
 
-By default the PowerShell installer pulls the latest **stable** release. Use `-PreRelease` for the newest prerelease, or pass an explicit tag to pin to a specific build. Examples:
+By default the PowerShell installer pulls the latest **stable** release. Use `-PreRelease` for the newest prerelease, or pass an explicit tag to pin to a specific build. Examples (args-only parser):
 
 ```powershell
 # Latest prerelease
-irm https://andrewtheguy.github.io/wormhole-rs/install.ps1 | iex -Args -PreRelease
+$env:WORMHOLE_INSTALL_ARGS='-PreRelease'; irm https://andrewtheguy.github.io/wormhole-rs/install.ps1 | iex
 
 # Pin to a specific tag
-irm https://andrewtheguy.github.io/wormhole-rs/install.ps1 | iex -Args 20251210172710
+$env:WORMHOLE_INSTALL_ARGS='20251210172710'; irm https://andrewtheguy.github.io/wormhole-rs/install.ps1 | iex
 ```
 
 ### From Source
