@@ -198,7 +198,8 @@ pub async fn receive_file_tor(code: &str, output_dir: Option<PathBuf>) -> Result
                 .context("Failed to send abort signal")?;
             anyhow::bail!("Transfer cancelled by user");
         }
-        _ => unreachable!(),
+        // prepare_file_receiver only returns Proceed or Resume, but handle other variants defensively
+        other => anyhow::bail!("Unexpected control signal from prepare_file_receiver: {:?}", other),
     }
 
     // Receive file data using shared component

@@ -21,6 +21,11 @@ const RESUME_MAGIC: &[u8; 4] = b"WHRM";
 /// Size of the metadata header (magic + length prefix)
 const HEADER_PREFIX_SIZE: usize = 8; // 4 bytes magic + 4 bytes length
 
+/// Fixed size for padded JSON metadata to prevent data corruption on updates.
+/// Must be large enough for max filename (255 chars) + max u64 values + JSON overhead.
+/// 512 bytes is plenty: ~300 for max filename + ~100 for numbers + JSON syntax.
+const PADDED_METADATA_SIZE: usize = 512;
+
 /// Metadata stored in temp file header for resume verification
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResumeMetadata {
@@ -129,19 +134,33 @@ pub fn create_resume_file(temp_path: &Path, metadata: &ResumeMetadata) -> Result
 }
 
 /// Write metadata header to the beginning of a file.
+/// JSON is padded to a fixed size to prevent data corruption when updating
+/// (e.g., when bytes_received grows from small to large numbers).
 fn write_metadata_header(file: &mut File, metadata: &ResumeMetadata) -> Result<()> {
-    let json = serde_json::to_vec(metadata).context("Failed to serialize metadata")?;
+    let mut json = serde_json::to_vec(metadata).context("Failed to serialize metadata")?;
+
+    // Ensure metadata fits in padded size
+    if json.len() > PADDED_METADATA_SIZE {
+        anyhow::bail!(
+            "Metadata too large: {} bytes > {} max (filename too long?)",
+            json.len(),
+            PADDED_METADATA_SIZE
+        );
+    }
+
+    // Pad JSON to fixed size (JSON parsers ignore trailing whitespace)
+    json.resize(PADDED_METADATA_SIZE, b' ');
 
     // Write magic
     file.write_all(RESUME_MAGIC)
         .context("Failed to write magic")?;
 
-    // Write length prefix (4 bytes, big-endian)
-    let len = json.len() as u32;
+    // Write length prefix (4 bytes, big-endian) - always PADDED_METADATA_SIZE
+    let len = PADDED_METADATA_SIZE as u32;
     file.write_all(&len.to_be_bytes())
         .context("Failed to write metadata length")?;
 
-    // Write JSON metadata
+    // Write padded JSON metadata
     file.write_all(&json)
         .context("Failed to write metadata")?;
 
@@ -298,6 +317,15 @@ pub fn finalize_resume_file(
         .metadata()
         .context("Failed to get temp file size")?
         .len();
+
+    // Guard against corrupted temp file (data_offset > file_size would underflow)
+    if data_offset > file_size {
+        anyhow::bail!(
+            "Corrupted temp file: data_offset ({}) > file_size ({})",
+            data_offset,
+            file_size
+        );
+    }
     let data_size = file_size - data_offset;
 
     // We need to strip the metadata header. There are a few approaches:
@@ -345,9 +373,9 @@ pub fn finalize_resume_file(
 
 /// Get the data offset for a given metadata.
 /// This is the position in the temp file where actual file data starts.
-pub fn get_data_offset(metadata: &ResumeMetadata) -> u64 {
-    let json = serde_json::to_vec(metadata).expect("metadata should serialize");
-    (HEADER_PREFIX_SIZE + json.len()) as u64
+/// Since metadata is always padded to PADDED_METADATA_SIZE, offset is constant.
+pub fn get_data_offset(_metadata: &ResumeMetadata) -> u64 {
+    (HEADER_PREFIX_SIZE + PADDED_METADATA_SIZE) as u64
 }
 
 #[cfg(test)]

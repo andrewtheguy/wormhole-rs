@@ -828,7 +828,7 @@ pub async fn send_file_data<R: AsyncReadExt + Unpin, W: AsyncWriteExt + Unpin>(
                 chunk_num - 1,
                 total_chunks
             );
-            let _ = std::io::stdout().flush();
+            let _ = std::io::stderr().flush();
         }
     }
 
@@ -1000,7 +1000,7 @@ pub async fn receive_file_data<R: AsyncReadExt + Unpin>(
                 format_bytes(receiver.bytes_received),
                 format_bytes(file_size)
             );
-            let _ = std::io::stdout().flush();
+            let _ = std::io::stderr().flush();
         }
     }
 

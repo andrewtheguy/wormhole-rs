@@ -157,7 +157,8 @@ pub async fn receive(
                         .context("Failed to send resume signal")?;
                     eprintln!("Resuming from offset {}...", format_bytes(*offset));
                 }
-                _ => unreachable!(),
+                // prepare_file_receiver only returns Proceed or Resume, but handle other variants defensively
+                other => anyhow::bail!("Unexpected control signal from prepare_file_receiver: {:?}", other),
             }
 
             // Receive file data
