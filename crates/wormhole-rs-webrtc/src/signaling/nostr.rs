@@ -59,10 +59,61 @@ pub enum SignalingMessage {
     },
 }
 
+/// Helper to setup client with relays and connect
+///
+/// Creates a Nostr client, adds the specified relays, connects, and waits
+/// for at least one relay to successfully connect. Returns an error if
+/// no relays could be added or connected.
+async fn setup_client_with_relays(keys: &Keys, relay_urls: &[String]) -> Result<Client> {
+    let client = Client::new(keys.clone());
+
+    // Add relays
+    let mut added_relays = 0usize;
+    for relay_url in relay_urls {
+        match client.add_relay(relay_url).await {
+            Ok(_) => {
+                added_relays += 1;
+            }
+            Err(e) => {
+                log::error!("Failed to add relay {}: {}", relay_url, e);
+            }
+        }
+    }
+    if added_relays == 0 {
+        anyhow::bail!("Failed to add any Nostr relays; cannot continue without relays.");
+    }
+
+    // Connect and wait for at least one relay to connect
+    client.connect().await;
+    client.wait_for_connection(RELAY_CONNECTION_TIMEOUT).await;
+
+    // Verify at least one relay connected
+    let relay_statuses = client.relays().await;
+    let connected_count = relay_statuses
+        .values()
+        .filter(|r| r.is_connected())
+        .count();
+
+    if connected_count == 0 {
+        anyhow::bail!(
+            "Failed to connect to any Nostr relay within timeout. \
+             Check network connectivity and relay availability."
+        );
+    }
+
+    log::debug!(
+        "Connected to {}/{} Nostr relays",
+        connected_count,
+        relay_statuses.len()
+    );
+
+    Ok(client)
+}
+
 /// Nostr signaling client for WebRTC
 pub struct NostrSignaling {
-    pub client: Client,
-    pub keys: Keys,
+    client: Client,
+    keys: Keys,
     transfer_id: String,
     relay_urls: Vec<String>,
 }
@@ -81,47 +132,7 @@ impl NostrSignaling {
             get_best_relays().await
         };
 
-        let client = Client::new(keys.clone());
-
-        // Add relays
-        let mut added_relays = 0usize;
-        for relay_url in &relay_urls {
-            match client.add_relay(relay_url).await {
-                Ok(_) => {
-                    added_relays += 1;
-                }
-                Err(e) => {
-                    log::error!("Failed to add relay {}: {}", relay_url, e);
-                }
-            }
-        }
-        if added_relays == 0 {
-            anyhow::bail!("Failed to add any Nostr relays; cannot continue without relays.");
-        }
-
-        // Connect and wait for at least one relay to connect
-        client.connect().await;
-        client.wait_for_connection(RELAY_CONNECTION_TIMEOUT).await;
-
-        // Verify at least one relay connected
-        let relay_statuses = client.relays().await;
-        let connected_count = relay_statuses
-            .values()
-            .filter(|r| r.is_connected())
-            .count();
-
-        if connected_count == 0 {
-            anyhow::bail!(
-                "Failed to connect to any Nostr relay within timeout. \
-                 Check network connectivity and relay availability."
-            );
-        }
-
-        log::debug!(
-            "Connected to {}/{} Nostr relays",
-            connected_count,
-            relay_statuses.len()
-        );
+        let client = setup_client_with_relays(&keys, &relay_urls).await?;
 
         // Generate transfer ID
         let transfer_id = generate_transfer_id();
@@ -147,6 +158,15 @@ impl NostrSignaling {
     /// Get the relay URLs
     pub fn relay_urls(&self) -> &[String] {
         &self.relay_urls
+    }
+
+    /// Get a reference to the signing keys
+    ///
+    /// This is needed for operations that require signing events
+    /// (e.g., PIN-based code publishing). The keys should not be
+    /// exposed or stored elsewhere.
+    pub fn signing_keys(&self) -> &Keys {
+        &self.keys
     }
 
     /// Create a signaling event with common tags
@@ -404,47 +424,7 @@ pub async fn create_receiver_signaling(
     relay_urls: Vec<String>,
 ) -> Result<NostrSignaling> {
     let keys = Keys::generate();
-    let client = Client::new(keys.clone());
-
-    // Add relays
-    let mut added_relays = 0usize;
-    for relay_url in &relay_urls {
-        match client.add_relay(relay_url).await {
-            Ok(_) => {
-                added_relays += 1;
-            }
-            Err(e) => {
-                log::error!("Failed to add relay {}: {}", relay_url, e);
-            }
-        }
-    }
-    if added_relays == 0 {
-        anyhow::bail!("Failed to add any Nostr relays; cannot continue without relays.");
-    }
-
-    // Connect and wait for at least one relay to connect
-    client.connect().await;
-    client.wait_for_connection(RELAY_CONNECTION_TIMEOUT).await;
-
-    // Verify at least one relay connected
-    let relay_statuses = client.relays().await;
-    let connected_count = relay_statuses
-        .values()
-        .filter(|r| r.is_connected())
-        .count();
-
-    if connected_count == 0 {
-        anyhow::bail!(
-            "Failed to connect to any Nostr relay within timeout. \
-             Check network connectivity and relay availability."
-        );
-    }
-
-    log::debug!(
-        "Connected to {}/{} Nostr relays",
-        connected_count,
-        relay_statuses.len()
-    );
+    let client = setup_client_with_relays(&keys, &relay_urls).await?;
 
     let signaling = NostrSignaling {
         client,
