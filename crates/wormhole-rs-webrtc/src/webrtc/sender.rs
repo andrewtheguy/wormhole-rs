@@ -71,14 +71,28 @@ where
         eprintln!("\nNostr signaling failed: {}", error);
         eprintln!("Press Enter to use manual signaling (copy/paste), or Ctrl+C to abort...");
 
-        // Wait for Enter
+        // Wait for Enter with timeout to avoid blocking forever
+        const FALLBACK_PROMPT_TIMEOUT: Duration = Duration::from_secs(60);
         let stdin = tokio::io::stdin();
         let mut reader = tokio::io::BufReader::new(stdin);
         let mut line = String::new();
-        reader.read_line(&mut line).await?;
-
-        // Fall back to manual signaling
-        fallback_fn().await
+        match timeout(FALLBACK_PROMPT_TIMEOUT, reader.read_line(&mut line)).await {
+            Ok(Ok(_)) => {
+                // User pressed Enter, fall back to manual signaling
+                fallback_fn().await
+            }
+            Ok(Err(e)) => {
+                // IO error reading stdin
+                Err(e).context("Failed to read user input")
+            }
+            Err(_) => {
+                // Timeout elapsed
+                anyhow::bail!(
+                    "Timed out waiting for user input ({:?}). Aborting.",
+                    FALLBACK_PROMPT_TIMEOUT
+                )
+            }
+        }
     } else {
         // Non-signaling error, propagate it
         Err(error)

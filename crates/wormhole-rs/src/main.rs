@@ -126,7 +126,7 @@ fn validate_path(path: &PathBuf, folder: bool) -> Result<()> {
         }
     } else if !path.is_file() {
         anyhow::bail!(
-            "Path is not a file: {}. Use --folder for directories.",
+            "Path is not a regular file: {}. If you intended a directory, use --folder.",
             path.display()
         );
     }

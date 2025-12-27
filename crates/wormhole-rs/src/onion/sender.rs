@@ -22,6 +22,10 @@ use wormhole_common::signaling::nostr_protocol::generate_transfer_id;
 /// Timeout for publishing wormhole code via PIN (Nostr relay)
 const PIN_PUBLISH_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// Timeout for waiting for receiver to connect via Tor (10 minutes)
+/// Tor connections can be slow due to circuit building, so this is generous
+const TOR_CONNECTION_TIMEOUT: Duration = Duration::from_secs(600);
+
 /// Internal helper for common Tor transfer logic.
 /// Handles Tor bootstrap, onion service, connection, data transfer, and acknowledgment.
 async fn transfer_data_tor_internal(
@@ -110,33 +114,46 @@ async fn transfer_data_tor_internal(
     // Convert RendRequest stream to StreamRequest stream
     let mut stream_requests = handle_rend_requests(rend_requests);
 
-    // Wait for incoming stream request
-    if let Some(stream_req) = stream_requests.next().await {
-        eprintln!("Receiver connected! Accepting stream...");
-
-        // Accept the stream request
-        let mut stream = stream_req.accept(Connected::new_empty()).await?;
-
-        // Create header and run unified transfer logic with 10s ACK timeout
-        // Tor streams may close abruptly, so timeout is considered successful
-        let header = FileHeader::new(transfer_type, filename, file_size, checksum);
-        let result = run_sender_transfer_with_timeout(
-            &mut file,
-            &mut stream,
-            &key,
-            &header,
-            Some(std::time::Duration::from_secs(10)),
-        )
-        .await?;
-
-        if result == TransferResult::Aborted {
-            anyhow::bail!("Transfer cancelled by receiver");
+    // Wait for incoming stream request with timeout
+    let stream_req = match timeout(TOR_CONNECTION_TIMEOUT, stream_requests.next()).await {
+        Ok(Some(req)) => req,
+        Ok(None) => {
+            anyhow::bail!("No connection received (stream closed)");
         }
+        Err(_) => {
+            eprintln!(
+                "Timed out waiting for receiver after {:?}",
+                TOR_CONNECTION_TIMEOUT
+            );
+            anyhow::bail!(
+                "No receiver connected within {:?}. The wormhole code may have expired.",
+                TOR_CONNECTION_TIMEOUT
+            );
+        }
+    };
 
-        eprintln!("Done.");
-    } else {
-        anyhow::bail!("No connection received");
+    eprintln!("Receiver connected! Accepting stream...");
+
+    // Accept the stream request
+    let mut stream = stream_req.accept(Connected::new_empty()).await?;
+
+    // Create header and run unified transfer logic with 10s ACK timeout
+    // Tor streams may close abruptly, so timeout is considered successful
+    let header = FileHeader::new(transfer_type, filename, file_size, checksum);
+    let result = run_sender_transfer_with_timeout(
+        &mut file,
+        &mut stream,
+        &key,
+        &header,
+        Some(std::time::Duration::from_secs(10)),
+    )
+    .await?;
+
+    if result == TransferResult::Aborted {
+        anyhow::bail!("Transfer cancelled by receiver");
     }
+
+    eprintln!("Done.");
 
     Ok(())
 }
