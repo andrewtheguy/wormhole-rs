@@ -474,7 +474,7 @@ pub fn finalize_resume_file(
         let mut remaining = data_size;
 
         while remaining > 0 {
-            let to_read = std::cmp::min(remaining as usize, buffer.len());
+            let to_read = std::cmp::min(remaining, buffer.len() as u64) as usize;
             let bytes_read = temp_file
                 .read(&mut buffer[..to_read])
                 .context("Failed to read from temp file")?;

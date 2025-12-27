@@ -340,26 +340,36 @@ pub fn generate_transfer_id() -> String {
 }
 
 /// Extract transfer ID from an event
+///
+/// The transfer ID is stored in a single-letter "t" tag per Nostr convention.
 pub fn get_transfer_id(event: &Event) -> Option<String> {
     event
         .tags
         .iter()
         .find(|t| {
-            let kind = t.kind();
-            kind.to_string() == TAG_TRANSFER_ID
+            // Use single_letter_tag() for reliable detection of single-letter tags
+            t.single_letter_tag()
+                .map(|slt| slt.character == Alphabet::T)
+                .unwrap_or(false)
         })
         .and_then(|t| t.content())
         .map(|s| s.to_string())
 }
 
 /// Get event type from an event
+///
+/// The type is stored in a custom "type" tag.
 fn get_event_type(event: &Event) -> Option<String> {
     event
         .tags
         .iter()
         .find(|t| {
-            let kind = t.kind();
-            kind.to_string() == TAG_TYPE
+            // Use as_vec() to reliably get the tag name for custom tags
+            // Tag structure is ["tag_name", "value", ...]
+            t.as_slice()
+                .first()
+                .map(|name| name == TAG_TYPE)
+                .unwrap_or(false)
         })
         .and_then(|t| t.content())
         .map(|s| s.to_string())

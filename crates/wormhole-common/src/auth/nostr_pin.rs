@@ -353,7 +353,13 @@ pub async fn publish_wormhole_code_via_pin(
     let send_result = client.send_event(&event).await;
 
     // Handle send result before verification
-    let output = send_result.context("Failed to publish PIN exchange event")?;
+    let output = match send_result {
+        Ok(o) => o,
+        Err(e) => {
+            client.disconnect().await;
+            return Err(anyhow::anyhow!("Failed to publish PIN exchange event: {}", e));
+        }
+    };
 
     // Verify event was published by querying for it
     let event_id = event.id;

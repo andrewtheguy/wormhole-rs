@@ -53,7 +53,7 @@ async fn try_webrtc_receive(
     let candidates = rtc_peer
         .gather_ice_candidates(Duration::from_secs(10))
         .await?;
-    let candidate_payloads = ice_candidates_to_payloads(candidates);
+    let candidate_payloads = ice_candidates_to_payloads(candidates)?;
     eprintln!("Gathered {} ICE candidates", candidate_payloads.len());
 
     signaling

@@ -79,7 +79,7 @@ pub async fn receive_file_offline(output_dir: Option<PathBuf>, no_resume: bool) 
     // Create and display answer JSON
     let offline_answer = OfflineAnswer {
         sdp: answer.sdp,
-        ice_candidates: ice_candidates_to_payloads(candidates),
+        ice_candidates: ice_candidates_to_payloads(candidates)?,
     };
 
     display_answer_json(&offline_answer)?;

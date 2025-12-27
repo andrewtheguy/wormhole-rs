@@ -126,7 +126,7 @@ async fn transfer_offline_internal(
 
     let offline_offer = OfflineOffer {
         sdp: offer.sdp,
-        ice_candidates: ice_candidates_to_payloads(candidates),
+        ice_candidates: ice_candidates_to_payloads(candidates)?,
         transfer_info: TransferInfo {
             filename: filename.clone(),
             file_size,

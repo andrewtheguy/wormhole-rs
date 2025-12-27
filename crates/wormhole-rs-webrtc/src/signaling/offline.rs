@@ -115,12 +115,12 @@ pub struct OfflineAnswer {
 // ============================================================================
 
 /// Convert webrtc-rs ICE candidates to our serializable format
-pub fn ice_candidates_to_payloads(candidates: Vec<RTCIceCandidate>) -> Vec<IceCandidatePayload> {
+pub fn ice_candidates_to_payloads(candidates: Vec<RTCIceCandidate>) -> Result<Vec<IceCandidatePayload>> {
     candidates
         .into_iter()
-        .filter_map(|c| {
-            let json = c.to_json().ok()?;
-            Some(IceCandidatePayload {
+        .map(|c| {
+            let json = c.to_json().context("Failed to serialize ICE candidate")?;
+            Ok(IceCandidatePayload {
                 candidate: json.candidate,
                 sdp_m_line_index: json.sdp_mline_index,
                 sdp_mid: json.sdp_mid,

@@ -34,7 +34,7 @@ bytes = "1"
 crc32fast = "1"
 
 # Async utilities
-tokio-util = { version = "0.7", features = ["io", "compat"] }
+tokio-util = { workspace = true, features = ["io", "compat"] }
 
 # CLI
 clap = { workspace = true }

@@ -22,6 +22,41 @@ use wormhole_common::core::transfer::{
     setup_temp_file_cleanup_handler, FileHeader, Interrupted, TransferResult, TransferType,
 };
 
+/// RAII guard for mDNS service cleanup.
+///
+/// Ensures the mDNS service is unregistered and the daemon is shut down
+/// on all exit paths, including early returns and panics.
+struct MdnsGuard {
+    daemon: ServiceDaemon,
+    fullname: Option<String>,
+}
+
+impl MdnsGuard {
+    /// Create a new guard with the given daemon.
+    fn new(daemon: ServiceDaemon) -> Self {
+        Self {
+            daemon,
+            fullname: None,
+        }
+    }
+
+    /// Set the fullname after successful registration.
+    fn set_fullname(&mut self, fullname: String) {
+        self.fullname = Some(fullname);
+    }
+}
+
+impl Drop for MdnsGuard {
+    fn drop(&mut self) {
+        // Unregister service if it was registered
+        if let Some(ref fullname) = self.fullname {
+            let _ = self.daemon.unregister(fullname);
+        }
+        // Shutdown daemon
+        let _ = self.daemon.shutdown();
+    }
+}
+
 /// Display receiver instructions and PIN to the user.
 fn display_receiver_instructions(pin: &str) {
     print_receiver_command("wormhole-rs receive-local");
@@ -146,8 +181,9 @@ async fn transfer_data_internal(
     let random_host = format!("wormhole-{}", id_prefix);
     let instance_name = random_host.clone();
 
-    // Create mDNS service daemon
+    // Create mDNS service daemon with RAII guard for cleanup on all exit paths
     let mdns = ServiceDaemon::new().context("Failed to create mDNS daemon")?;
+    let mut mdns_guard = MdnsGuard::new(mdns);
 
     // Build TXT records (no salt needed - key derived via SPAKE2)
     let mut properties = HashMap::new();
@@ -176,8 +212,9 @@ async fn transfer_data_internal(
     .enable_addr_auto();
 
     let fullname = service_info.get_fullname().to_string();
-    mdns.register(service_info)
+    mdns_guard.daemon.register(service_info)
         .context("Failed to register mDNS service")?;
+    mdns_guard.set_fullname(fullname);
 
     eprintln!("mDNS service registered: {}", instance_name);
     eprintln!("Transfer ID: {}", transfer_id);
@@ -258,9 +295,8 @@ async fn transfer_data_internal(
         }
     }
 
-    // Unregister service
-    let _ = mdns.unregister(&fullname);
-    let _ = mdns.shutdown();
+    // mDNS cleanup is handled by MdnsGuard's Drop implementation
+    drop(mdns_guard);
 
     eprintln!("Transfer complete!");
     Ok(())
