@@ -18,7 +18,14 @@ use sha2::{Digest, Sha256};
 use tokio::time::Duration;
 
 use crate::auth::pin::{generate_pin, PIN_LENGTH};
-use crate::signaling::nostr_protocol::DEFAULT_NOSTR_RELAYS;
+
+/// Default public Nostr relays for PIN exchange
+/// These should match the relays used in signaling for consistency
+pub const DEFAULT_NOSTR_RELAYS: &[&str] = &[
+    "wss://relay.damus.io",
+    "wss://nos.lol",
+    "wss://nostr.wine",
+];
 
 /// Nostr event kind for PIN exchange (24243)
 pub const PIN_EXCHANGE_KIND: u16 = 24243;

@@ -5,26 +5,14 @@ use rand::Rng;
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
+// Re-export from auth::nostr_pin for backward compatibility
+pub use crate::auth::nostr_pin::DEFAULT_NOSTR_RELAYS;
+
 /// Nostr event kind for file transfer signaling (ephemeral range 20000-29999)
 /// Ephemeral events are not stored permanently by relays
 pub fn nostr_file_transfer_kind() -> Kind {
     Kind::from_u16(24242)
 }
-
-/// Default public Nostr relays for file transfer
-/// These are probed via NIP-11 to find the best relays
-pub const DEFAULT_NOSTR_RELAYS: &[&str] = &[
-    "wss://relay.damus.io",
-    "wss://nos.lol",
-    "wss://nostr.wine",
-    // "wss://relay.nostr.band",
-    // "wss://relay.snort.social",
-    // "wss://purplepag.es",
-    // "wss://nostr.mom",
-    // "wss://relay.primal.net",
-    // "wss://nostr.land",
-    // "wss://nostr-pub.wellorder.net",
-];
 
 /// Timeout for fetching NIP-11 relay information
 const RELAY_INFO_TIMEOUT_SECS: u64 = 5;
