@@ -128,9 +128,10 @@ async fn transfer_data_internal(
     let mut duplex = IrohDuplex::new(&mut send_stream, &mut recv_stream);
 
     // Run transfer with optional shutdown handling
-    let result = if let Some(shutdown_rx) = shutdown_rx {
+    // Don't use ? here - we need to ensure cleanup on all paths
+    let transfer_result = if let Some(shutdown_rx) = shutdown_rx {
         tokio::select! {
-            result = run_sender_transfer(&mut file, &mut duplex, &key, &header) => result?,
+            result = run_sender_transfer(&mut file, &mut duplex, &key, &header) => result,
             _ = shutdown_rx => {
                 // Graceful shutdown requested - notify receiver and close connection
                 eprintln!("\nShutdown requested, cancelling transfer...");
@@ -140,13 +141,25 @@ async fn transfer_data_internal(
             }
         }
     } else {
-        run_sender_transfer(&mut file, &mut duplex, &key, &header).await?
+        run_sender_transfer(&mut file, &mut duplex, &key, &header).await
     };
 
-    if result == TransferResult::Aborted {
-        conn.close(0u32.into(), b"cancelled");
-        endpoint.close().await;
-        anyhow::bail!("Transfer cancelled by receiver");
+    // Handle transfer result - ensure cleanup on all paths
+    match transfer_result {
+        Ok(TransferResult::Aborted) => {
+            conn.close(0u32.into(), b"cancelled");
+            endpoint.close().await;
+            anyhow::bail!("Transfer cancelled by receiver");
+        }
+        Ok(_) => {
+            // Success - proceed with normal cleanup below
+        }
+        Err(e) => {
+            // Transfer error - close connection and propagate error
+            conn.close(0u32.into(), b"error");
+            endpoint.close().await;
+            return Err(e);
+        }
     }
 
     // Finish the send stream to signal we're done sending (QUIC-specific)

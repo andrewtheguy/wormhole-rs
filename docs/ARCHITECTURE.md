@@ -254,7 +254,7 @@ Each encrypted message uses a chunk number combined with the session key to deri
 | ACK | `u64::MAX - 2` | `b"ACK"` | Yes |
 | Done | `u64::MAX - 3` | `b"DONE"` | Yes* |
 
-*For stream-based transports (iroh, Tor, mDNS), there is no explicit Done signal—transfer completion is determined by receiving all expected bytes based on the file size in the header.
+*Done is defined for packet-based transports (WebRTC) where message boundaries are preserved. Stream-based transports (iroh, Tor, mDNS) do not use an explicit Done signal—transfer completion is determined by receiving all expected bytes based on the file size in the header.
 
 Using reserved high chunk numbers for control signals ensures:
 - Same encryption infrastructure for all messages
