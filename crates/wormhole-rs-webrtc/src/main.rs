@@ -78,9 +78,13 @@ enum Commands {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    // Initialize logging
+    // Initialize logging with filters for noisy internal modules
     let log_level = if cli.verbose { "debug" } else { "info" };
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(log_level)).init();
+    let filter = format!(
+        "{},webrtc_ice::agent::agent_internal=error,webrtc_ice::agent::agent_gather=error,nostr_relay_pool=warn",
+        log_level
+    );
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(&filter)).init();
 
     match cli.command {
         Commands::Send {

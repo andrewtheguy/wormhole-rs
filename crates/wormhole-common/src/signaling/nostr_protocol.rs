@@ -255,9 +255,10 @@ async fn discover_best_relays() -> Vec<String> {
     }
 
     // Limit number of relays to probe to avoid too many connections
-    // Sort for deterministic selection when we need to limit the set
+    // Shuffle randomly to avoid alphabetic bias (which would favor relays starting with numbers/early letters)
     let mut relays_to_probe: Vec<_> = discovered.into_iter().collect();
-    relays_to_probe.sort();
+    use rand::seq::SliceRandom;
+    relays_to_probe.shuffle(&mut rand::thread_rng());
     relays_to_probe.truncate(MAX_RELAYS_TO_PROBE);
 
     // Probe relays in parallel: NIP-11 capability check + WebSocket connectivity test

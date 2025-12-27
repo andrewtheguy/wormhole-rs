@@ -177,16 +177,21 @@ async fn try_webrtc_receive(
     let rtc_peer = Arc::new(rtc_peer);
 
     // Use common transfer protocol
-    let result = run_receiver_transfer(stream, *key, output_dir, no_resume).await;
+    let (_, stream) = run_receiver_transfer(stream, *key, output_dir, no_resume).await?;
+
+    // Wait for sender to close the connection (confirms ACK was received)
+    // This ensures the ACK is delivered before we close our side
+    let close_timeout = Duration::from_secs(10);
+    let start = std::time::Instant::now();
+    while !stream.is_closed() && start.elapsed() < close_timeout {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
 
     // Cleanup
     let _ = rtc_peer.close().await;
     signal_handle.abort();
 
-    match result {
-        Ok(_) => Ok(WebRtcResult::Success),
-        Err(e) => Ok(WebRtcResult::Failed(format!("Transfer failed: {}", e))),
-    }
+    Ok(WebRtcResult::Success)
 }
 
 /// Receive a file or folder via webrtc transport
