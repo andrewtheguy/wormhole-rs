@@ -458,27 +458,16 @@ impl DataChannelStream {
         }
 
         // On message - forward to channel
-        // Use blocking_send via spawn_blocking to avoid async issues in callback
+        // Always spawn to preserve ordering and avoid blocking the callback
         let tx = message_tx.clone();
         data_channel.on_message(Box::new(move |msg: DataChannelMessage| {
             let data = msg.data.to_vec();
             let tx = tx.clone();
-            // Try to send immediately without blocking
-            match tx.try_send(data) {
-                Ok(_) => {}
-                Err(tokio::sync::mpsc::error::TrySendError::Full(data)) => {
-                    // Channel full, spawn a task to send asynchronously
-                    let tx = tx.clone();
-                    tokio::spawn(async move {
-                        if tx.send(data).await.is_err() {
-                            log::warn!("Failed to forward data channel message - receiver dropped");
-                        }
-                    });
-                }
-                Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
+            tokio::spawn(async move {
+                if tx.send(data).await.is_err() {
                     log::warn!("Failed to forward data channel message - receiver dropped");
                 }
-            }
+            });
             Box::pin(async {})
         }));
 
