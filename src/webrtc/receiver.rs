@@ -16,7 +16,7 @@ use tokio::time::{timeout, Duration};
 use webrtc::ice_transport::ice_candidate::RTCIceCandidateInit;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 
-use crate::core::crypto::decrypt_chunk;
+use crate::core::crypto::decrypt;
 use crate::core::folder::{
     extract_tar_archive, get_extraction_dir, print_skipped_entries, print_tar_extraction_info,
 };
@@ -305,7 +305,7 @@ async fn try_webrtc_receive(
     let encrypted_header = &header_msg[5..5 + encrypted_len];
 
     // Decrypt header
-    let header_bytes = decrypt_chunk(key, 0, encrypted_header)?;
+    let header_bytes = decrypt(key, encrypted_header)?;
     let header = FileHeader::from_bytes(&header_bytes)?;
 
     eprintln!(
@@ -515,7 +515,7 @@ async fn receive_file_impl(
                 let encrypted_chunk = &msg[13..13 + encrypted_len];
 
                 // Decrypt chunk
-                let chunk = decrypt_chunk(key, chunk_num, encrypted_chunk)?;
+                let chunk = decrypt(key, encrypted_chunk)?;
 
                 // Write to temp file
                 temp_file
@@ -691,9 +691,7 @@ impl std::io::Read for WebRtcStreamingReader {
                                     "Chunk too short",
                                 ));
                             }
-                            let chunk_num = u64::from_be_bytes([
-                                msg[1], msg[2], msg[3], msg[4], msg[5], msg[6], msg[7], msg[8],
-                            ]);
+                            // Skip chunk_num bytes (msg[1..9]), get encrypted length
                             let encrypted_len =
                                 u32::from_be_bytes([msg[9], msg[10], msg[11], msg[12]]) as usize;
                             if msg.len() < 13 + encrypted_len {
@@ -705,7 +703,7 @@ impl std::io::Read for WebRtcStreamingReader {
                             let encrypted_chunk = &msg[13..13 + encrypted_len];
 
                             // Decrypt
-                            match decrypt_chunk(&self.key, chunk_num, encrypted_chunk) {
+                            match decrypt(&self.key, encrypted_chunk) {
                                 Ok(chunk) => {
                                     self.bytes_remaining =
                                         self.bytes_remaining.saturating_sub(chunk.len() as u64);

@@ -1,26 +1,26 @@
 #[cfg(test)]
 mod tests {
-    use crate::core::crypto::{decrypt_chunk, encrypt_chunk, generate_key};
+    use crate::core::crypto::{decrypt, encrypt, generate_key};
 
     #[test]
     fn test_encrypt_decrypt_roundtrip() {
         let key = generate_key();
         let plaintext = b"Hello, World! This is a test message.";
 
-        let encrypted = encrypt_chunk(&key, 0, plaintext).unwrap();
-        let decrypted = decrypt_chunk(&key, 0, &encrypted).unwrap();
+        let encrypted = encrypt(&key, plaintext).unwrap();
+        let decrypted = decrypt(&key, &encrypted).unwrap();
 
         assert_eq!(plaintext.as_slice(), decrypted.as_slice());
     }
 
     #[test]
     fn test_random_nonces_guarantee_uniqueness() {
-        // With random nonces, even same (key, chunk_num, plaintext) produces unique ciphertext
+        // With random nonces, even same (key, plaintext) produces unique ciphertext
         let key = generate_key();
         let plaintext = b"Same data";
 
-        let enc1 = encrypt_chunk(&key, 0, plaintext).unwrap();
-        let enc2 = encrypt_chunk(&key, 0, plaintext).unwrap();
+        let enc1 = encrypt(&key, plaintext).unwrap();
+        let enc2 = encrypt(&key, plaintext).unwrap();
 
         // Nonces (first 12 bytes) must be different - random generation
         assert_ne!(
@@ -33,26 +33,8 @@ mod tests {
         assert_ne!(enc1, enc2, "Same plaintext must produce different ciphertext");
 
         // Both must decrypt correctly
-        assert_eq!(
-            decrypt_chunk(&key, 0, &enc1).unwrap(),
-            plaintext.as_slice()
-        );
-        assert_eq!(
-            decrypt_chunk(&key, 0, &enc2).unwrap(),
-            plaintext.as_slice()
-        );
-    }
-
-    #[test]
-    fn test_different_chunks_have_unique_ciphertext() {
-        let key = generate_key();
-        let plaintext = b"Same data";
-
-        let enc1 = encrypt_chunk(&key, 0, plaintext).unwrap();
-        let enc2 = encrypt_chunk(&key, 1, plaintext).unwrap();
-
-        // Different encryptions produce different ciphertext (random nonces)
-        assert_ne!(enc1, enc2);
+        assert_eq!(decrypt(&key, &enc1).unwrap(), plaintext.as_slice());
+        assert_eq!(decrypt(&key, &enc2).unwrap(), plaintext.as_slice());
     }
 
     #[test]
@@ -61,33 +43,33 @@ mod tests {
         let key2 = generate_key();
         let plaintext = b"Secret message";
 
-        let encrypted = encrypt_chunk(&key1, 0, plaintext).unwrap();
+        let encrypted = encrypt(&key1, plaintext).unwrap();
 
         // Decrypting with wrong key should fail (GCM authentication failure)
-        let result = decrypt_chunk(&key2, 0, &encrypted);
+        let result = decrypt(&key2, &encrypted);
         assert!(result.is_err(), "Decryption with wrong key should fail");
     }
 
     #[test]
     fn test_retry_safety() {
-        // Simulates a retry scenario: same chunk_num used to encrypt different data
+        // Simulates a retry scenario: encrypting different data multiple times
         // With random nonces, this is safe (no nonce reuse)
         let key = generate_key();
         let data_v1 = b"Original data";
         let data_v2 = b"Retry with different data";
 
-        let enc1 = encrypt_chunk(&key, 5, data_v1).unwrap();
-        let enc2 = encrypt_chunk(&key, 5, data_v2).unwrap();
+        let enc1 = encrypt(&key, data_v1).unwrap();
+        let enc2 = encrypt(&key, data_v2).unwrap();
 
         // Nonces must be different (random) - no nonce reuse
         assert_ne!(
             &enc1[..12],
             &enc2[..12],
-            "Retry must use different nonce"
+            "Each encryption must use different nonce"
         );
 
         // Both decrypt correctly to their respective plaintexts
-        assert_eq!(decrypt_chunk(&key, 5, &enc1).unwrap(), data_v1.as_slice());
-        assert_eq!(decrypt_chunk(&key, 5, &enc2).unwrap(), data_v2.as_slice());
+        assert_eq!(decrypt(&key, &enc1).unwrap(), data_v1.as_slice());
+        assert_eq!(decrypt(&key, &enc2).unwrap(), data_v2.as_slice());
     }
 }

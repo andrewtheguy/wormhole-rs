@@ -1,4 +1,4 @@
-use crate::core::crypto::{encrypt_chunk, generate_key, CHUNK_SIZE};
+use crate::core::crypto::{encrypt, generate_key, CHUNK_SIZE};
 use crate::webrtc::receiver::WebRtcStreamingReader;
 use anyhow::Result;
 use std::io::Read;
@@ -16,7 +16,7 @@ async fn test_webrtc_streaming_reader() -> Result<()> {
     let file_data_clone = file_data.clone();
     tokio::spawn(async move {
         // Send chunk 1
-        let encrypted = encrypt_chunk(&key_clone, 1, &file_data_clone).unwrap();
+        let encrypted = encrypt(&key_clone, &file_data_clone).unwrap();
 
         // Construct message: [type(1)][chunk_num(8)][len(4)][encrypted]
         let mut msg = Vec::new();
@@ -63,7 +63,7 @@ async fn test_webrtc_streaming_reader_multi_chunk() -> Result<()> {
     tokio::spawn(async move {
         let mut chunk_num = 1;
         for chunk in file_data_clone.chunks(CHUNK_SIZE) {
-            let encrypted = encrypt_chunk(&key_clone, chunk_num as u64, chunk).unwrap();
+            let encrypted = encrypt(&key_clone, chunk).unwrap();
 
             let mut msg = Vec::new();
             msg.push(1u8);

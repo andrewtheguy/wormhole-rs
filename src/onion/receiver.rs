@@ -221,7 +221,7 @@ pub async fn receive_file_tor(code: &str, output_dir: Option<PathBuf>) -> Result
     eprintln!("Receiving {} chunks...", total_chunks);
 
     while bytes_received < header.file_size {
-        let chunk = recv_encrypted_chunk(&mut stream, &key, chunk_num)
+        let chunk = recv_encrypted_chunk(&mut stream, &key)
             .await
             .context("Failed to receive chunk")?;
 

@@ -392,7 +392,7 @@ async fn receive_file_impl(
 
     while bytes_received < file_size {
         // Receive encrypted chunk
-        let chunk = recv_encrypted_chunk(stream, key, chunk_num)
+        let chunk = recv_encrypted_chunk(stream, key)
             .await
             .context("Failed to receive chunk - wrong passphrase?")?;
 

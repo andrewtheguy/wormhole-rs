@@ -178,10 +178,10 @@ async fn test_encrypted_single_chunk_roundtrip() {
     let data_clone = data.to_vec();
     let send_handle =
         tokio::spawn(
-            async move { send_encrypted_chunk(&mut client, &key_clone, 1, &data_clone).await },
+            async move { send_encrypted_chunk(&mut client, &key_clone, &data_clone).await },
         );
 
-    let received = recv_encrypted_chunk(&mut server, &key, 1).await.unwrap();
+    let received = recv_encrypted_chunk(&mut server, &key).await.unwrap();
     send_handle.await.unwrap().unwrap();
 
     assert_eq!(received, data);
@@ -201,15 +201,15 @@ async fn test_encrypted_multi_chunk_roundtrip() {
     let key_clone = key;
     let chunks_clone = chunks.clone();
     let send_handle = tokio::spawn(async move {
-        for (i, chunk) in chunks_clone.iter().enumerate() {
-            send_encrypted_chunk(&mut client, &key_clone, (i + 1) as u64, chunk)
+        for chunk in chunks_clone.iter() {
+            send_encrypted_chunk(&mut client, &key_clone, chunk)
                 .await
                 .unwrap();
         }
     });
 
-    for (i, expected) in chunks.iter().enumerate() {
-        let received = recv_encrypted_chunk(&mut server, &key, (i + 1) as u64)
+    for expected in chunks.iter() {
+        let received = recv_encrypted_chunk(&mut server, &key)
             .await
             .unwrap();
         assert_eq!(&received, expected);
@@ -237,8 +237,8 @@ async fn test_encrypted_full_transfer_simulation() {
             .await
             .unwrap();
 
-        // Send file data (chunk 1)
-        send_encrypted_chunk(&mut client, &key_clone, 1, &file_data_clone)
+        // Send file data
+        send_encrypted_chunk(&mut client, &key_clone, &file_data_clone)
             .await
             .unwrap();
     });
@@ -249,7 +249,7 @@ async fn test_encrypted_full_transfer_simulation() {
     assert_eq!(received_header.file_size, file_size);
 
     // Receive file data
-    let received_data = recv_encrypted_chunk(&mut server, &key, 1).await.unwrap();
+    let received_data = recv_encrypted_chunk(&mut server, &key).await.unwrap();
     assert_eq!(received_data, file_data);
 
     send_handle.await.unwrap();
@@ -296,7 +296,7 @@ async fn test_encrypted_exact_chunk_size_file() {
         send_encrypted_header(&mut client, &key_clone, &header)
             .await
             .unwrap();
-        send_encrypted_chunk(&mut client, &key_clone, 1, &file_data_clone)
+        send_encrypted_chunk(&mut client, &key_clone, &file_data_clone)
             .await
             .unwrap();
     });
@@ -304,7 +304,7 @@ async fn test_encrypted_exact_chunk_size_file() {
     let received_header = recv_encrypted_header(&mut server, &key).await.unwrap();
     assert_eq!(received_header.file_size, CHUNK_SIZE as u64);
 
-    let received_data = recv_encrypted_chunk(&mut server, &key, 1).await.unwrap();
+    let received_data = recv_encrypted_chunk(&mut server, &key).await.unwrap();
     assert_eq!(received_data, file_data);
 
     send_handle.await.unwrap();
@@ -332,12 +332,10 @@ async fn test_encrypted_large_file_multi_chunk() {
             .unwrap();
 
         // Send chunks
-        let mut chunk_num = 1u64;
         for chunk in file_data_clone.chunks(CHUNK_SIZE) {
-            send_encrypted_chunk(&mut client, &key_clone, chunk_num, chunk)
+            send_encrypted_chunk(&mut client, &key_clone, chunk)
                 .await
                 .unwrap();
-            chunk_num += 1;
         }
     });
 
@@ -347,13 +345,11 @@ async fn test_encrypted_large_file_multi_chunk() {
 
     // Receive all chunks and reconstruct file
     let mut received_data = Vec::new();
-    let mut chunk_num = 1u64;
     while received_data.len() < file_size {
-        let chunk = recv_encrypted_chunk(&mut server, &key, chunk_num)
+        let chunk = recv_encrypted_chunk(&mut server, &key)
             .await
             .unwrap();
         received_data.extend(chunk);
-        chunk_num += 1;
     }
 
     assert_eq!(received_data, file_data);
@@ -393,15 +389,13 @@ async fn test_chunk_num_is_for_application_layer_only() {
 
     let key_clone = key;
     let send_handle = tokio::spawn(async move {
-        // Send with chunk_num 5
-        send_encrypted_chunk(&mut client, &key_clone, 5, data)
+        send_encrypted_chunk(&mut client, &key_clone, data)
             .await
             .unwrap();
     });
 
-    // Receive with different chunk_num - still succeeds because nonce is
-    // transmitted with ciphertext (random nonces, not derived from chunk_num)
-    let result = recv_encrypted_chunk(&mut server, &key, 3).await;
+    // Succeeds because nonce is transmitted with ciphertext (random nonces)
+    let result = recv_encrypted_chunk(&mut server, &key).await;
     assert!(result.is_ok(), "Decryption should succeed with random nonces");
     assert_eq!(result.unwrap(), data.as_slice());
 
@@ -438,13 +432,13 @@ async fn test_encrypted_wrong_key_fails_on_chunk() {
     let data = b"Sensitive data that should not be readable";
 
     let send_handle = tokio::spawn(async move {
-        send_encrypted_chunk(&mut client, &sender_key, 1, data)
+        send_encrypted_chunk(&mut client, &sender_key, data)
             .await
             .unwrap();
     });
 
     // Receiver tries to decrypt with wrong key - should fail
-    let result = recv_encrypted_chunk(&mut server, &receiver_key, 1).await;
+    let result = recv_encrypted_chunk(&mut server, &receiver_key).await;
     assert!(result.is_err());
 
     send_handle.await.unwrap();
@@ -452,19 +446,18 @@ async fn test_encrypted_wrong_key_fails_on_chunk() {
 
 #[tokio::test]
 async fn test_encrypted_different_keys_produce_different_payloads() {
-    use wormhole_rs::core::crypto::encrypt_chunk;
+    use wormhole_rs::core::crypto::encrypt;
 
     // Same file content and metadata
     let data = b"Identical file content for both transfers";
-    let chunk_num = 1u64;
 
     // Generate two different keys (simulating two separate transfers)
     let key1 = generate_key();
     let key2 = generate_key();
 
     // Encrypt the same data with different keys
-    let encrypted1 = encrypt_chunk(&key1, chunk_num, data).unwrap();
-    let encrypted2 = encrypt_chunk(&key2, chunk_num, data).unwrap();
+    let encrypted1 = encrypt(&key1, data).unwrap();
+    let encrypted2 = encrypt(&key2, data).unwrap();
 
     // Payloads should be different due to random nonces
     assert_ne!(
@@ -482,7 +475,7 @@ async fn test_encrypted_different_keys_produce_different_payloads() {
 
 #[tokio::test]
 async fn test_encrypted_different_keys_produce_different_headers() {
-    use wormhole_rs::core::crypto::encrypt_chunk;
+    use wormhole_rs::core::crypto::encrypt;
 
     // Same file metadata
     let header = FileHeader::new(TransferType::File, "same_file.txt".to_string(), 12345);
@@ -492,9 +485,9 @@ async fn test_encrypted_different_keys_produce_different_headers() {
     let key1 = generate_key();
     let key2 = generate_key();
 
-    // Encrypt header with chunk_num 0 (each encryption gets random nonce)
-    let encrypted1 = encrypt_chunk(&key1, 0, &header_bytes).unwrap();
-    let encrypted2 = encrypt_chunk(&key2, 0, &header_bytes).unwrap();
+    // Encrypt header (each encryption gets random nonce)
+    let encrypted1 = encrypt(&key1, &header_bytes).unwrap();
+    let encrypted2 = encrypt(&key2, &header_bytes).unwrap();
 
     // Headers should produce different encrypted payloads (random nonces)
     assert_ne!(

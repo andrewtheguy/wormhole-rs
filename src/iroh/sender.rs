@@ -157,7 +157,7 @@ async fn transfer_data_internal(
             break;
         }
 
-        send_encrypted_chunk(&mut send_stream, &key, chunk_num, &buffer[..bytes_read])
+        send_encrypted_chunk(&mut send_stream, &key, &buffer[..bytes_read])
             .await
             .context("Failed to send chunk")?;
 

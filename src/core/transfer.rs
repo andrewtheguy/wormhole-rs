@@ -5,7 +5,7 @@ use tempfile::NamedTempFile;
 use tokio::fs::File;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-use crate::core::crypto::{decrypt_chunk, encrypt_chunk, CHUNK_SIZE};
+use crate::core::crypto::{decrypt, encrypt, CHUNK_SIZE};
 use crate::core::folder::{create_tar_archive, print_tar_creation_info};
 
 /// Soft limit for large file transfers (100MB)
@@ -116,7 +116,7 @@ pub async fn send_encrypted_header<W: AsyncWriteExt + Unpin>(
     header: &FileHeader,
 ) -> Result<()> {
     let header_bytes = header.to_bytes();
-    let encrypted = encrypt_chunk(key, 0, &header_bytes)?;
+    let encrypted = encrypt(key, &header_bytes)?;
 
     // Write length prefix
     let len = encrypted.len() as u32;
@@ -199,7 +199,7 @@ pub async fn recv_encrypted_header<R: AsyncReadExt + Unpin>(
         .context("Failed to read header data")?;
 
     // Decrypt
-    let decrypted = decrypt_chunk(key, 0, &encrypted)?;
+    let decrypted = decrypt(key, &encrypted)?;
 
     FileHeader::from_bytes(&decrypted)
 }
@@ -222,10 +222,9 @@ pub async fn send_chunk<W: AsyncWriteExt + Unpin>(writer: &mut W, data: &[u8]) -
 pub async fn send_encrypted_chunk<W: AsyncWriteExt + Unpin>(
     writer: &mut W,
     key: &[u8; 32],
-    chunk_num: u64,
     data: &[u8],
 ) -> Result<()> {
-    let encrypted = encrypt_chunk(key, chunk_num, data)?;
+    let encrypted = encrypt(key, data)?;
 
     // Write length prefix
     let len = encrypted.len() as u32;
@@ -268,7 +267,6 @@ pub async fn recv_chunk<R: AsyncReadExt + Unpin>(reader: &mut R) -> Result<Vec<u
 pub async fn recv_encrypted_chunk<R: AsyncReadExt + Unpin>(
     reader: &mut R,
     key: &[u8; 32],
-    chunk_num: u64,
 ) -> Result<Vec<u8>> {
     // Read length prefix
     let mut len_buf = [0u8; 4];
@@ -286,7 +284,7 @@ pub async fn recv_encrypted_chunk<R: AsyncReadExt + Unpin>(
         .context("Failed to read chunk data")?;
 
     // Decrypt
-    decrypt_chunk(key, chunk_num, &encrypted)
+    decrypt(key, &encrypted)
 }
 
 /// Calculate number of chunks for a file
@@ -440,13 +438,6 @@ pub const PROCEED_SIGNAL: &[u8] = b"PROCEED";
 /// Signal sent by receiver to abort transfer (e.g., file exists and user declined)
 pub const ABORT_SIGNAL: &[u8] = b"ABORT\0\0"; // Padded to 7 bytes like PROCEED
 
-// Reserved chunk numbers for encrypted control messages
-// Using high u64 values that will never conflict with actual chunk numbers
-const CONTROL_CHUNK_PROCEED: u64 = u64::MAX;
-const CONTROL_CHUNK_ABORT: u64 = u64::MAX - 1;
-const CONTROL_CHUNK_ACK: u64 = u64::MAX - 2;
-const CONTROL_CHUNK_DONE: u64 = u64::MAX - 3;
-
 /// Control signal types for encrypted handshake
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ControlSignal {
@@ -458,7 +449,7 @@ pub enum ControlSignal {
 
 /// Send encrypted PROCEED signal
 pub async fn send_proceed<W: AsyncWriteExt + Unpin>(writer: &mut W, key: &[u8; 32]) -> Result<()> {
-    let encrypted = encrypt_chunk(key, CONTROL_CHUNK_PROCEED, b"PROCEED")?;
+    let encrypted = encrypt(key, b"PROCEED")?;
     let len = encrypted.len() as u32;
     writer.write_all(&len.to_be_bytes()).await?;
     writer.write_all(&encrypted).await?;
@@ -468,7 +459,7 @@ pub async fn send_proceed<W: AsyncWriteExt + Unpin>(writer: &mut W, key: &[u8; 3
 
 /// Send encrypted ABORT signal
 pub async fn send_abort<W: AsyncWriteExt + Unpin>(writer: &mut W, key: &[u8; 32]) -> Result<()> {
-    let encrypted = encrypt_chunk(key, CONTROL_CHUNK_ABORT, b"ABORT")?;
+    let encrypted = encrypt(key, b"ABORT")?;
     let len = encrypted.len() as u32;
     writer.write_all(&len.to_be_bytes()).await?;
     writer.write_all(&encrypted).await?;
@@ -478,7 +469,7 @@ pub async fn send_abort<W: AsyncWriteExt + Unpin>(writer: &mut W, key: &[u8; 32]
 
 /// Send encrypted ACK signal
 pub async fn send_ack<W: AsyncWriteExt + Unpin>(writer: &mut W, key: &[u8; 32]) -> Result<()> {
-    let encrypted = encrypt_chunk(key, CONTROL_CHUNK_ACK, b"ACK")?;
+    let encrypted = encrypt(key, b"ACK")?;
     let len = encrypted.len() as u32;
     writer.write_all(&len.to_be_bytes()).await?;
     writer.write_all(&encrypted).await?;
@@ -487,7 +478,6 @@ pub async fn send_ack<W: AsyncWriteExt + Unpin>(writer: &mut W, key: &[u8; 32]) 
 }
 
 /// Receive and decrypt a control signal
-/// Tries to decrypt with each control chunk number to determine the signal type
 pub async fn recv_control<R: AsyncReadExt + Unpin>(
     reader: &mut R,
     key: &[u8; 32],
@@ -507,24 +497,15 @@ pub async fn recv_control<R: AsyncReadExt + Unpin>(
         .await
         .context("Failed to read control signal data")?;
 
-    // Try decrypting with each control chunk number
-    if let Ok(data) = decrypt_chunk(key, CONTROL_CHUNK_PROCEED, &encrypted) {
-        if data == b"PROCEED" {
-            return Ok(ControlSignal::Proceed);
-        }
-    }
-    if let Ok(data) = decrypt_chunk(key, CONTROL_CHUNK_ABORT, &encrypted) {
-        if data == b"ABORT" {
-            return Ok(ControlSignal::Abort);
-        }
-    }
-    if let Ok(data) = decrypt_chunk(key, CONTROL_CHUNK_ACK, &encrypted) {
-        if data == b"ACK" {
-            return Ok(ControlSignal::Ack);
-        }
-    }
+    // Decrypt and check plaintext
+    let data = decrypt(key, &encrypted).context("Failed to decrypt control signal")?;
 
-    anyhow::bail!("Invalid or corrupted control signal")
+    match data.as_slice() {
+        b"PROCEED" => Ok(ControlSignal::Proceed),
+        b"ABORT" => Ok(ControlSignal::Abort),
+        b"ACK" => Ok(ControlSignal::Ack),
+        _ => anyhow::bail!("Unknown control signal"),
+    }
 }
 
 // WebRTC-specific control message format: [type(1)][len(4)][encrypted]
@@ -536,7 +517,7 @@ const WEBRTC_MSG_TYPE_ABORT: u8 = 5;
 
 /// Create encrypted PROCEED message for WebRTC data channel
 pub fn make_webrtc_proceed_msg(key: &[u8; 32]) -> Result<Vec<u8>> {
-    let encrypted = encrypt_chunk(key, CONTROL_CHUNK_PROCEED, b"PROCEED")?;
+    let encrypted = encrypt(key, b"PROCEED")?;
     let mut msg = vec![WEBRTC_MSG_TYPE_PROCEED];
     msg.extend_from_slice(&(encrypted.len() as u32).to_be_bytes());
     msg.extend_from_slice(&encrypted);
@@ -545,7 +526,7 @@ pub fn make_webrtc_proceed_msg(key: &[u8; 32]) -> Result<Vec<u8>> {
 
 /// Create encrypted ABORT message for WebRTC data channel
 pub fn make_webrtc_abort_msg(key: &[u8; 32]) -> Result<Vec<u8>> {
-    let encrypted = encrypt_chunk(key, CONTROL_CHUNK_ABORT, b"ABORT")?;
+    let encrypted = encrypt(key, b"ABORT")?;
     let mut msg = vec![WEBRTC_MSG_TYPE_ABORT];
     msg.extend_from_slice(&(encrypted.len() as u32).to_be_bytes());
     msg.extend_from_slice(&encrypted);
@@ -554,7 +535,7 @@ pub fn make_webrtc_abort_msg(key: &[u8; 32]) -> Result<Vec<u8>> {
 
 /// Create encrypted ACK message for WebRTC data channel
 pub fn make_webrtc_ack_msg(key: &[u8; 32]) -> Result<Vec<u8>> {
-    let encrypted = encrypt_chunk(key, CONTROL_CHUNK_ACK, b"ACK")?;
+    let encrypted = encrypt(key, b"ACK")?;
     let mut msg = vec![WEBRTC_MSG_TYPE_ACK];
     msg.extend_from_slice(&(encrypted.len() as u32).to_be_bytes());
     msg.extend_from_slice(&encrypted);
@@ -563,7 +544,7 @@ pub fn make_webrtc_ack_msg(key: &[u8; 32]) -> Result<Vec<u8>> {
 
 /// Create encrypted DONE message for WebRTC data channel
 pub fn make_webrtc_done_msg(key: &[u8; 32]) -> Result<Vec<u8>> {
-    let encrypted = encrypt_chunk(key, CONTROL_CHUNK_DONE, b"DONE")?;
+    let encrypted = encrypt(key, b"DONE")?;
     let mut msg = vec![WEBRTC_MSG_TYPE_DONE];
     msg.extend_from_slice(&(encrypted.len() as u32).to_be_bytes());
     msg.extend_from_slice(&encrypted);
@@ -602,37 +583,15 @@ pub fn parse_webrtc_control_msg(data: &[u8], key: &[u8; 32]) -> Result<Option<Co
 
     let encrypted = &data[5..5 + encrypted_len];
 
-    // Decrypt based on message type
-    match msg_type {
-        WEBRTC_MSG_TYPE_DONE => {
-            let decrypted = decrypt_chunk(key, CONTROL_CHUNK_DONE, encrypted)?;
-            if decrypted != b"DONE" {
-                anyhow::bail!("Invalid DONE payload");
-            }
-            Ok(Some(ControlSignal::Done))
-        }
-        WEBRTC_MSG_TYPE_PROCEED => {
-            let decrypted = decrypt_chunk(key, CONTROL_CHUNK_PROCEED, encrypted)?;
-            if decrypted != b"PROCEED" {
-                anyhow::bail!("Invalid PROCEED payload");
-            }
-            Ok(Some(ControlSignal::Proceed))
-        }
-        WEBRTC_MSG_TYPE_ABORT => {
-            let decrypted = decrypt_chunk(key, CONTROL_CHUNK_ABORT, encrypted)?;
-            if decrypted != b"ABORT" {
-                anyhow::bail!("Invalid ABORT payload");
-            }
-            Ok(Some(ControlSignal::Abort))
-        }
-        WEBRTC_MSG_TYPE_ACK => {
-            let decrypted = decrypt_chunk(key, CONTROL_CHUNK_ACK, encrypted)?;
-            if decrypted != b"ACK" {
-                anyhow::bail!("Invalid ACK payload");
-            }
-            Ok(Some(ControlSignal::Ack))
-        }
-        _ => Ok(None), // Not reached due to earlier check
+    // Decrypt and verify payload matches message type
+    let decrypted = decrypt(key, encrypted)?;
+
+    match (msg_type, decrypted.as_slice()) {
+        (WEBRTC_MSG_TYPE_DONE, b"DONE") => Ok(Some(ControlSignal::Done)),
+        (WEBRTC_MSG_TYPE_PROCEED, b"PROCEED") => Ok(Some(ControlSignal::Proceed)),
+        (WEBRTC_MSG_TYPE_ABORT, b"ABORT") => Ok(Some(ControlSignal::Abort)),
+        (WEBRTC_MSG_TYPE_ACK, b"ACK") => Ok(Some(ControlSignal::Ack)),
+        _ => anyhow::bail!("Control message type/payload mismatch"),
     }
 }
 

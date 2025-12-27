@@ -226,7 +226,7 @@ where
     eprintln!("Receiving {} chunks...", total_chunks);
 
     while bytes_received < header.file_size {
-        let chunk = recv_encrypted_chunk(recv_stream, &key, chunk_num)
+        let chunk = recv_encrypted_chunk(recv_stream, &key)
             .await
             .context("Failed to receive chunk")?;
 

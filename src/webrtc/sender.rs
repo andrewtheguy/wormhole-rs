@@ -18,7 +18,7 @@ use webrtc::ice_transport::ice_candidate::RTCIceCandidateInit;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 
 use crate::cli::instructions::print_receiver_command;
-use crate::core::crypto::{encrypt_chunk, generate_key, CHUNK_SIZE};
+use crate::core::crypto::{encrypt, generate_key, CHUNK_SIZE};
 use crate::core::transfer::{
     format_bytes, make_webrtc_done_msg, num_chunks, parse_webrtc_control_msg,
     prepare_file_for_send, prepare_folder_for_send, ControlSignal, FileHeader, TransferType,
@@ -265,7 +265,7 @@ async fn try_webrtc_transfer(
     // Send file header as first message
     let header = FileHeader::new(transfer_type, filename.to_string(), file_size);
     let header_bytes = header.to_bytes();
-    let encrypted_header = encrypt_chunk(key, 0, &header_bytes)?;
+    let encrypted_header = encrypt(key, &header_bytes)?;
 
     // Prepend message type (0 = control/header)
     let mut header_msg = vec![0u8];
@@ -346,7 +346,7 @@ async fn try_webrtc_transfer(
         }
 
         // Encrypt chunk
-        let encrypted_chunk = encrypt_chunk(key, chunk_num, &buffer[..bytes_read])?;
+        let encrypted_chunk = encrypt(key, &buffer[..bytes_read])?;
 
         // Prepend message type (1 = chunk)
         let mut chunk_msg = vec![1u8];

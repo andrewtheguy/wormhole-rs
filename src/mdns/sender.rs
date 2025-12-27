@@ -290,7 +290,7 @@ async fn send_data_over_tcp(
         }
 
         // Send encrypted chunk
-        send_encrypted_chunk(&mut stream, key, chunk_num, &buffer[..bytes_read])
+        send_encrypted_chunk(&mut stream, key, &buffer[..bytes_read])
             .await
             .context("Failed to send chunk")?;
 

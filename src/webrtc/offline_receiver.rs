@@ -16,7 +16,7 @@ use webrtc::ice_transport::ice_candidate::RTCIceCandidateInit;
 use webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 
-use crate::core::crypto::decrypt_chunk;
+use crate::core::crypto::decrypt;
 use crate::core::folder::{extract_tar_archive, print_tar_extraction_info};
 use crate::core::transfer::{
     find_available_filename, format_bytes, make_webrtc_abort_msg, make_webrtc_ack_msg,
@@ -233,7 +233,7 @@ pub async fn receive_file_offline(output_dir: Option<PathBuf>) -> Result<()> {
     let encrypted_header = &header_msg[5..5 + encrypted_len];
 
     // Decrypt header
-    let header_bytes = decrypt_chunk(&key, 0, encrypted_header)?;
+    let header_bytes = decrypt(&key, encrypted_header)?;
     let header = FileHeader::from_bytes(&header_bytes)?;
 
     eprintln!(
@@ -373,7 +373,7 @@ async fn receive_file_impl(
                 let encrypted_chunk = &msg[13..13 + encrypted_len];
 
                 // Decrypt chunk
-                let chunk = decrypt_chunk(key, chunk_num, encrypted_chunk)?;
+                let chunk = decrypt(key, encrypted_chunk)?;
 
                 // Write to temp file
                 temp_file
@@ -532,7 +532,7 @@ impl std::io::Read for WebRtcStreamingReader {
                 let encrypted_chunk = &msg[13..13 + encrypted_len];
 
                 // Decrypt
-                let chunk = decrypt_chunk(&self.key, chunk_num, encrypted_chunk).map_err(|e| {
+                let chunk = decrypt(&self.key, encrypted_chunk).map_err(|e| {
                     std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())
                 })?;
 

@@ -148,7 +148,7 @@ impl<R: tokio::io::AsyncReadExt + Unpin + Send> Read for StreamingReader<R> {
         if self.buffer_pos >= self.buffer.len() && self.bytes_remaining > 0 {
             // Block on async chunk receive
             let chunk_result = self.runtime_handle.block_on(async {
-                recv_encrypted_chunk(&mut self.recv_stream, &self.key, self.chunk_num).await
+                recv_encrypted_chunk(&mut self.recv_stream, &self.key).await
             });
 
             match chunk_result {

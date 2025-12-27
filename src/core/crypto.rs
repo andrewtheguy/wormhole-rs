@@ -15,6 +15,34 @@
 //! The nonce is transmitted with the ciphertext (first 12 bytes), and the
 //! receiver uses it directly for decryption. GCM's authentication tag ensures
 //! integrity - any tampering of nonce or ciphertext causes decryption failure.
+//!
+//! # Random Nonce Limits (NIST SP 800-38D)
+//!
+//! Per NIST SP 800-38D, random 96-bit nonces have collision probability concerns:
+//!
+//! - **Conservative limit**: 2^32 (~4 billion) invocations per key
+//! - **Birthday bound**: Collision probability becomes significant around 2^48 invocations
+//!
+//! With our 16 KB chunk size, the conservative 2^32 limit translates to:
+//! - **~64 TiB (~70 TB)** of data per key before rotation is recommended
+//!
+//! ## Consequences of Exceeding the Limit
+//!
+//! If two encryptions under the same key use the same nonce (collision):
+//! - **Confidentiality loss**: XOR of plaintexts is revealed
+//! - **Authenticity loss**: Forgery attacks become possible
+//! - **Catastrophic failure**: GCM security guarantees completely break down
+//!
+//! ## Recommendation
+//!
+//! Since wormhole-rs generates a fresh key per transfer session, this limit
+//! applies per-transfer. A single transfer would need to exceed ~64 TiB to
+//! approach the limit - far beyond typical use cases. For applications
+//! transferring extremely large datasets, rotate keys well before reaching
+//! this threshold, or consider deterministic IV/counter-based schemes.
+//!
+//! Reference: NIST Special Publication 800-38D, Section 8.3
+//! <https://csrc.nist.gov/publications/detail/sp/800-38d/final>
 
 use aes_gcm::{
     aead::{Aead, KeyInit},
@@ -37,19 +65,14 @@ pub fn generate_key() -> [u8; 32] {
     key
 }
 
-/// Encrypt a chunk of data using AES-256-GCM with a random nonce.
+/// Encrypt data using AES-256-GCM with a random nonce.
 ///
 /// Each call generates a fresh random 96-bit nonce, guaranteeing uniqueness
-/// even if chunk_num is reused or if there are retries/retransmissions.
-/// This eliminates the risk of nonce reuse which would be catastrophic for
-/// AES-GCM security.
-///
-/// The `chunk_num` parameter is preserved for API compatibility and may be
-/// used for application-level chunk identification, but is not used in
-/// nonce derivation.
+/// even with retries/retransmissions. This eliminates the risk of nonce reuse
+/// which would be catastrophic for AES-GCM security.
 ///
 /// Returns: nonce (12 bytes) || ciphertext || tag (16 bytes)
-pub fn encrypt_chunk(key: &[u8; 32], _chunk_num: u64, plaintext: &[u8]) -> Result<Vec<u8>> {
+pub fn encrypt(key: &[u8; 32], plaintext: &[u8]) -> Result<Vec<u8>> {
     let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(key));
 
     // Generate random nonce for each encryption - guarantees uniqueness
@@ -69,18 +92,14 @@ pub fn encrypt_chunk(key: &[u8; 32], _chunk_num: u64, plaintext: &[u8]) -> Resul
     Ok(result)
 }
 
-/// Decrypt a chunk of data using AES-256-GCM.
+/// Decrypt data using AES-256-GCM.
 ///
 /// The nonce is extracted from the ciphertext (first 12 bytes).
 /// Authentication is provided by the GCM tag - if the ciphertext is
 /// tampered or the wrong key is used, decryption will fail.
 ///
-/// The `chunk_num` parameter is preserved for API compatibility and may be
-/// used for application-level chunk identification, but is not used in
-/// decryption (the transmitted nonce is used directly).
-///
 /// Input format: nonce (12 bytes) || ciphertext || tag (16 bytes)
-pub fn decrypt_chunk(key: &[u8; 32], _chunk_num: u64, encrypted: &[u8]) -> Result<Vec<u8>> {
+pub fn decrypt(key: &[u8; 32], encrypted: &[u8]) -> Result<Vec<u8>> {
     if encrypted.len() < NONCE_SIZE + TAG_SIZE {
         anyhow::bail!("Encrypted data too short");
     }
