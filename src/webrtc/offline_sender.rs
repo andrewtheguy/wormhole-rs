@@ -19,8 +19,9 @@ use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 
 use crate::core::crypto::{encrypt, generate_key, CHUNK_SIZE};
 use crate::core::transfer::{
-    format_bytes, make_webrtc_done_msg, num_chunks, parse_webrtc_control_msg,
-    prepare_file_for_send, prepare_folder_for_send, ControlSignal, FileHeader, TransferType,
+    calc_percent, format_bytes, format_resume_progress, make_webrtc_done_msg, num_chunks,
+    parse_webrtc_control_msg, prepare_file_for_send, prepare_folder_for_send, ControlSignal,
+    FileHeader, TransferType,
 };
 use crate::signaling::offline::{
     display_offer_json, ice_candidates_to_payloads, read_answer_json, OfflineAnswer, OfflineOffer,
@@ -295,11 +296,7 @@ async fn transfer_offline_internal(
 
     let start_offset = match confirm_result {
         Ok(Ok((true, offset))) if offset > 0 => {
-            eprintln!(
-                "Resuming transfer from {} ({:.1}%)...",
-                format_bytes(offset),
-                offset as f64 / file_size as f64 * 100.0
-            );
+            eprintln!("{}", format_resume_progress(offset, file_size));
             file.seek(std::io::SeekFrom::Start(offset)).await?;
             offset
         }
@@ -357,11 +354,8 @@ async fn transfer_offline_internal(
 
         // Progress update every 10 chunks or on last chunk
         if chunk_num % 10 == 0 || bytes_sent == file_size {
-            let percent = if file_size == 0 {
-                100
-            } else {
-                (bytes_sent as f64 / file_size as f64 * 100.0) as u32
-            };
+            // For empty files (file_size == 0), show 100% when complete
+            let percent = if file_size == 0 { 100 } else { calc_percent(bytes_sent, file_size) as u32 };
             print!(
                 "\r   Progress: {}% ({}/{})",
                 percent,

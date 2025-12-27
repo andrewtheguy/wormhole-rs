@@ -8,10 +8,10 @@ use crate::core::folder::{
     print_tar_extraction_info, StreamingReader,
 };
 use crate::core::transfer::{
-    finalize_file_receiver, find_available_filename, format_bytes, prepare_file_receiver,
-    prompt_file_exists, receive_file_data, recv_encrypted_header, send_abort, send_ack,
-    send_proceed, send_resume, setup_resumable_cleanup_handler, ControlSignal, FileExistsChoice,
-    TransferType,
+    finalize_file_receiver, find_available_filename, format_bytes, format_resume_progress,
+    prepare_file_receiver, prompt_file_exists, receive_file_data, recv_encrypted_header,
+    send_abort, send_ack, send_proceed, send_resume, setup_resumable_cleanup_handler,
+    ControlSignal, FileExistsChoice, TransferType,
 };
 use crate::core::wormhole::{decode_key, parse_code, PROTOCOL_TOR};
 
@@ -190,11 +190,7 @@ pub async fn receive_file_tor(code: &str, output_dir: Option<PathBuf>) -> Result
             send_resume(&mut stream, &key, *offset)
                 .await
                 .context("Failed to send resume signal")?;
-            eprintln!(
-                "Resuming from {} ({:.1}%)...",
-                format_bytes(*offset),
-                *offset as f64 / header.file_size as f64 * 100.0
-            );
+            eprintln!("{}", format_resume_progress(*offset, header.file_size));
         }
         ControlSignal::Abort => {
             send_abort(&mut stream, &key)

@@ -23,9 +23,9 @@ use crate::core::folder::{
     print_tar_extraction_info, StreamingReader,
 };
 use crate::core::transfer::{
-    finalize_file_receiver, format_bytes, num_chunks, prepare_file_receiver, receive_file_data,
-    recv_encrypted_header, send_abort, send_ack, send_proceed, send_resume,
-    setup_resumable_cleanup_handler, ControlSignal, TransferType,
+    finalize_file_receiver, format_bytes, format_resume_progress, num_chunks,
+    prepare_file_receiver, receive_file_data, recv_encrypted_header, send_abort, send_ack,
+    send_proceed, send_resume, setup_resumable_cleanup_handler, ControlSignal, TransferType,
 };
 use crate::mdns::common::{
     MdnsServiceInfo, SERVICE_TYPE, TXT_FILENAME, TXT_FILE_SIZE, TXT_TRANSFER_ID, TXT_TRANSFER_TYPE,
@@ -308,11 +308,7 @@ async fn receive_data_over_tcp(
                     send_resume(&mut stream, key, *offset)
                         .await
                         .context("Failed to send resume signal")?;
-                    println!(
-                        "Resuming from {} ({:.1}%)...",
-                        format_bytes(*offset),
-                        *offset as f64 / header.file_size as f64 * 100.0
-                    );
+                    println!("{}", format_resume_progress(*offset, header.file_size));
                 }
                 ControlSignal::Abort => {
                     send_abort(&mut stream, key)

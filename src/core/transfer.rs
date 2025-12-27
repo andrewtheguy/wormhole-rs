@@ -320,6 +320,26 @@ pub fn format_bytes(bytes: u64) -> String {
     }
 }
 
+/// Calculate percentage safely, avoiding division by zero
+/// Returns 0.0 if total is 0, otherwise returns (current / total) * 100.0
+pub fn calc_percent(current: u64, total: u64) -> f64 {
+    if total == 0 {
+        0.0
+    } else {
+        current as f64 / total as f64 * 100.0
+    }
+}
+
+/// Format a resume progress message for logging
+/// Used by both senders and receivers when resuming a transfer
+pub fn format_resume_progress(offset: u64, file_size: u64) -> String {
+    format!(
+        "Resuming from {} ({:.1}%)...",
+        format_bytes(offset),
+        calc_percent(offset, file_size)
+    )
+}
+
 /// Prompt user for confirmation if folder archive exceeds soft limit.
 /// Only used for folders since they are NOT resumable. Files are resumable and don't need this warning.
 /// Returns Ok(true) to proceed, Ok(false) to cancel.
@@ -799,7 +819,7 @@ pub async fn send_file_data<R: AsyncReadExt + Unpin, W: AsyncWriteExt + Unpin>(
 
         // Progress update
         if progress_interval > 0 && (chunk_num % progress_interval == 0 || bytes_sent == file_size) {
-            let percent = (bytes_sent as f64 / file_size as f64 * 100.0) as u32;
+            let percent = calc_percent(bytes_sent, file_size) as u32;
             eprint!(
                 "\r   Progress: {}% ({}/{}) - chunk {}/{}",
                 percent,
@@ -973,7 +993,7 @@ pub async fn receive_file_data<R: AsyncReadExt + Unpin>(
         if progress_interval > 0
             && (chunk_num % progress_interval == 0 || receiver.bytes_received == file_size)
         {
-            let percent = (receiver.bytes_received as f64 / file_size as f64 * 100.0) as u32;
+            let percent = calc_percent(receiver.bytes_received, file_size) as u32;
             eprint!(
                 "\r   Progress: {}% ({}/{})",
                 percent,

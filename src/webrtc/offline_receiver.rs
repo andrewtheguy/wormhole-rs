@@ -22,9 +22,10 @@ use crate::core::resume::{
     ResumeMetadata,
 };
 use crate::core::transfer::{
-    find_available_filename, format_bytes, make_webrtc_abort_msg, make_webrtc_ack_msg,
-    make_webrtc_proceed_msg, make_webrtc_resume_msg, num_chunks, parse_webrtc_control_msg,
-    prompt_file_exists, ControlSignal, FileExistsChoice, FileHeader, TransferType,
+    find_available_filename, format_bytes, format_resume_progress, make_webrtc_abort_msg,
+    make_webrtc_ack_msg, make_webrtc_proceed_msg, make_webrtc_resume_msg, num_chunks,
+    parse_webrtc_control_msg, prompt_file_exists, ControlSignal, FileExistsChoice, FileHeader,
+    TransferType,
 };
 use crate::signaling::offline::{
     display_answer_json, ice_candidates_to_payloads, read_offer_json, OfflineAnswer,
@@ -350,11 +351,7 @@ async fn receive_file_impl(
             Ok(Some(resume_check)) => {
                 // Valid resume file found
                 let offset = resume_check.metadata.bytes_received;
-                eprintln!(
-                    "Resuming from {} ({:.1}%)...",
-                    format_bytes(offset),
-                    offset as f64 / header.file_size as f64 * 100.0
-                );
+                eprintln!("{}", format_resume_progress(offset, header.file_size));
                 (resume_check.file, offset, resume_check.data_offset)
             }
             Ok(None) => {

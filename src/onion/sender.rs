@@ -12,9 +12,9 @@ use tor_hsservice::{config::OnionServiceConfigBuilder, handle_rend_requests};
 use crate::cli::instructions::print_receiver_command;
 use crate::core::crypto::generate_key;
 use crate::core::transfer::{
-    format_bytes, handle_receiver_response, prepare_file_for_send, prepare_folder_for_send,
-    recv_control, send_encrypted_header, send_file_data, ControlSignal, FileHeader, ResumeResponse,
-    TransferType,
+    format_resume_progress, handle_receiver_response, prepare_file_for_send,
+    prepare_folder_for_send, recv_control, send_encrypted_header, send_file_data, ControlSignal,
+    FileHeader, ResumeResponse, TransferType,
 };
 use crate::core::wormhole::generate_tor_code;
 
@@ -119,11 +119,7 @@ async fn transfer_data_tor_internal(
                 0
             }
             ResumeResponse::Resume { offset, .. } => {
-                eprintln!(
-                    "Resuming transfer from {} ({:.1}%)...",
-                    format_bytes(offset),
-                    offset as f64 / file_size as f64 * 100.0
-                );
+                eprintln!("{}", format_resume_progress(offset, file_size));
                 file.seek(std::io::SeekFrom::Start(offset)).await?;
                 offset
             }
