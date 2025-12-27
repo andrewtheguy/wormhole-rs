@@ -84,11 +84,31 @@ pub async fn receive(
 
     // Connect to sender
     let conn = endpoint.connect(addr, ALPN).await.map_err(|e| {
-        anyhow::anyhow!(
-            "Failed to connect to sender: {}\n\n\
-             If relay connection fails, try Tor mode: wormhole-rs send-tor <file>",
-            e
-        )
+        let err_str = e.to_string().to_lowercase();
+        let is_relay_error = err_str.contains("relay")
+            || err_str.contains("alpn")
+            || err_str.contains("no route")
+            || err_str.contains("unreachable");
+
+        if is_relay_error {
+            anyhow::anyhow!(
+                "Failed to connect to sender: {}\n\n\
+                 Relay connection failed. Try Tor mode instead:\n  \
+                 Sender:   wormhole-rs send-tor <file>\n  \
+                 Receiver: wormhole-rs receive <code>",
+                e
+            )
+        } else {
+            anyhow::anyhow!(
+                "Failed to connect to sender: {}\n\n\
+                 Troubleshooting:\n  \
+                 - Verify the wormhole code is correct\n  \
+                 - Ensure the sender is still running\n  \
+                 - Check network connectivity and firewall settings\n  \
+                 - If issues persist, try Tor mode: wormhole-rs send-tor <file>",
+                e
+            )
+        }
     })?;
 
     // Print connection info

@@ -90,16 +90,37 @@ async fn transfer_data_internal(
         .ok_or_else(|| {
             anyhow::anyhow!(
                 "No incoming connection.\n\n\
-             If relay connection fails, try Tor mode: wormhole-rs send-tor <file>"
+                 Troubleshooting:\n  \
+                 - Ensure the receiver has the correct wormhole code\n  \
+                 - Check network connectivity on both ends\n  \
+                 - Try Tor mode for better NAT traversal: wormhole-rs send-tor <file>"
             )
         })?
         .await
         .map_err(|e| {
-            anyhow::anyhow!(
-                "Failed to accept connection: {}\n\n\
-             If relay connection fails, try Tor mode: wormhole-rs send-tor <file>",
-                e
-            )
+            let err_str = e.to_string().to_lowercase();
+            let is_relay_error = err_str.contains("relay")
+                || err_str.contains("alpn")
+                || err_str.contains("no route")
+                || err_str.contains("unreachable");
+
+            if is_relay_error {
+                anyhow::anyhow!(
+                    "Failed to accept connection: {}\n\n\
+                     Relay connection failed. Try Tor mode instead:\n  \
+                     wormhole-rs send-tor <file>",
+                    e
+                )
+            } else {
+                anyhow::anyhow!(
+                    "Failed to accept connection: {}\n\n\
+                     Troubleshooting:\n  \
+                     - Ensure the receiver has the correct wormhole code\n  \
+                     - Check network connectivity and firewall settings\n  \
+                     - If issues persist, try Tor mode: wormhole-rs send-tor <file>",
+                    e
+                )
+            }
         })?;
 
     let remote_id = conn.remote_id();
