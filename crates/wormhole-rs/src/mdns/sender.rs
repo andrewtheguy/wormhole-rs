@@ -19,7 +19,7 @@ use super::common::{
 use wormhole_common::auth::spake2::handshake_as_responder;
 use wormhole_common::core::transfer::{
     format_bytes, prepare_file_for_send, prepare_folder_for_send, run_sender_transfer,
-    setup_temp_file_cleanup_handler, FileHeader, TransferResult, TransferType,
+    setup_temp_file_cleanup_handler, FileHeader, Interrupted, TransferResult, TransferType,
 };
 
 /// Display receiver instructions and PIN to the user.
@@ -111,8 +111,10 @@ pub async fn send_folder_mdns(folder_path: &Path) -> Result<()> {
             pin,
         ) => result,
         _ = cleanup_handler.shutdown_rx => {
-            // Graceful shutdown requested - exit with interrupt code
-            std::process::exit(130);
+            // Graceful shutdown requested - clean up and return Interrupted error
+            cleanup_handler.cleanup_path.lock().await.take();
+            let _ = tokio::fs::remove_file(&temp_path).await;
+            return Err(Interrupted.into());
         }
     };
 

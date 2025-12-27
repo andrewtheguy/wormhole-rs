@@ -10,6 +10,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use std::io::{self, Write};
 use std::path::PathBuf;
+use wormhole_common::core::transfer::is_interrupted;
 
 mod signaling;
 mod webrtc;
@@ -74,8 +75,27 @@ enum Commands {
     },
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() {
+    // Run the async main and handle errors
+    let result = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("Failed to create Tokio runtime")
+        .block_on(async_main());
+
+    if let Err(e) = result {
+        // Check if this was an interrupt (Ctrl+C)
+        if is_interrupted(&e) {
+            // Exit with 128 + SIGINT (2) = 130, standard Unix convention
+            std::process::exit(130);
+        }
+        // Print error and exit with failure code
+        eprintln!("Error: {:?}", e);
+        std::process::exit(1);
+    }
+}
+
+async fn async_main() -> Result<()> {
     let cli = Cli::parse();
 
     // Initialize logging with filters for noisy internal modules

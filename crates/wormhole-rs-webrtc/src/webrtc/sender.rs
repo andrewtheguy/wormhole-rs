@@ -14,7 +14,7 @@ use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 use wormhole_common::core::crypto::generate_key;
 use wormhole_common::core::transfer::{
     format_bytes, prepare_file_for_send, prepare_folder_for_send, run_sender_transfer,
-    setup_temp_file_cleanup_handler, FileHeader, TransferType,
+    setup_temp_file_cleanup_handler, FileHeader, Interrupted, TransferType,
 };
 use wormhole_common::core::wormhole::generate_webrtc_code;
 
@@ -417,7 +417,7 @@ async fn send_folder_webrtc_internal(
 
     // Set up cleanup handler for Ctrl+C
     let temp_path = prepared.temp_file.path().to_path_buf();
-    let cleanup_handler = setup_temp_file_cleanup_handler(temp_path);
+    let cleanup_handler = setup_temp_file_cleanup_handler(temp_path.clone());
 
     // Run transfer with interrupt handling
     let result = tokio::select! {
@@ -432,8 +432,10 @@ async fn send_folder_webrtc_internal(
             use_pin,
         ) => result,
         _ = cleanup_handler.shutdown_rx => {
-            // Graceful shutdown requested - exit with interrupt code
-            std::process::exit(130);
+            // Graceful shutdown requested - clean up and return Interrupted error
+            cleanup_handler.cleanup_path.lock().await.take();
+            let _ = tokio::fs::remove_file(&temp_path).await;
+            return Err(Interrupted.into());
         }
     };
 

@@ -12,7 +12,7 @@ use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 use wormhole_common::core::crypto::generate_key;
 use wormhole_common::core::transfer::{
     prepare_file_for_send, prepare_folder_for_send, run_sender_transfer,
-    setup_temp_file_cleanup_handler, FileHeader, TransferType,
+    setup_temp_file_cleanup_handler, FileHeader, Interrupted, TransferType,
 };
 
 use crate::signaling::offline::{
@@ -64,8 +64,10 @@ pub async fn send_folder_offline(folder_path: &Path) -> Result<()> {
             TransferType::Folder,
         ) => result,
         _ = cleanup_handler.shutdown_rx => {
-            // Graceful shutdown requested - exit with interrupt code
-            std::process::exit(130);
+            // Graceful shutdown requested - clean up and return Interrupted error
+            cleanup_handler.cleanup_path.lock().await.take();
+            let _ = tokio::fs::remove_file(&temp_path).await;
+            return Err(Interrupted.into());
         }
     };
 

@@ -118,7 +118,8 @@ impl WebRtcPeer {
             Box::pin(async move {
                 if let Some(candidate) = candidate {
                     if ice_tx.send(candidate).await.is_err() {
-                        log::warn!("Failed to send ICE candidate - receiver dropped");
+                        // Expected during shutdown when receiver is dropped
+                        log::trace!("ICE candidate channel closed");
                     }
                 }
             })
@@ -127,7 +128,8 @@ impl WebRtcPeer {
         // Set up ICE gathering state handler (for vanilla ICE / offline mode)
         peer_connection.on_ice_gathering_state_change(Box::new(move |state| {
             if ice_gathering_tx.send(state).is_err() {
-                log::warn!("Failed to send ICE gathering state - receiver dropped");
+                // Expected during shutdown when receiver is dropped
+                log::trace!("ICE gathering state channel closed");
             }
             Box::pin(async {})
         }));
@@ -160,10 +162,8 @@ impl WebRtcPeer {
             let label = dc.label().to_string();
             Box::pin(async move {
                 if dc_tx.send(dc).await.is_err() {
-                    log::warn!(
-                        "Failed to forward data channel '{}' - receiver dropped",
-                        label
-                    );
+                    // Expected during shutdown when receiver is dropped
+                    log::trace!("Data channel '{}' receiver closed", label);
                 }
             })
         }));
@@ -483,7 +483,8 @@ impl DataChannelStream {
                     );
                 }
                 Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
-                    log::warn!("Failed to forward data channel message - receiver dropped");
+                    // Expected during shutdown when receiver is dropped
+                    log::trace!("Data channel message receiver closed");
                 }
             }
             Box::pin(async {})

@@ -8,7 +8,7 @@ use super::common::{create_sender_endpoint, IrohDuplex};
 use wormhole_common::core::crypto::generate_key;
 use wormhole_common::core::transfer::{
     prepare_file_for_send, prepare_folder_for_send, run_sender_transfer,
-    setup_temp_file_cleanup_handler, FileHeader, TransferResult, TransferType,
+    setup_temp_file_cleanup_handler, FileHeader, Interrupted, TransferResult, TransferType,
 };
 use wormhole_common::core::wormhole::generate_code;
 
@@ -172,7 +172,7 @@ pub async fn send_folder(folder_path: &Path, relay_urls: Vec<String>, use_pin: b
 
     // Set up cleanup handler for Ctrl+C
     let temp_path = prepared.temp_file.path().to_path_buf();
-    let cleanup_handler = setup_temp_file_cleanup_handler(temp_path);
+    let cleanup_handler = setup_temp_file_cleanup_handler(temp_path.clone());
 
     // Run transfer with interrupt handling
     let result = tokio::select! {
@@ -186,8 +186,10 @@ pub async fn send_folder(folder_path: &Path, relay_urls: Vec<String>, use_pin: b
             use_pin,
         ) => result,
         _ = cleanup_handler.shutdown_rx => {
-            // Graceful shutdown requested - exit with interrupt code
-            std::process::exit(130);
+            // Graceful shutdown requested - clean up and return Interrupted error
+            cleanup_handler.cleanup_path.lock().await.take();
+            let _ = tokio::fs::remove_file(&temp_path).await;
+            return Err(Interrupted.into());
         }
     };
 

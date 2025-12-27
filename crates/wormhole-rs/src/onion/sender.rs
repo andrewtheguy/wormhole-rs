@@ -12,7 +12,7 @@ use crate::cli::instructions::print_receiver_command;
 use wormhole_common::core::crypto::generate_key;
 use wormhole_common::core::transfer::{
     prepare_file_for_send, prepare_folder_for_send, run_sender_transfer_with_timeout,
-    setup_temp_file_cleanup_handler, FileHeader, TransferResult, TransferType,
+    setup_temp_file_cleanup_handler, FileHeader, Interrupted, TransferResult, TransferType,
 };
 use wormhole_common::core::wormhole::generate_tor_code;
 
@@ -165,8 +165,10 @@ pub async fn send_folder_tor(folder_path: &Path, use_pin: bool) -> Result<()> {
             use_pin,
         ) => result,
         _ = cleanup_handler.shutdown_rx => {
-            // Graceful shutdown requested - exit with interrupt code
-            std::process::exit(130);
+            // Graceful shutdown requested - clean up and return Interrupted error
+            cleanup_handler.cleanup_path.lock().await.take();
+            let _ = tokio::fs::remove_file(&temp_path).await;
+            return Err(Interrupted.into());
         }
     };
 

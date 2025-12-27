@@ -4,6 +4,7 @@ use std::io::{self, Write};
 use std::path::PathBuf;
 use tracing_subscriber::EnvFilter;
 
+use wormhole_common::core::transfer::is_interrupted;
 use wormhole_common::core::wormhole;
 
 #[cfg(feature = "iroh")]
@@ -146,8 +147,27 @@ fn validate_output_dir(output: &Option<PathBuf>) -> Result<()> {
     Ok(())
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() {
+    // Run the async main and handle errors
+    let result = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("Failed to create Tokio runtime")
+        .block_on(async_main());
+
+    if let Err(e) = result {
+        // Check if this was an interrupt (Ctrl+C)
+        if is_interrupted(&e) {
+            // Exit with 128 + SIGINT (2) = 130, standard Unix convention
+            std::process::exit(130);
+        }
+        // Print error and exit with failure code
+        eprintln!("Error: {:?}", e);
+        std::process::exit(1);
+    }
+}
+
+async fn async_main() -> Result<()> {
     // Set up tracing subscriber with filters for noisy iroh internals
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
         EnvFilter::new("info")

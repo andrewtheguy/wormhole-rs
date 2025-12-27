@@ -9,6 +9,26 @@ use crate::core::crypto::{decrypt, encrypt, CHUNK_SIZE};
 use crate::core::folder::{create_tar_archive, print_tar_creation_info};
 use crate::core::resume::calculate_file_checksum;
 
+/// Error returned when a transfer is interrupted by Ctrl+C.
+///
+/// This error should be handled at the CLI level by exiting with code 130
+/// (standard Unix convention for SIGINT).
+#[derive(Debug, Clone, Copy)]
+pub struct Interrupted;
+
+impl std::fmt::Display for Interrupted {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Transfer interrupted")
+    }
+}
+
+impl std::error::Error for Interrupted {}
+
+/// Check if an error is an Interrupted error.
+pub fn is_interrupted(err: &anyhow::Error) -> bool {
+    err.downcast_ref::<Interrupted>().is_some()
+}
+
 /// Soft limit for large file transfers (100MB)
 pub const LARGE_FILE_THRESHOLD: u64 = 100 * 1024 * 1024;
 
@@ -1124,22 +1144,29 @@ pub fn setup_temp_file_cleanup_handler(temp_path: PathBuf) -> CleanupHandler {
 /// Set up Ctrl+C handler to clean up extraction directory on interrupt.
 /// Used by receivers for folder transfers to clean up partial extraction.
 ///
-/// Note: Spawns a task that lives until Ctrl+C or program exit.
-pub fn setup_dir_cleanup_handler(extract_dir: PathBuf) -> CleanupPath {
+/// Returns a CleanupHandler with:
+/// - `cleanup_path`: Clear this when extraction completes normally
+/// - `shutdown_rx`: Await or select! on this to detect interrupt and shut down gracefully
+pub fn setup_dir_cleanup_handler(extract_dir: PathBuf) -> CleanupHandler {
     let cleanup_path: CleanupPath = std::sync::Arc::new(tokio::sync::Mutex::new(Some(extract_dir)));
     let cleanup_clone = cleanup_path.clone();
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
 
     tokio::spawn(async move {
         if tokio::signal::ctrl_c().await.is_ok() {
             if let Some(path) = cleanup_clone.lock().await.take() {
                 let _ = tokio::fs::remove_dir_all(&path).await;
-                log::error!("Interrupted. Cleaned up extraction directory.");
+                eprintln!("\nInterrupted. Cleaned up extraction directory.");
             }
-            std::process::exit(130);
+            // Signal shutdown instead of calling exit()
+            let _ = shutdown_tx.send(());
         }
     });
 
-    cleanup_path
+    CleanupHandler {
+        cleanup_path,
+        shutdown_rx,
+    }
 }
 
 // ============================================================================
@@ -1425,8 +1452,8 @@ where
             result?;
         }
         _ = cleanup_handler.shutdown_rx => {
-            // Graceful shutdown requested - exit with interrupt code
-            std::process::exit(130);
+            // Graceful shutdown requested - return Interrupted error
+            return Err(Interrupted.into());
         }
     }
 
