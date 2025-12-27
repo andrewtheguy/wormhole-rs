@@ -1500,7 +1500,7 @@ where
     std::fs::create_dir_all(&extract_dir).context("Failed to create extraction directory")?;
 
     // Set up cleanup handler
-    let cleanup_path = setup_dir_cleanup_handler(extract_dir.clone());
+    let cleanup_handler = setup_dir_cleanup_handler(extract_dir.clone());
 
     eprintln!("Extracting to: {}", extract_dir.display());
     print_tar_extraction_info();
@@ -1511,19 +1511,26 @@ where
     // Create streaming reader that feeds tar extractor
     let reader = StreamingReader::new(stream, *key, header.file_size, runtime_handle);
 
-    // Run tar extraction in blocking context
+    // Run tar extraction in blocking context with interrupt handling
     let extract_dir_clone = extract_dir.clone();
-    let (skipped_entries, streaming_reader) = tokio::task::spawn_blocking(move || {
-        extract_tar_archive_returning_reader(reader, &extract_dir_clone)
-    })
-    .await
-    .context("Extraction task panicked")??;
+    let extraction_result = tokio::select! {
+        result = tokio::task::spawn_blocking(move || {
+            extract_tar_archive_returning_reader(reader, &extract_dir_clone)
+        }) => result.context("Extraction task panicked")?,
+        _ = cleanup_handler.shutdown_rx => {
+            // Graceful shutdown requested - return Interrupted error
+            // Note: cleanup_handler already cleaned up the directory in its signal handler
+            return Err(Interrupted.into());
+        }
+    };
+
+    let (skipped_entries, streaming_reader) = extraction_result?;
 
     // Report skipped entries
     print_skipped_entries(&skipped_entries);
 
     // Clear cleanup
-    cleanup_path.lock().await.take();
+    cleanup_handler.cleanup_path.lock().await.take();
 
     eprintln!("\nFolder received successfully!");
     eprintln!("Extracted to: {}", extract_dir.display());

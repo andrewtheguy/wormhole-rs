@@ -94,7 +94,7 @@ pub async fn send_folder_mdns(folder_path: &Path) -> Result<()> {
 
     // Set up cleanup handler for temp file
     let temp_path = prepared.temp_file.path().to_path_buf();
-    let cleanup_handler = setup_temp_file_cleanup_handler(temp_path);
+    let cleanup_handler = setup_temp_file_cleanup_handler(temp_path.clone());
 
     // Generate random PIN (key will be derived via SPAKE2 handshake)
     let pin = generate_pin();
