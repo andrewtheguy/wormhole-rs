@@ -3,17 +3,18 @@
 //! Uses webrtc-ice for connection establishment, then runs the unified
 //! transfer protocol on top of the TCP-based ICE connection.
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use std::path::Path;
 use tokio::fs::File;
 
 use super::agent::IceTransport;
 use super::signaling::{create_sender_signaling, IceSignalingMessage, IceSignalingPayload};
-use wormhole_common::auth::spake2::handshake_as_responder;
+use wormhole_common::core::crypto::generate_key;
 use wormhole_common::core::transfer::{
     format_bytes, prepare_file_for_send, prepare_folder_for_send, run_sender_transfer,
     setup_temp_file_cleanup_handler, FileHeader, TransferResult, TransferType,
 };
+use wormhole_common::core::wormhole::generate_webrtc_code;
 
 /// Send a file via ICE transport.
 ///
@@ -23,6 +24,7 @@ pub async fn send_file_ice(
     file_path: &Path,
     custom_relays: Option<Vec<String>>,
     use_default_relays: bool,
+    use_pin: bool,
 ) -> Result<()> {
     let prepared = match prepare_file_for_send(file_path).await? {
         Some(p) => p,
@@ -37,6 +39,7 @@ pub async fn send_file_ice(
         TransferType::File,
         custom_relays,
         use_default_relays,
+        use_pin,
     )
     .await
 }
@@ -49,6 +52,7 @@ pub async fn send_folder_ice(
     folder_path: &Path,
     custom_relays: Option<Vec<String>>,
     use_default_relays: bool,
+    use_pin: bool,
 ) -> Result<()> {
     let prepared = match prepare_folder_for_send(folder_path).await? {
         Some(p) => p,
@@ -67,6 +71,7 @@ pub async fn send_folder_ice(
         TransferType::Folder,
         custom_relays,
         use_default_relays,
+        use_pin,
     )
     .await;
 
@@ -85,7 +90,12 @@ async fn transfer_via_ice(
     transfer_type: TransferType,
     custom_relays: Option<Vec<String>>,
     use_default_relays: bool,
+    use_pin: bool,
 ) -> Result<()> {
+    // Generate encryption key
+    let key = generate_key();
+    eprintln!("Encryption enabled for transfer");
+
     eprintln!("Setting up ICE transport...");
 
     // Create ICE transport
@@ -108,17 +118,37 @@ async fn transfer_via_ice(
     eprintln!("Connecting to Nostr relays for signaling...");
     let signaling = create_sender_signaling(custom_relays, use_default_relays).await?;
 
-    // Display receiver instructions
-    eprintln!("\n--- Receiver Instructions ---");
-    eprintln!("Run: wormhole-rs-webrtc receive-ice \\");
-    eprintln!("       --transfer-id {} \\", signaling.transfer_id());
-    eprintln!(
-        "       --relay {}",
-        signaling.relay_urls().first().unwrap_or(&"".to_string())
-    );
-    eprintln!("       --sender-pubkey {}", signaling.public_key().to_hex());
+    // Generate wormhole code
+    let code = generate_webrtc_code(
+        &key,
+        signaling.public_key().to_hex(),
+        signaling.transfer_id().to_string(),
+        Some(signaling.relay_urls().to_vec()),
+        filename.clone(),
+        match transfer_type {
+            TransferType::File => "file",
+            TransferType::Folder => "folder",
+        },
+    )?;
+
+    // Display transfer info
+    if use_pin {
+        let pin = wormhole_common::auth::nostr_pin::publish_wormhole_code_via_pin(
+            &signaling.keys,
+            &code,
+            signaling.transfer_id(),
+        )
+        .await?;
+
+        eprintln!("\n--- Receiver Instructions ---");
+        eprintln!("Run: wormhole-rs-webrtc receive --pin");
+        eprintln!("PIN: {}", pin);
+    } else {
+        eprintln!("\n--- Receiver Instructions ---");
+        eprintln!("Run: wormhole-rs-webrtc receive");
+        eprintln!("Wormhole code:\n{}", code);
+    }
     eprintln!();
-    eprintln!("Transfer ID: {}", signaling.transfer_id());
     eprintln!("Filename: {}", filename);
     eprintln!("Size: {}", format_bytes(file_size));
     eprintln!("\nWaiting for receiver to connect...");
@@ -167,14 +197,7 @@ async fn transfer_via_ice(
         .await?;
     eprintln!("ICE connection established!");
 
-    // Perform SPAKE2 handshake using transfer ID as shared context
-    eprintln!("Performing key exchange...");
-    let key = handshake_as_responder(&mut conn, signaling.transfer_id(), signaling.transfer_id())
-        .await
-        .context("SPAKE2 handshake failed")?;
-    eprintln!("Key exchange successful!");
-
-    // Create header and run unified transfer
+    // Create header and run unified transfer (key from wormhole code)
     let header = FileHeader::new(transfer_type, filename, file_size, checksum);
     let result = run_sender_transfer(&mut file, &mut conn, &key, &header).await?;
 

@@ -15,7 +15,8 @@
       "WebFetch(domain:docs.rs)",
       "Bash(ls:*)",
       "Bash({} ;)",
-      "Bash(cargo doc:*)"
+      "Bash(cargo doc:*)",
+      "Bash(git ls-tree:*)"
     ]
   }
 }
