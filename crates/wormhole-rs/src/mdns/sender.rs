@@ -22,6 +22,9 @@ use wormhole_common::core::transfer::{
     setup_temp_file_cleanup_handler, FileHeader, Interrupted, TransferResult, TransferType,
 };
 
+/// Timeout for SPAKE2 handshake with receiver (seconds).
+const HANDSHAKE_TIMEOUT_SECS: u64 = 10;
+
 /// RAII guard for mDNS service cleanup.
 ///
 /// Ensures the mDNS service is unregistered and the daemon is shut down
@@ -259,9 +262,8 @@ async fn transfer_data_internal(
         use tokio::time::timeout;
 
         // Perform SPAKE2 handshake (includes transfer ID validation)
-        // Wait up to 10 seconds for handshake
         let handshake_result = timeout(
-            std::time::Duration::from_secs(10),
+            std::time::Duration::from_secs(HANDSHAKE_TIMEOUT_SECS),
             handshake_as_responder(&mut stream, &pin, &transfer_id),
         )
         .await;
