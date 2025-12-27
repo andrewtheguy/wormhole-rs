@@ -9,7 +9,7 @@ wormhole-rs supports two main categories of transport:
 1. **Internet Transfers** (using `wormhole-rs send`):
     - **iroh mode** (Recommended) - Direct P2P transfers using iroh's QUIC/TLS stack (automatic relay fallback)
     - **Tor Mode**: For anonymity and relay when direct P2P fails (uses `arti` to create hidden services)
-    - **WebRTC Mode** (Legacy): See [WebRTC crate documentation](../crates/wormhole-rs-webrtc/docs/ARCHITECTURE.md)
+    - **WebRTC Mode**: Direct P2P via WebRTC DataChannels with Nostr signaling
 2. **Local Transfers** (using `wormhole-rs send-local`):
     - **mDNS Mode**: LAN-only transfers using mDNS discovery + TCP with SPAKE2 key exchange driven by a 12-character PIN
 
@@ -102,6 +102,48 @@ sequenceDiagram
     Receiver->>Sender: 9. Send Encrypted ACK
 ```
 
+#### WebRTC Mode
+
+```mermaid
+sequenceDiagram
+    participant Sender
+    participant Nostr as Nostr Relays
+    participant Receiver
+
+    Sender->>Sender: 1. Create RTCPeerConnection + data channel
+    Sender->>Sender: 2. Create SDP offer, gather ICE candidates
+    Sender->>Nostr: 3. Connect & Subscribe
+
+    Note over Sender: Display transfer-id, pubkey, relay
+
+    Receiver->>Receiver: 4. Create RTCPeerConnection
+    Receiver->>Nostr: 5. Connect & Subscribe
+    Receiver->>Nostr: 6. Publish Answer (SDP + ICE candidates)
+
+    Nostr->>Sender: 7. Receive Answer
+    Sender->>Nostr: 8. Publish Offer (SDP + ICE candidates)
+    Nostr->>Receiver: 9. Receive Offer
+
+    Note over Sender,Receiver: WebRTC connection established
+
+    Sender->>Receiver: 10. SPAKE2 handshake (transfer-id as password)
+    Note over Sender,Receiver: Shared key derived
+
+    Sender->>Receiver: 11. Send Encrypted Header (AES-256-GCM)
+    alt User accepts transfer
+        Receiver->>Sender: 12. Send Encrypted PROCEED
+    else User declines
+        Receiver->>Sender: 12. Send Encrypted ABORT
+    end
+
+    loop 16KB chunks
+        Sender->>Receiver: Send Encrypted Chunk
+    end
+
+    Sender->>Receiver: DONE
+    Receiver->>Sender: ACK
+```
+
 ### 2. Local Transfers (LAN)
 
 #### Local Mode (mDNS + TCP)
@@ -167,8 +209,12 @@ sequenceDiagram
 - **Discovery**: Onion Address
 - **Encryption**: Tor circuit encryption plus mandatory AES-256-GCM at the application layer.
 
-### WebRTC Mode (`wormhole-rs send-webrtc`) - Legacy
-See [WebRTC crate documentation](../crates/wormhole-rs-webrtc/docs/ARCHITECTURE.md) for details.
+### WebRTC Mode (`wormhole-rs send-webrtc`)
+- **Transport**: WebRTC DataChannel over DTLS
+- **Discovery**: Nostr relays for SDP/ICE signaling (or manual copy-paste)
+- **NAT Traversal**: ICE with STUN server (`stun:stun.l.google.com:19302`)
+- **Encryption**: DTLS (WebRTC built-in) + AES-256-GCM at application layer
+- **Fallback**: Use Tor mode if both peers are behind symmetric NAT
 
 ## Security Model
 
@@ -186,8 +232,17 @@ iroh mode uses two encryption layers for defense in depth:
 - Nonce derived from chunk number (prevents replay attacks)
 - Control signals (PROCEED, ABORT, ACK) are encrypted using reserved chunk numbers
 
-### WebRTC Mode Encryption
-See [WebRTC crate documentation](../crates/wormhole-rs-webrtc/docs/ARCHITECTURE.md#security-model) for WebRTC-specific security details.
+### WebRTC Mode Encryption (Dual Layer)
+WebRTC mode uses two encryption layers for defense in depth:
+
+**Transport Layer (WebRTC/DTLS)**:
+- DTLS encryption for all data channel traffic
+- ICE consent for periodic connectivity verification
+
+**Application Layer (wormhole-rs)**:
+- SPAKE2 key exchange using transfer ID as shared password
+- AES-256-GCM encryption for all data: headers, chunks, and control signals
+- Forward secrecy (new key per transfer)
 
 ### PIN-based Key Exchange (Local Mode)
 - **Format**: 12 characters (11 random + 1 checksum) from an unambiguous charset; the checksum catches typos before attempting a connection.
@@ -263,7 +318,15 @@ Using reserved high chunk numbers for control signals ensures:
 
 ### WebRTC Message Format
 
-See [WebRTC crate documentation](../crates/wormhole-rs-webrtc/docs/ARCHITECTURE.md#wire-protocol-format) for WebRTC-specific wire format.
+WebRTC uses the same unified transfer protocol as other transports:
+
+```
+Header:   [length: 4 bytes BE][encrypted JSON header]
+Data:     [encrypted 16KB chunk]...
+Control:  [encrypted PROCEED/ABORT/DONE/ACK]
+```
+
+The `DataChannelStream` adapter bridges WebRTC's `RTCDataChannel` to tokio's `AsyncRead/AsyncWrite`, allowing the unified protocol to work seamlessly.
 
 ### Nonce Derivation
 

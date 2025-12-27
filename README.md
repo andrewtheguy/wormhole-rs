@@ -5,7 +5,7 @@ A secure peer-to-peer file transfer tool with two main transport categories:
 **1. Internet Transfers** (Wormhole Code)
 - **iroh mode** (Recommended) - Direct P2P transfers using [iroh](https://github.com/n0-computer/iroh) with QUIC/TLS (automatic relay fallback) - requires `iroh` feature
 - **Tor mode** - Anonymous transfers via Tor hidden services (.onion addresses), also serves as relay when P2P fails - requires `onion` feature
-- **WebRTC mode** (Legacy) - ICE/STUN transfers with Nostr signaling - requires `webrtc` feature (see [WebRTC crate docs](crates/wormhole-rs-webrtc/README.md))
+- **WebRTC mode** - Direct P2P via WebRTC DataChannels with Nostr signaling - requires `webrtc` feature (see [WebRTC crate](crates/wormhole-rs-webrtc/))
 
 **2. Local Transfers** (PIN + SPAKE2)
 - **Local mode** - LAN transfers using mDNS discovery, SPAKE2 key exchange from a 12-character PIN, and TCP transport (no internet required)
