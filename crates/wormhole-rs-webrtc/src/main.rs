@@ -110,7 +110,7 @@ async fn async_main() -> Result<()> {
     // Initialize logging with filters for noisy internal modules
     let log_level = if cli.verbose { "debug" } else { "info" };
     let filter = format!(
-        "{},webrtc_ice::agent::agent_internal=error,webrtc_ice::agent::agent_gather=error,nostr_relay_pool=warn",
+        "{},webrtc_ice=error,nostr_relay_pool=warn",
         log_level
     );
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(&filter)).init();
