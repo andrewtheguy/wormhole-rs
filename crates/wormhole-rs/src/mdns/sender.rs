@@ -278,7 +278,7 @@ async fn send_data_over_tcp(
     };
 
     // Send file data using shared component
-    send_file_data(&mut stream, file, key, file_size, start_offset, 10).await?;
+    send_file_data(file, &mut stream, key, file_size, start_offset, 10).await?;
 
     eprintln!("\nAll data sent!");
 

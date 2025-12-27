@@ -130,7 +130,7 @@ async fn transfer_data_tor_internal(
         };
 
         // Send file data using shared component
-        send_file_data(&mut stream, &mut file, &key, file_size, start_offset, 10).await?;
+        send_file_data(&mut file, &mut stream, &key, file_size, start_offset, 10).await?;
 
         // Flush the stream
         stream.flush().await.context("Failed to flush stream")?;
