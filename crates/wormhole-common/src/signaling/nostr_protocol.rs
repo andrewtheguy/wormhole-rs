@@ -255,11 +255,22 @@ async fn discover_best_relays() -> Vec<String> {
     }
 
     // Limit number of relays to probe to avoid too many connections
+    // Reserve space for default relays, then fill remaining slots with random discovered relays
+    let discovered_slots = MAX_RELAYS_TO_PROBE.saturating_sub(DEFAULT_NOSTR_RELAYS.len());
+
     // Shuffle randomly to avoid alphabetic bias (which would favor relays starting with numbers/early letters)
     let mut relays_to_probe: Vec<_> = discovered.into_iter().collect();
     use rand::seq::SliceRandom;
     relays_to_probe.shuffle(&mut rand::thread_rng());
-    relays_to_probe.truncate(MAX_RELAYS_TO_PROBE);
+    relays_to_probe.truncate(discovered_slots);
+
+    // Always include default relays in the probe set (they're known to be reliable)
+    for default_relay in DEFAULT_NOSTR_RELAYS {
+        let relay_str = default_relay.to_string();
+        if !relays_to_probe.contains(&relay_str) {
+            relays_to_probe.push(relay_str);
+        }
+    }
 
     // Probe relays in parallel: NIP-11 capability check + WebSocket connectivity test
     let futures: Vec<_> = relays_to_probe.iter().map(|url| probe_relay(url)).collect();
