@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use iroh::endpoint::{ConnectError, ConnectWithOptsError, ConnectingError, ConnectionError};
 use iroh::Watcher;
 use std::path::PathBuf;
 
@@ -33,13 +34,11 @@ pub async fn receive(
 
     // Connect to sender
     let conn = endpoint.connect(addr, ALPN).await.map_err(|e| {
-        let err_str = e.to_string().to_lowercase();
-        let is_relay_error = err_str.contains("relay")
-            || err_str.contains("alpn")
-            || err_str.contains("no route")
-            || err_str.contains("unreachable");
+        // Determine if this is a relay/network connectivity error by inspecting
+        // the structured error types from iroh/quinn
+        let is_relay_or_network_error = is_relay_or_network_error(&e);
 
-        if is_relay_error {
+        if is_relay_or_network_error {
             anyhow::anyhow!(
                 "Failed to connect to sender: {}\n\n\
                  Relay connection failed. Try Tor mode instead:\n  \
@@ -93,4 +92,71 @@ pub async fn receive(
     eprintln!("Connection closed.");
 
     Ok(())
+}
+
+/// Determine if a connection error indicates a relay or network connectivity issue.
+///
+/// This function inspects the structured error types from iroh/quinn to identify
+/// errors that suggest relay failures, network unreachability, or similar issues
+/// where Tor mode might be a better alternative.
+fn is_relay_or_network_error(e: &ConnectError) -> bool {
+    // First, try to match on structured error variants
+    match e {
+        ConnectError::Connect { source, .. } => match source {
+            ConnectWithOptsError::NoAddress { .. } => return true,
+            ConnectWithOptsError::Quinn { source, .. } => {
+                // Quinn's ConnectError doesn't expose network-level issues directly
+                // Check if the error message indicates connection failure
+                let msg = source.to_string().to_lowercase();
+                if msg.contains("no route") || msg.contains("unreachable") {
+                    return true;
+                }
+            }
+            _ => {}
+        },
+        ConnectError::Connecting { source, .. } => match source {
+            ConnectingError::ConnectionError { source, .. } => {
+                return is_connection_error_network_related(source);
+            }
+            ConnectingError::HandshakeFailure { .. } => {
+                // ALPN mismatch or handshake issues often indicate relay problems
+                return true;
+            }
+            _ => {}
+        },
+        ConnectError::Connection { source, .. } => {
+            return is_connection_error_network_related(source);
+        }
+        _ => {}
+    }
+
+    // Fallback: check error message as a last resort for cases not covered
+    // by the structured matching above. This is a best-effort heuristic for
+    // error conditions that iroh/quinn don't expose as distinct variants.
+    let err_str = e.to_string().to_lowercase();
+    err_str.contains("relay")
+        || err_str.contains("no route")
+        || err_str.contains("unreachable")
+        || err_str.contains("network")
+}
+
+/// Check if a quinn ConnectionError indicates a network-related issue
+fn is_connection_error_network_related(e: &ConnectionError) -> bool {
+    match e {
+        ConnectionError::TimedOut => true,
+        ConnectionError::Reset => true,
+        ConnectionError::TransportError(te) => {
+            // Transport errors can indicate network issues
+            let msg = te.to_string().to_lowercase();
+            msg.contains("no route")
+                || msg.contains("unreachable")
+                || msg.contains("network")
+                || msg.contains("connection refused")
+        }
+        ConnectionError::VersionMismatch => false,
+        ConnectionError::ConnectionClosed(_) => false,
+        ConnectionError::ApplicationClosed(_) => false,
+        ConnectionError::LocallyClosed => false,
+        ConnectionError::CidsExhausted => false,
+    }
 }
