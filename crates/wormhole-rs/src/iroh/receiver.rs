@@ -1,5 +1,7 @@
 use anyhow::{Context, Result};
-use iroh::endpoint::{ConnectError, ConnectWithOptsError, ConnectingError, ConnectionError};
+use iroh::endpoint::{
+    AuthenticationError, ConnectError, ConnectWithOptsError, ConnectingError, ConnectionError,
+};
 use iroh::Watcher;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -141,9 +143,11 @@ fn is_relay_or_network_error(e: &ConnectError) -> bool {
             ConnectingError::ConnectionError { source, .. } => {
                 return is_connection_error_network_related(source);
             }
-            ConnectingError::HandshakeFailure { .. } => {
-                // ALPN mismatch or handshake issues often indicate relay problems
-                return true;
+            ConnectingError::HandshakeFailure { source, .. } => {
+                // Only treat ALPN-related handshake failures as relay/network issues.
+                // Certificate validation or other protocol errors should go to
+                // the general troubleshooting path.
+                return is_authentication_error_relay_related(source);
             }
             _ => {}
         },
@@ -161,6 +165,26 @@ fn is_relay_or_network_error(e: &ConnectError) -> bool {
         || err_str.contains("no route")
         || err_str.contains("unreachable")
         || err_str.contains("network")
+}
+
+/// Check if an AuthenticationError is relay-related (e.g., ALPN mismatch).
+///
+/// Returns true only for errors that suggest relay/network issues.
+/// Certificate validation errors and other protocol issues return false
+/// so they fall into the general troubleshooting path.
+fn is_authentication_error_relay_related(e: &AuthenticationError) -> bool {
+    match e {
+        // NoAlpn indicates ALPN mismatch - typically a relay/protocol issue
+        AuthenticationError::NoAlpn { .. } => true,
+        // RemoteId errors are certificate/identity validation issues - not relay-related
+        AuthenticationError::RemoteId { .. } => false,
+        // Connection errors during handshake - check if network-related
+        AuthenticationError::ConnectionError { source, .. } => {
+            is_connection_error_network_related(source)
+        }
+        // Future variants: conservatively treat as not relay-related
+        _ => false,
+    }
 }
 
 /// Check if a quinn ConnectionError indicates a network-related issue
