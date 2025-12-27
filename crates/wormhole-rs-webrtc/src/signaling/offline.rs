@@ -115,7 +115,9 @@ pub struct OfflineAnswer {
 // ============================================================================
 
 /// Convert webrtc-rs ICE candidates to our serializable format
-pub fn ice_candidates_to_payloads(candidates: Vec<RTCIceCandidate>) -> Result<Vec<IceCandidatePayload>> {
+pub fn ice_candidates_to_payloads(
+    candidates: Vec<RTCIceCandidate>,
+) -> Result<Vec<IceCandidatePayload>> {
     candidates
         .into_iter()
         .map(|c| {
@@ -173,15 +175,6 @@ pub fn display_offer_json(offer: &OfflineOffer) -> Result<()> {
     println!("=== SENDER STEP 2: Press Enter to show the offer code ===");
     std::io::stdout().flush()?;
     std::io::stdin().read_line(&mut String::new())?;
-    println!();
-     println!();
-     println!("=== RECEIVER STEP 2: Press Enter to show the answer code ===");
-     std::io::stdout().flush()?;
-     let _ = std::io::stdin().read_line(&mut String::new());
-     println!();
-     println!("{}", ANSWER_BEGIN_MARKER);
-     println!("{}", wrapped);
-     println!("{}", ANSWER_END_MARKER);
     println!();
     println!("{}", OFFER_BEGIN_MARKER);
     println!("{}", wrapped);

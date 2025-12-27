@@ -48,19 +48,13 @@ impl AsyncWrite for IrohDuplex<'_> {
             .map_err(|e| io::Error::new(io::ErrorKind::Other, e))
     }
 
-    fn poll_flush(
-        mut self: Pin<&mut Self>,
-        cx: &mut TaskContext<'_>,
-    ) -> Poll<io::Result<()>> {
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut TaskContext<'_>) -> Poll<io::Result<()>> {
         Pin::new(&mut *self.send)
             .poll_flush(cx)
             .map_err(|e| io::Error::new(io::ErrorKind::Other, e))
     }
 
-    fn poll_shutdown(
-        mut self: Pin<&mut Self>,
-        cx: &mut TaskContext<'_>,
-    ) -> Poll<io::Result<()>> {
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut TaskContext<'_>) -> Poll<io::Result<()>> {
         Pin::new(&mut *self.send)
             .poll_shutdown(cx)
             .map_err(|e| io::Error::new(io::ErrorKind::Other, e))
@@ -110,19 +104,13 @@ impl AsyncWrite for OwnedIrohDuplex {
             .map_err(|e| io::Error::new(io::ErrorKind::Other, e))
     }
 
-    fn poll_flush(
-        mut self: Pin<&mut Self>,
-        cx: &mut TaskContext<'_>,
-    ) -> Poll<io::Result<()>> {
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut TaskContext<'_>) -> Poll<io::Result<()>> {
         Pin::new(&mut self.send)
             .poll_flush(cx)
             .map_err(|e| io::Error::new(io::ErrorKind::Other, e))
     }
 
-    fn poll_shutdown(
-        mut self: Pin<&mut Self>,
-        cx: &mut TaskContext<'_>,
-    ) -> Poll<io::Result<()>> {
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut TaskContext<'_>) -> Poll<io::Result<()>> {
         Pin::new(&mut self.send)
             .poll_shutdown(cx)
             .map_err(|e| io::Error::new(io::ErrorKind::Other, e))

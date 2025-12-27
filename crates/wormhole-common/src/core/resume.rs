@@ -50,10 +50,10 @@ pub struct ResumeCheck {
 }
 
 /// Get the temp file path for a given final output path.
-/// Format: `<final_path>.wormhole.tmp`
+/// Format: `<final_path>.wormhole-rs.partial`
 pub fn temp_file_path(final_path: &Path) -> PathBuf {
     let mut temp_path = final_path.as_os_str().to_owned();
-    temp_path.push(".wormhole.tmp");
+    temp_path.push(".wormhole-rs.partial");
     PathBuf::from(temp_path)
 }
 
@@ -177,8 +177,7 @@ fn write_metadata_header(file: &mut File, metadata: &ResumeMetadata) -> Result<(
         .context("Failed to write metadata length")?;
 
     // Write padded JSON metadata
-    file.write_all(&json)
-        .context("Failed to write metadata")?;
+    file.write_all(&json).context("Failed to write metadata")?;
 
     file.flush().context("Failed to flush metadata")?;
 
@@ -553,13 +552,16 @@ mod tests {
     fn test_temp_file_path() {
         let path = Path::new("/home/user/file.txt");
         let temp = temp_file_path(path);
-        assert_eq!(temp, PathBuf::from("/home/user/file.txt.wormhole.tmp"));
+        assert_eq!(
+            temp,
+            PathBuf::from("/home/user/file.txt.wormhole-rs.partial")
+        );
     }
 
     #[test]
     fn test_resume_metadata_roundtrip() {
         let dir = tempdir().unwrap();
-        let temp_path = dir.path().join("test.wormhole.tmp");
+        let temp_path = dir.path().join("test.wormhole-rs.partial");
 
         let metadata = ResumeMetadata {
             checksum: 0x123456789ABCDEF0,
@@ -582,7 +584,7 @@ mod tests {
     #[test]
     fn test_check_resume_matching() {
         let dir = tempdir().unwrap();
-        let temp_path = dir.path().join("test.wormhole.tmp");
+        let temp_path = dir.path().join("test.wormhole-rs.partial");
 
         let metadata = ResumeMetadata {
             checksum: 0xDEADBEEF,
@@ -602,7 +604,7 @@ mod tests {
     #[test]
     fn test_check_resume_mismatched_checksum() {
         let dir = tempdir().unwrap();
-        let temp_path = dir.path().join("test.wormhole.tmp");
+        let temp_path = dir.path().join("test.wormhole-rs.partial");
 
         let metadata = ResumeMetadata {
             checksum: 0xDEADBEEF,
@@ -623,7 +625,7 @@ mod tests {
     #[test]
     fn test_finalize_resume_file() {
         let dir = tempdir().unwrap();
-        let temp_path = dir.path().join("test.wormhole.tmp");
+        let temp_path = dir.path().join("test.wormhole-rs.partial");
         let final_path = dir.path().join("test_final.bin");
 
         let metadata = ResumeMetadata {

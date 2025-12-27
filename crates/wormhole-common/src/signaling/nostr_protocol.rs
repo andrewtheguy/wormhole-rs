@@ -263,10 +263,8 @@ async fn discover_best_relays() -> Vec<String> {
 
     // Limit number of relays to probe to avoid too many connections
     // Reserve space for default relays, then fill remaining slots with random discovered relays
-    let default_relay_set: std::collections::HashSet<_> = DEFAULT_NOSTR_RELAYS
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
+    let default_relay_set: std::collections::HashSet<_> =
+        DEFAULT_NOSTR_RELAYS.iter().map(|s| s.to_string()).collect();
 
     // Remove default relays from discovered set to avoid duplicates
     let mut discovered_relays: Vec<_> = discovered

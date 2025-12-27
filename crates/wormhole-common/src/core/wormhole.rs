@@ -48,9 +48,7 @@ fn validate_onion_address(addr: &str) -> Result<()> {
         .chars()
         .all(|c| c.is_ascii_lowercase() || ('2'..='7').contains(&c))
     {
-        anyhow::bail!(
-            "Invalid v3 onion address: contains invalid characters (expected a-z, 2-7)"
-        );
+        anyhow::bail!("Invalid v3 onion address: contains invalid characters (expected a-z, 2-7)");
     }
 
     Ok(())
@@ -187,8 +185,7 @@ pub fn generate_code(addr: &EndpointAddr, key: &[u8; 32]) -> Result<String> {
 /// Returns an error if the onion address is not a valid v3 format.
 pub fn generate_tor_code(onion_address: String, key: &[u8; 32]) -> Result<String> {
     // Validate onion address format early to fail fast
-    validate_onion_address(&onion_address)
-        .context("Invalid onion address in generate_tor_code")?;
+    validate_onion_address(&onion_address).context("Invalid onion address in generate_tor_code")?;
 
     let token = WormholeToken {
         version: CURRENT_VERSION,
@@ -264,7 +261,10 @@ pub fn generate_webrtc_code(
         }
         for relay in relay_list {
             if !relay.starts_with("ws://") && !relay.starts_with("wss://") {
-                anyhow::bail!("Invalid relay URL '{}': must start with ws:// or wss://", relay);
+                anyhow::bail!(
+                    "Invalid relay URL '{}': must start with ws:// or wss://",
+                    relay
+                );
             }
         }
     }

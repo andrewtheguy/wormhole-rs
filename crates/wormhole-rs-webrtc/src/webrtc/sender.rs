@@ -13,8 +13,7 @@ use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 
 use wormhole_common::core::crypto::generate_key;
 use wormhole_common::core::transfer::{
-    format_bytes, prepare_file_for_send, prepare_folder_for_send, run_sender_transfer,
-    setup_temp_file_cleanup_handler, FileHeader, Interrupted, TransferType,
+    format_bytes, run_sender_transfer, send_file_with, send_folder_with, FileHeader, TransferType,
 };
 use wormhole_common::core::wormhole::generate_webrtc_code;
 
@@ -55,7 +54,9 @@ fn is_signaling_error(err: &anyhow::Error) -> bool {
         "failed to subscribe",
     ];
 
-    signaling_phrases.iter().any(|phrase| err_msg.contains(phrase))
+    signaling_phrases
+        .iter()
+        .any(|phrase| err_msg.contains(phrase))
 }
 
 /// Handle signaling error with fallback to manual mode
@@ -311,7 +312,13 @@ async fn transfer_data_webrtc_internal(
 
     let code_str = code.clone();
 
-    display_transfer_code(use_pin, signaling.signing_keys(), &code_str, signaling.transfer_id()).await?;
+    display_transfer_code(
+        use_pin,
+        signaling.signing_keys(),
+        &code_str,
+        signaling.transfer_id(),
+    )
+    .await?;
 
     eprintln!("Filename: {}", filename);
     eprintln!("Size: {}", format_bytes(file_size));
@@ -366,20 +373,20 @@ async fn send_file_webrtc_internal(
     use_default_relays: bool,
     use_pin: bool,
 ) -> Result<()> {
-    let prepared = match prepare_file_for_send(file_path).await? {
-        Some(p) => p,
-        None => return Ok(()),
-    };
-
-    transfer_data_webrtc_internal(
-        prepared.file,
-        prepared.filename,
-        prepared.file_size,
-        prepared.checksum,
-        TransferType::File,
-        custom_relays,
-        use_default_relays,
-        use_pin,
+    send_file_with(
+        file_path,
+        |file, filename, file_size, checksum, transfer_type| {
+            transfer_data_webrtc_internal(
+                file,
+                filename,
+                file_size,
+                checksum,
+                transfer_type,
+                custom_relays,
+                use_default_relays,
+                use_pin,
+            )
+        },
     )
     .await
 }
@@ -412,37 +419,20 @@ async fn send_folder_webrtc_internal(
     use_default_relays: bool,
     use_pin: bool,
 ) -> Result<()> {
-    let prepared = match prepare_folder_for_send(folder_path).await? {
-        Some(p) => p,
-        None => return Ok(()),
-    };
-
-    // Set up cleanup handler for Ctrl+C
-    let temp_path = prepared.temp_file.path().to_path_buf();
-    let cleanup_handler = setup_temp_file_cleanup_handler(temp_path.clone());
-
-    // Run transfer with interrupt handling
-    let result = tokio::select! {
-        result = transfer_data_webrtc_internal(
-            prepared.file,
-            prepared.filename,
-            prepared.file_size,
-            0, // Folders are not resumable
-            TransferType::Folder,
-            custom_relays,
-            use_default_relays,
-            use_pin,
-        ) => result,
-        _ = cleanup_handler.shutdown_rx => {
-            // Graceful shutdown requested - clean up and return Interrupted error
-            cleanup_handler.cleanup_path.lock().await.take();
-            let _ = tokio::fs::remove_file(&temp_path).await;
-            return Err(Interrupted.into());
-        }
-    };
-
-    // Clear cleanup path
-    cleanup_handler.cleanup_path.lock().await.take();
-
-    result
+    send_folder_with(
+        folder_path,
+        |file, filename, file_size, _checksum, transfer_type| {
+            transfer_data_webrtc_internal(
+                file,
+                filename,
+                file_size,
+                0, // Folders are not resumable
+                transfer_type,
+                custom_relays,
+                use_default_relays,
+                use_pin,
+            )
+        },
+    )
+    .await
 }

@@ -11,15 +11,15 @@ use std::path::Path;
 use tokio::fs::File;
 use tokio::net::TcpStream;
 
-use crate::cli::instructions::print_receiver_command;
 use super::common::{
     generate_pin, generate_transfer_id, PORT_RANGE_END, PORT_RANGE_START, SERVICE_TYPE,
     TXT_FILENAME, TXT_FILE_SIZE, TXT_TRANSFER_ID, TXT_TRANSFER_TYPE,
 };
+use crate::cli::instructions::print_receiver_command;
 use wormhole_common::auth::spake2::handshake_as_responder;
 use wormhole_common::core::transfer::{
-    format_bytes, prepare_file_for_send, prepare_folder_for_send, run_sender_transfer,
-    setup_temp_file_cleanup_handler, FileHeader, Interrupted, TransferResult, TransferType,
+    format_bytes, run_sender_transfer, send_file_with, send_folder_with, FileHeader,
+    TransferResult, TransferType,
 };
 
 /// Timeout for SPAKE2 handshake with receiver (seconds).
@@ -99,22 +99,15 @@ fn find_available_port() -> Result<TcpListener> {
 /// Generates a random passphrase and displays it to the user.
 /// The file is encrypted using a key derived from the passphrase.
 pub async fn send_file_mdns(file_path: &Path) -> Result<()> {
-    let prepared = match prepare_file_for_send(file_path).await? {
-        Some(p) => p,
-        None => return Ok(()),
-    };
+    send_file_with(
+        file_path,
+        |file, filename, file_size, checksum, transfer_type| async move {
+            // Generate random PIN (key will be derived via SPAKE2 handshake)
+            let pin = generate_pin();
+            display_receiver_instructions(&pin);
 
-    // Generate random PIN (key will be derived via SPAKE2 handshake)
-    let pin = generate_pin();
-    display_receiver_instructions(&pin);
-
-    transfer_data_internal(
-        prepared.file,
-        prepared.filename,
-        prepared.file_size,
-        prepared.checksum,
-        TransferType::File,
-        pin,
+            transfer_data_internal(file, filename, file_size, checksum, transfer_type, pin).await
+        },
     )
     .await
 }
@@ -125,41 +118,17 @@ pub async fn send_file_mdns(file_path: &Path) -> Result<()> {
 /// a receiver to connect. Generates a random passphrase and displays it.
 /// The archive is encrypted using a key derived from the passphrase.
 pub async fn send_folder_mdns(folder_path: &Path) -> Result<()> {
-    let prepared = match prepare_folder_for_send(folder_path).await? {
-        Some(p) => p,
-        None => return Ok(()),
-    };
+    send_folder_with(
+        folder_path,
+        |file, filename, file_size, _checksum, transfer_type| async move {
+            // Generate random PIN (key will be derived via SPAKE2 handshake)
+            let pin = generate_pin();
+            display_receiver_instructions(&pin);
 
-    // Set up cleanup handler for temp file
-    let temp_path = prepared.temp_file.path().to_path_buf();
-    let cleanup_handler = setup_temp_file_cleanup_handler(temp_path.clone());
-
-    // Generate random PIN (key will be derived via SPAKE2 handshake)
-    let pin = generate_pin();
-    display_receiver_instructions(&pin);
-
-    // Run transfer with interrupt handling
-    let result = tokio::select! {
-        result = transfer_data_internal(
-            prepared.file,
-            prepared.filename,
-            prepared.file_size,
-            0, // Folders are not resumable
-            TransferType::Folder,
-            pin,
-        ) => result,
-        _ = cleanup_handler.shutdown_rx => {
-            // Graceful shutdown requested - clean up and return Interrupted error
-            cleanup_handler.cleanup_path.lock().await.take();
-            let _ = tokio::fs::remove_file(&temp_path).await;
-            return Err(Interrupted.into());
-        }
-    };
-
-    // Clear cleanup path (file will be dropped with temp_file)
-    cleanup_handler.cleanup_path.lock().await.take();
-
-    result
+            transfer_data_internal(file, filename, file_size, 0, transfer_type, pin).await
+        },
+    )
+    .await
 }
 
 /// Internal transfer logic shared between file and folder sends.
@@ -215,7 +184,9 @@ async fn transfer_data_internal(
     .enable_addr_auto();
 
     let fullname = service_info.get_fullname().to_string();
-    mdns_guard.daemon.register(service_info)
+    mdns_guard
+        .daemon
+        .register(service_info)
         .context("Failed to register mDNS service")?;
     mdns_guard.set_fullname(fullname);
 
@@ -326,4 +297,3 @@ async fn send_data_over_tcp(
 
     Ok(())
 }
-

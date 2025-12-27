@@ -3,10 +3,10 @@
 This guide describes common scenarios where `wormhole-rs` shines and which mode to use for each.
 
 ## 1. No Internet Access (LAN / Air-gapped)
-**Scenario**: You need to transfer files between two computers on the same Wi-Fi or Ethernet network, but the internet is down, slow, or you are in an isolated environment (air-gapped).
+**Scenario**: You need to transfer files without using the public internet: either both machines are on the same LAN, or you are fully air‑gapped and can only copy/paste text.
 
-**Solution**: **Local Mode** (`send-local` / `receive-local`)
-- **Why**: Uses mDNS for discovery and direct TCP connections. No data leaves your local network. Relies on a short passphrase instead of a long code. **This is the only mode that works fully offline.**
+**Solution A**: **Local Mode** (`send-local` / `receive-local`)  
+- **Why**: Uses mDNS discovery and direct TCP. No data leaves your local network. Relies on a short 12‑character PIN instead of a long code.
 - **Command**:
   ```bash
   # Sender
@@ -15,9 +15,21 @@ This guide describes common scenarios where `wormhole-rs` shines and which mode 
   # Receiver
   wormhole-rs receive-local
   ```
-- **Experience**: The sender is shown a random 12-character PIN. The receiver finds the sender automatically and is prompted for that PIN.
+- **Experience**: The sender is shown a random 12‑character PIN. The receiver finds the sender automatically and is prompted for that PIN.
 
-> **Note**: iroh Mode and Tor Mode both require internet access for discovery/relay network operations and will not work in air-gapped environments.
+**Solution B**: **WebRTC Manual Mode** (`wormhole-rs-webrtc send-manual` / `receive-manual`)  
+- **Why**: Works when mDNS is blocked or the devices are on different networks, as long as you can copy/paste text between them. No Nostr relay required.
+- **Command**:
+  ```bash
+  # Sender
+  wormhole-rs-webrtc send-manual /path/to/file
+
+  # Receiver
+  wormhole-rs-webrtc receive-manual
+  ```
+- **Experience**: Sender copy/pastes an SDP offer, receiver replies with an SDP answer. The exchanged text includes the encryption key, so use a secure channel.
+
+> **Note**: Tor Mode requires internet access. iroh Mode can be used in air‑gapped environments **only if** you self‑host the relay **and** discovery services on the same network; the default public relay/discovery endpoints require internet access.
 
 ---
 
@@ -143,4 +155,4 @@ See [ROADMAP.md](ROADMAP.md) for planned features and development priorities.
 
 ## WebRTC Mode
 
-WebRTC mode provides P2P transfers with Nostr signaling for NAT traversal. See [main README](../README.md#3-webrtc-mode---wormhole-rs-webrtc-send) for usage details.
+WebRTC mode provides P2P transfers with Nostr signaling for NAT traversal, plus a manual copy/paste path for offline or relay‑blocked environments. See [main README](../README.md#3-webrtc-mode---wormhole-rs-webrtc-send) for usage details.

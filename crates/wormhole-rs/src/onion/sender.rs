@@ -13,8 +13,8 @@ use tor_hsservice::{config::OnionServiceConfigBuilder, handle_rend_requests};
 use crate::cli::instructions::print_receiver_command;
 use wormhole_common::core::crypto::generate_key;
 use wormhole_common::core::transfer::{
-    prepare_file_for_send, prepare_folder_for_send, run_sender_transfer_with_timeout,
-    setup_temp_file_cleanup_handler, FileHeader, Interrupted, TransferResult, TransferType,
+    run_sender_transfer_with_timeout, send_file_with, send_folder_with, FileHeader, TransferResult,
+    TransferType,
 };
 use wormhole_common::core::wormhole::generate_tor_code;
 use wormhole_common::signaling::nostr_protocol::generate_transfer_id;
@@ -160,54 +160,22 @@ async fn transfer_data_tor_internal(
 
 /// Send a file via Tor hidden service
 pub async fn send_file_tor(file_path: &Path, use_pin: bool) -> Result<()> {
-    let prepared = match prepare_file_for_send(file_path).await? {
-        Some(p) => p,
-        None => return Ok(()),
-    };
-
-    transfer_data_tor_internal(
-        prepared.file,
-        prepared.filename,
-        prepared.file_size,
-        prepared.checksum,
-        TransferType::File,
-        use_pin,
+    send_file_with(
+        file_path,
+        |file, filename, file_size, checksum, transfer_type| {
+            transfer_data_tor_internal(file, filename, file_size, checksum, transfer_type, use_pin)
+        },
     )
     .await
 }
 
 /// Send a folder via Tor hidden service (as tar archive)
 pub async fn send_folder_tor(folder_path: &Path, use_pin: bool) -> Result<()> {
-    let prepared = match prepare_folder_for_send(folder_path).await? {
-        Some(p) => p,
-        None => return Ok(()),
-    };
-
-    // Set up cleanup handler
-    let temp_path = prepared.temp_file.path().to_path_buf();
-    let cleanup_handler = setup_temp_file_cleanup_handler(temp_path.clone());
-
-    // Run transfer with interrupt handling
-    let result = tokio::select! {
-        result = transfer_data_tor_internal(
-            prepared.file,
-            prepared.filename,
-            prepared.file_size,
-            0, // Folders are not resumable
-            TransferType::Folder,
-            use_pin,
-        ) => result,
-        _ = cleanup_handler.shutdown_rx => {
-            // Graceful shutdown requested - clean up and return Interrupted error
-            cleanup_handler.cleanup_path.lock().await.take();
-            let _ = tokio::fs::remove_file(&temp_path).await;
-            return Err(Interrupted.into());
-        }
-    };
-
-    // Clean up temp file
-    cleanup_handler.cleanup_path.lock().await.take();
-    let _ = tokio::fs::remove_file(&temp_path).await;
-
-    result
+    send_folder_with(
+        folder_path,
+        |file, filename, file_size, checksum, transfer_type| {
+            transfer_data_tor_internal(file, filename, file_size, checksum, transfer_type, use_pin)
+        },
+    )
+    .await
 }
