@@ -260,10 +260,38 @@ pub fn extract_tar_archive<R: Read>(reader: R, extract_dir: &Path) -> Result<Vec
 ///
 /// # Returns
 /// * Tuple of (skipped entry descriptions, reader)
+///
+/// # Security
+///
+/// This function validates each entry path to prevent directory traversal attacks.
+/// Entries with paths that would escape the extraction directory are skipped and logged.
 pub fn extract_tar_archive_returning_reader<R: Read>(
     reader: R,
     extract_dir: &Path,
 ) -> Result<(Vec<String>, R)> {
+    // Ensure extraction directory exists and is writable
+    std::fs::create_dir_all(extract_dir)
+        .with_context(|| format!("Failed to create extraction directory: {}", extract_dir.display()))?;
+
+    // Verify it's actually a directory
+    if !extract_dir.is_dir() {
+        anyhow::bail!(
+            "Extraction path exists but is not a directory: {}",
+            extract_dir.display()
+        );
+    }
+
+    // Verify directory is writable by creating and removing a temp file
+    let test_file = extract_dir.join(".wormhole_write_test");
+    std::fs::File::create(&test_file)
+        .with_context(|| format!("Extraction directory is not writable: {}", extract_dir.display()))?;
+    let _ = std::fs::remove_file(&test_file);
+
+    // Canonicalize extract_dir for path traversal checks
+    let canonical_extract_dir = extract_dir
+        .canonicalize()
+        .with_context(|| format!("Failed to canonicalize extraction directory: {}", extract_dir.display()))?;
+
     let mut archive = Archive::new(reader);
     // Preserve file mode (0755, etc.) but not owner/group (UID/GID mismatch across machines)
     archive.set_preserve_permissions(true);
@@ -273,10 +301,36 @@ pub fn extract_tar_archive_returning_reader<R: Read>(
 
     for entry in archive.entries().context("Failed to read tar entries")? {
         let mut entry = entry.context("Failed to read tar entry")?;
-        let path = entry
+        let entry_path = entry
             .path()
             .context("Failed to get entry path")?
             .into_owned();
+
+        // Security: Validate entry path to prevent directory traversal
+        // Check for obvious path traversal attempts before joining
+        let path_str = entry_path.to_string_lossy();
+        if path_str.contains("..") {
+            skipped.push(format!("{} (path traversal attempt)", entry_path.display()));
+            log::warn!(
+                "Skipping entry with path traversal: {}",
+                entry_path.display()
+            );
+            continue;
+        }
+
+        // Validate that the resolved path stays within extract_dir
+        // We need to check the target path after joining with extract_dir
+        let target_path = canonical_extract_dir.join(&entry_path);
+        // For entries that don't exist yet, we can't canonicalize them,
+        // so we check component-by-component that no ".." escapes the root
+        if !is_path_within_dir(&target_path, &canonical_extract_dir) {
+            skipped.push(format!("{} (escapes extraction directory)", entry_path.display()));
+            log::warn!(
+                "Skipping entry that escapes extraction directory: {}",
+                entry_path.display()
+            );
+            continue;
+        }
 
         // Check entry type
         let entry_type = entry.header().entry_type();
@@ -284,7 +338,7 @@ pub fn extract_tar_archive_returning_reader<R: Read>(
         // On Windows, symlinks require special privileges and may fail
         #[cfg(windows)]
         if entry_type.is_symlink() || entry_type.is_hard_link() {
-            skipped.push(format!("{} (symlink/hardlink)", path.display()));
+            skipped.push(format!("{} (symlink/hardlink)", entry_path.display()));
             continue;
         }
 
@@ -293,19 +347,54 @@ pub fn extract_tar_archive_returning_reader<R: Read>(
             || entry_type.is_character_special()
             || entry_type.is_fifo()
         {
-            skipped.push(format!("{} (special file)", path.display()));
+            skipped.push(format!("{} (special file)", entry_path.display()));
             continue;
         }
 
         // Extract the entry
         entry
             .unpack_in(extract_dir)
-            .with_context(|| format!("Failed to extract: {}", path.display()))?;
+            .with_context(|| format!("Failed to extract: {}", entry_path.display()))?;
     }
 
     // Return reader for ACK sending
     let reader = archive.into_inner();
     Ok((skipped, reader))
+}
+
+/// Check if a target path stays within the given base directory.
+///
+/// This function handles paths that may not exist yet by checking
+/// that no component causes traversal outside the base directory.
+fn is_path_within_dir(target: &Path, base: &Path) -> bool {
+    use std::path::Component;
+
+    // Normalize both paths by iterating components
+    let mut normalized = base.to_path_buf();
+
+    for component in target.strip_prefix(base).unwrap_or(target).components() {
+        match component {
+            Component::Prefix(_) | Component::RootDir => {
+                // Absolute path component - this escapes the base
+                return false;
+            }
+            Component::ParentDir => {
+                // ".." - go up one level, but don't go above base
+                if !normalized.pop() || !normalized.starts_with(base) {
+                    return false;
+                }
+            }
+            Component::CurDir => {
+                // "." - ignore
+            }
+            Component::Normal(name) => {
+                normalized.push(name);
+            }
+        }
+    }
+
+    // Final check: the normalized path must start with base
+    normalized.starts_with(base)
 }
 
 /// Print folder creation info messages.

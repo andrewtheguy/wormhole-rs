@@ -19,6 +19,43 @@ pub const PROTOCOL_TOR: &str = "tor";
 /// Protocol identifier for webrtc transport (WebRTC + Nostr signaling)
 pub const PROTOCOL_WEBRTC: &str = "webrtc";
 
+/// Validate a Tor v3 onion address format.
+///
+/// A valid v3 onion address:
+/// - Ends with ".onion"
+/// - Has exactly 56 base32 characters before the ".onion" suffix
+/// - Uses only lowercase letters a-z and digits 2-7 (base32 alphabet)
+///
+/// # Returns
+/// `Ok(())` if valid, `Err` with descriptive message if invalid.
+fn validate_onion_address(addr: &str) -> Result<()> {
+    if !addr.ends_with(".onion") {
+        anyhow::bail!("Onion address must end with '.onion'");
+    }
+
+    let without_suffix = addr.strip_suffix(".onion").unwrap();
+
+    // V3 onion addresses are exactly 56 base32 characters
+    if without_suffix.len() != 56 {
+        anyhow::bail!(
+            "Invalid v3 onion address: expected 56 characters before '.onion', got {}",
+            without_suffix.len()
+        );
+    }
+
+    // Base32 alphabet for Tor: a-z and 2-7
+    if !without_suffix
+        .chars()
+        .all(|c| c.is_ascii_lowercase() || ('2'..='7').contains(&c))
+    {
+        anyhow::bail!(
+            "Invalid v3 onion address: contains invalid characters (expected a-z, 2-7)"
+        );
+    }
+
+    Ok(())
+}
+
 /// Minimal address for serialization - only contains node ID and relay URL
 /// IP addresses are auto-discovered by iroh, so we don't need them in the wormhole code
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -142,9 +179,17 @@ pub fn generate_code(addr: &EndpointAddr, key: &[u8; 32]) -> Result<String> {
 /// Format: base64url(json(WormholeToken))
 ///
 /// # Arguments
-/// * `onion_address` - The .onion address of the hidden service
+/// * `onion_address` - The .onion address of the hidden service (v3 format)
 /// * `key` - The encryption key (required)
+///
+/// # Errors
+///
+/// Returns an error if the onion address is not a valid v3 format.
 pub fn generate_tor_code(onion_address: String, key: &[u8; 32]) -> Result<String> {
+    // Validate onion address format early to fail fast
+    validate_onion_address(&onion_address)
+        .context("Invalid onion address in generate_tor_code")?;
+
     let token = WormholeToken {
         version: CURRENT_VERSION,
         protocol: PROTOCOL_TOR.to_string(),
@@ -174,6 +219,10 @@ pub fn generate_tor_code(onion_address: String, key: &[u8; 32]) -> Result<String
 /// * `relays` - List of Nostr relay URLs for signaling
 /// * `filename` - Original filename
 /// * `transfer_type` - "file" or "folder"
+///
+/// # Errors
+///
+/// Returns an error if `transfer_type` is not "file" or "folder".
 pub fn generate_webrtc_code(
     key: &[u8; 32],
     sender_pubkey: String,
@@ -182,6 +231,14 @@ pub fn generate_webrtc_code(
     filename: String,
     transfer_type: &str,
 ) -> Result<String> {
+    // Validate transfer_type early to fail fast
+    if transfer_type != "file" && transfer_type != "folder" {
+        anyhow::bail!(
+            "Invalid transfer_type: '{}' (expected 'file' or 'folder')",
+            transfer_type
+        );
+    }
+
     let token = WormholeToken {
         version: CURRENT_VERSION,
         protocol: PROTOCOL_WEBRTC.to_string(),
@@ -309,10 +366,13 @@ pub fn parse_code(code: &str) -> Result<WormholeToken> {
         anyhow::bail!("Invalid iroh token: missing endpoint address");
     }
 
-    // For tor protocol, ensure onion_address is present
+    // For tor protocol, ensure onion_address is present and valid
     if token.protocol == PROTOCOL_TOR {
-        if token.onion_address.is_none() {
-            anyhow::bail!("Invalid tor token: missing onion address");
+        match &token.onion_address {
+            None => anyhow::bail!("Invalid tor token: missing onion address"),
+            Some(addr) => {
+                validate_onion_address(addr).context("Invalid tor token")?;
+            }
         }
     }
 

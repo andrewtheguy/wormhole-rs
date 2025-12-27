@@ -30,7 +30,7 @@ fn display_receiver_instructions(pin: &str) {
 }
 
 /// Find an available TCP port in the configured range.
-/// Binds to [::] for dual-stack (IPv4 + IPv6) support.
+/// Attempts dual-stack binding (IPv6 accepting IPv4) first, with IPv4-only fallback.
 /// Starts at a random port within the range for unpredictability.
 fn find_available_port() -> Result<TcpListener> {
     use rand::Rng;
