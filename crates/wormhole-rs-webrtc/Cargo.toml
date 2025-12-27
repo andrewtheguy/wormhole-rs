@@ -6,7 +6,7 @@ publish = false  # Not ready for publishing
 
 # NOTE: This crate is NOT in the workspace members list.
 # It can be built manually with: cargo build -p wormhole-rs-webrtc
-# This isolates WebRTC so it doesn't interfere with the main build.
+# This isolates ICE transport so it doesn't interfere with the main build.
 
 [[bin]]
 name = "wormhole-rs-webrtc"
@@ -26,12 +26,20 @@ hex = "0.4"
 rand = "0.8"
 futures = "0.3"
 log = "0.4"
+pin-project-lite = "0.2"
 
 # Nostr signaling
 nostr-sdk = "0.44.1"
 
-# WebRTC
-webrtc = "0.11"
+# ICE transport (replaces full webrtc stack)
+webrtc-ice = "0.14"
+webrtc-util = "0.12"  # Must match webrtc-ice's internal version
+
+# For async bridging
 tokio-tungstenite = { version = "0.21", features = ["native-tls"] }
 uuid = { version = "1", features = ["v4"] }
 bytes = "1"
+
+# CLI
+clap = { version = "4", features = ["derive"] }
+env_logger = "0.11"

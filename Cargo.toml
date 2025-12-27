@@ -4,6 +4,9 @@ members = [
     "crates/wormhole-common",
     "crates/wormhole-rs",
 ]
+exclude = [
+    "crates/wormhole-rs-webrtc",  # Isolated crate, built separately
+]
 
 [workspace.package]
 version = "0.2.0"

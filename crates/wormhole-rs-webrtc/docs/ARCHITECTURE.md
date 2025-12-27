@@ -1,135 +1,203 @@
-# WebRTC Transport Architecture
-
-> **Note**: The WebRTC transport is a legacy/experimental feature. For new users, we recommend using **iroh mode** (`send-iroh`) which provides better reliability and simpler setup.
+# ICE Transport Architecture
 
 ## Overview
 
-WebRTC mode uses WebRTC Data Channels for peer-to-peer file transfer with Nostr relays for signaling, or optional copy/paste manual signaling (`--manual-signaling`).
+The ICE transport uses `webrtc-ice` for NAT traversal with TCP candidates, providing a reliable byte stream for the unified transfer protocol.
 
-## Transfer Flow
+## Why ICE Instead of Full WebRTC?
 
-### 1. Signaling (WebRTC + Nostr)
+| Aspect | Full WebRTC | ICE-Only |
+|--------|-------------|----------|
+| Stack | SCTP/DTLS/DataChannel | TCP via ICE |
+| Complexity | High | Low |
+| Binary size | ~5MB | ~1MB |
+| Protocol | Custom datagram-based | Unified stream-based |
+| Compatibility | WebRTC only | Same as iroh/Tor/mDNS |
 
-```mermaid
-sequenceDiagram
-    participant Sender
-    participant Relays as Nostr Relays
-    participant Receiver
+By using TCP candidates only, we get ordered, reliable byte streams that work directly with our unified transfer protocol.
 
-    Note over Sender: PIN Mode (Optional)
-
-    Sender->>Sender: 1. Generate 12-char PIN
-    Sender->>Sender: 2. Encrypt Wormhole Code with PIN
-    Sender->>Relays: 3. Publish PIN Exchange Event (kind 24243)
-
-    Receiver->>Receiver: 4. Enter PIN
-    Receiver->>Relays: 5. Query for PIN hash
-    Relays->>Receiver: 6. Return Encrypted Code
-    Receiver->>Receiver: 7. Decrypt Wormhole Code
-
-    Note over Receiver: Continues with Standard Flow below...
-
-    Sender->>Sender: 1. Gen ephemeral keys (Nostr + AES)
-    Sender->>Sender: 2. Create wormhole code
-    Note over Sender: Code = base64(AES_key + Nostr_Pubkey + Relay_List)
-
-    Sender->>Relays: 3. Connect & Listen for Offer
-
-    Receiver->>Relays: 4. Connect & Send "Ready" (kind 24242)
-    Sender->>Relays: 5. Send WebRTC Offer (SDP)
-    Receiver->>Relays: 6. Send WebRTC Answer (SDP)
-
-    par ICE Candidate Exchange
-        Sender->>Relays: Send ICE Candidates
-        Receiver->>Relays: Send ICE Candidates
-    end
-
-    Note over Sender,Receiver: WebRTC Data Channel Established
-```
-
-### 2. Data Transfer (WebRTC Path)
+## Connection Flow
 
 ```mermaid
 sequenceDiagram
     participant Sender
+    participant Nostr as Nostr Relays
     participant Receiver
 
-    Note over Sender,Receiver: Direct P2P Data Channel
+    Note over Sender: 1. Setup
+    Sender->>Sender: Create ICE Agent (TCP mode)
+    Sender->>Sender: Gather candidates via STUN
+    Sender->>Nostr: Connect & Subscribe
 
-    Sender->>Receiver: 1. Send Encrypted Header (AES-256-GCM)
-    Note over Receiver: Check file existence, prompt user
+    Note over Sender: Display transfer info
+    Sender->>Sender: Show transfer-id, pubkey, relay
 
-    alt User accepts transfer
-        Receiver->>Sender: 2. Send Encrypted PROCEED
-    else User declines or file conflict
-        Receiver->>Sender: 2. Send Encrypted ABORT
-        Note over Sender,Receiver: Transfer cancelled
-    end
+    Note over Receiver: 2. Join
+    Receiver->>Receiver: Create ICE Agent (TCP mode)
+    Receiver->>Receiver: Gather candidates via STUN
+    Receiver->>Nostr: Connect & Subscribe
+    Receiver->>Nostr: Publish Answer (ufrag, pwd, candidates)
 
+    Note over Sender: 3. Exchange
+    Nostr->>Sender: Receive Answer
+    Sender->>Nostr: Publish Offer (ufrag, pwd, candidates)
+    Nostr->>Receiver: Receive Offer
+
+    Note over Sender,Receiver: 4. ICE Connection
+    Sender->>Receiver: ICE dial() as controlling agent
+    Receiver->>Sender: ICE accept() as controlled agent
+    Note over Sender,Receiver: TCP connection established
+
+    Note over Sender,Receiver: 5. Key Exchange
+    Sender->>Receiver: SPAKE2 handshake (responder)
+    Receiver->>Sender: SPAKE2 handshake (initiator)
+    Note over Sender,Receiver: Shared key derived
+
+    Note over Sender,Receiver: 6. Transfer (Unified Protocol)
+    Sender->>Receiver: Encrypted Header
+    Receiver->>Sender: PROCEED/ABORT
     loop 16KB chunks
-        Sender->>Sender: Encrypt chunk (AES-256-GCM)
-        Sender->>Receiver: Send chunk
-        Receiver->>Receiver: Decrypt & Write
+        Sender->>Receiver: Encrypted chunk
     end
-
-    Sender->>Receiver: 3. Send "Done" Signal
-    Receiver->>Sender: 4. Send Encrypted ACK
+    Sender->>Receiver: DONE
+    Receiver->>Sender: ACK
 ```
 
-### Manual Signaling (Copy/Paste, Offline-Friendly)
+## Module Structure
 
-Used when relays are blocked or unavailable (`--manual-signaling`). Signaling blobs are base64url-encoded JSON with CRC32 checksums; they expire under the same TTL checks as wormhole codes.
+```
+src/ice/
+├── mod.rs        # Module exports
+├── agent.rs      # ICE agent wrapper (IceTransport)
+├── conn.rs       # AsyncRead/AsyncWrite adapter (IceConn)
+├── signaling.rs  # Nostr signaling for ICE
+├── sender.rs     # Send file via ICE
+└── receiver.rs   # Receive file via ICE
+```
 
-1. Sender gathers ICE candidates (STUN only) and prints an offer blob containing SDP, ICE candidates, filename/size/type, and a hex AES-256-GCM key.
-2. Receiver pastes the blob, validates checksum/TTL, sets the remote description, and returns an answer blob with SDP + ICE.
-3. Sender pastes the answer, completes WebRTC setup, and transfers over the encrypted data channel.
+## Key Components
 
-## Connection Details
+### IceTransport (agent.rs)
 
-### WebRTC Mode (`wormhole-rs send-webrtc`)
-- **Transport**: WebRTC Data Channels (SCTP/DTLS)
-- **Signaling**: Nostr Relays (JSON payloads) by default; copy/paste manual signaling available with `--manual-signaling`
-  - Default: Auto-discovers best relays via NIP-65/NIP-66, probes for capability and latency
-  - Custom: Use `--nostr-relay wss://...` for specific Nostr relays
-  - Fallback: Use `--use-default-relays` to skip discovery and use hardcoded defaults
-- **NAT traversal**: STUN (no built-in TURN); if direct P2P fails, use Tor mode for relay
-- **Encryption**: Mandatory AES-256-GCM for all application data (on top of DTLS).
+Wraps `webrtc-ice::Agent` configured for TCP candidates:
+
+```rust
+let config = AgentConfig {
+    urls: stun_urls,
+    network_types: vec![NetworkType::Tcp4, NetworkType::Tcp6],
+    ..Default::default()
+};
+```
+
+Key methods:
+- `new()` - Create agent with default STUN servers
+- `gather_candidates()` - Start gathering ICE candidates
+- `get_local_credentials()` - Get ufrag/pwd for signaling
+- `dial()` - Connect as controlling agent (sender)
+- `accept()` - Connect as controlled agent (receiver)
+
+### IceConn (conn.rs)
+
+Bridges `webrtc_util::Conn` (async send/recv) to tokio's `AsyncRead/AsyncWrite`:
+
+```rust
+impl AsyncRead for IceConn { ... }
+impl AsyncWrite for IceConn { ... }
+```
+
+This allows using the unified transfer protocol directly:
+```rust
+run_sender_transfer(&mut file, &mut ice_conn, &key, &header).await?;
+run_receiver_transfer(ice_conn, key, output_dir, no_resume).await?;
+```
+
+### Signaling (signaling.rs)
+
+ICE signaling payload exchanged via Nostr:
+
+```rust
+struct IceSignalingPayload {
+    ufrag: String,           // ICE username fragment
+    pwd: String,             // ICE password
+    candidates: Vec<IceCandidateInfo>,
+}
+```
+
+Message types:
+- `ice-offer` - Sender's credentials + candidates
+- `ice-answer` - Receiver's credentials + candidates
 
 ## Security Model
 
-### WebRTC Mode Encryption (WebRTC + Nostr)
-Since signaling happens over public relays, we cannot trust the transport for key exchange.
-- **Key Exchange**: Ephemeral AES-256 key generated by sender, carried in the wormhole code (Nostr signaling) or inside the manual-offer blob (`--manual-signaling`).
-- **Confidentiality**: All data (headers, chunks, and control signals) is encrypted with AES-256-GCM BEFORE sending over the data channel.
-- **Signaling Privacy**: Metadata (SDP, ICE) is currently sent in plaintext JSON events (Kinds 24242). This reveals IP addresses to relays but NOT file contents. Manual signaling uses copy/paste blobs without relays.
+### Key Exchange
 
-## Wire Protocol Format
+Unlike the old WebRTC implementation which pre-shared an AES key in the wormhole code, ICE transport uses SPAKE2:
 
-### WebRTC Message Format
+1. Transfer ID serves as the shared password
+2. SPAKE2 derives a session key from transfer ID
+3. All data encrypted with AES-256-GCM using derived key
 
-WebRTC uses a message-based protocol with a type byte prefix:
+This provides:
+- Forward secrecy (new key per transfer)
+- No key in signaling messages
+- Same security model as other transports
+
+### Signaling Privacy
+
+ICE credentials (ufrag/pwd) and candidates are sent via Nostr in base64-encoded JSON. This reveals:
+- IP addresses in ICE candidates
+- Transfer ID (public identifier)
+
+It does NOT reveal:
+- File contents (encrypted after SPAKE2)
+- Encryption keys (derived via SPAKE2)
+
+## Wire Protocol
+
+Uses the unified transfer protocol (same as iroh, Tor, mDNS):
 
 ```
-Header/Control: [type: 1 byte][length: 4 bytes BE][encrypted_payload]
-Data Chunk:     [type: 1 byte][chunk_num: 8 bytes BE][length: 4 bytes BE][encrypted_payload]
+Header:   [length: 4 bytes BE][encrypted JSON header]
+Data:     [encrypted 16KB chunk]...
+Control:  [encrypted PROCEED/ABORT/DONE/ACK]
 ```
 
-| Type Byte | Message | Encrypted | Format |
-|-----------|---------|-----------|--------|
-| 0 | Header | Yes | `[0][len][encrypted]` |
-| 1 | Data Chunk | Yes | `[1][chunk_num][len][encrypted]` |
-| 2 | Done Signal | Yes | `[2][len][encrypted]` |
-| 3 | ACK | Yes | `[3][len][encrypted]` |
-| 4 | PROCEED | Yes | `[4][len][encrypted]` |
-| 5 | ABORT | Yes | `[5][len][encrypted]` |
+See `wormhole-common/src/core/transfer.rs` for protocol details.
 
-**Control Signal Encryption (Types 2, 3, 4, 5):**
+## NAT Traversal
 
-WebRTC control signals use the same nonce derivation as stream-based transports. The type byte is used only for message routing—the encrypted payload uses the reserved chunk numbers:
+### STUN Servers
 
-- **Type 2 (DONE)**: Encrypts `b"DONE"` with chunk number `u64::MAX - 3`
-- **Type 3 (ACK)**: Encrypts `b"ACK"` with chunk number `u64::MAX - 2`
-- **Type 4 (PROCEED)**: Encrypts `b"PROCEED"` with chunk number `u64::MAX`
-- **Type 5 (ABORT)**: Encrypts `b"ABORT"` with chunk number `u64::MAX - 1`
+Default STUN servers for candidate gathering:
+- `stun:stun.l.google.com:19302`
+- `stun:stun1.l.google.com:19302`
 
-This ensures identical encryption behavior across all transports, with WebRTC simply adding a routing prefix.
+### TCP Candidates
+
+We use TCP candidates exclusively because:
+1. Provides reliable, ordered byte stream
+2. Works with unified protocol (no datagram framing needed)
+3. Better compatibility with firewalls
+
+Types of TCP candidates:
+- **Host**: Direct connection on local IP
+- **Server-reflexive**: Public IP discovered via STUN
+- **Relay**: Via TURN server (not yet implemented)
+
+## Limitations
+
+1. **TCP only** - No UDP for lossy scenarios (fine for file transfer)
+2. **No TURN** - Fails if both peers are behind symmetric NAT
+3. **Nostr required** - No offline signaling mode yet
+
+## Resume Support
+
+File transfers support resume automatically via the unified protocol:
+- Receiver checks for existing partial downloads
+- If checksum matches, resumes from last position
+- Folders are NOT resumable (checksum = 0)
+
+## Future Work
+
+- [ ] Offline/manual signaling (copy-paste credentials)
+- [ ] TURN relay support

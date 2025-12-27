@@ -1,67 +1,96 @@
 # wormhole-rs-webrtc
 
-WebRTC transport for wormhole-rs file transfers.
+ICE transport for wormhole-rs file transfers with NAT traversal.
 
-> **Note**: This is a legacy/experimental transport. For new users, we recommend using **iroh mode** (`send-iroh`) which provides better reliability, automatic relay fallback, and simpler setup.
+> **Note**: This crate is NOT in the main workspace. Build with: `cargo build -p wormhole-rs-webrtc`
 
 ## Features
 
-- WebRTC Data Channels for P2P file transfer
-- Nostr relay signaling (auto-discovers best relays)
-- Manual signaling mode for air-gapped networks
-- PIN mode for easy code sharing
+- ICE (Interactive Connectivity Establishment) for NAT traversal
+- TCP candidates for reliable, ordered byte streams
+- Nostr relay signaling for credential/candidate exchange
+- Uses unified transfer protocol (same as iroh, Tor, mDNS transports)
+- SPAKE2 key exchange for authenticated encryption
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                    Signaling Layer                       │
+│  (Nostr relays - exchange ICE credentials & candidates) │
+└─────────────────────────────────────────────────────────┘
+                            │
+                            ▼
+┌─────────────────────────────────────────────────────────┐
+│                   webrtc-ice Agent                       │
+│  - ICE negotiation (TCP candidates only)                │
+│  - NAT traversal via STUN                               │
+└─────────────────────────────────────────────────────────┘
+                            │
+                            ▼
+┌─────────────────────────────────────────────────────────┐
+│               IceConn → AsyncRead/AsyncWrite            │
+│  - TCP gives ordered, reliable bytes                    │
+└─────────────────────────────────────────────────────────┘
+                            │
+                            ▼
+┌─────────────────────────────────────────────────────────┐
+│              Unified Transfer Protocol                   │
+│  - run_sender_transfer() / run_receiver_transfer()      │
+│  - Same as iroh, Tor, mDNS                              │
+└─────────────────────────────────────────────────────────┘
+```
 
 ## Usage
 
-### Standard WebRTC Transfer
+### Send a File
 
 ```bash
-# Sender
-wormhole-rs send-webrtc /path/to/file
+# With default Nostr relays
+wormhole-rs-webrtc send /path/to/file
 
-# Receiver
-wormhole-rs receive --code <WORMHOLE_CODE>
+# With custom relay
+wormhole-rs-webrtc send --relay wss://my-relay.com /path/to/file
+
+# Use default relays (skip auto-discovery)
+wormhole-rs-webrtc send --default-relays /path/to/file
 ```
 
-### With PIN (easier to type)
+### Receive a File
 
 ```bash
-# Sender
-wormhole-rs send-webrtc --pin /path/to/file
-
-# Receiver
-wormhole-rs receive --pin
+wormhole-rs-webrtc receive \
+    --transfer-id <TRANSFER_ID> \
+    --sender-pubkey <SENDER_PUBKEY_HEX> \
+    --relay wss://relay.example.com
 ```
 
-### Manual Signaling (no relays needed)
+The sender displays the transfer ID, sender pubkey, and relay URL for the receiver to use.
 
-```bash
-# Sender
-wormhole-rs send-webrtc --manual-signaling /path/to/file
+## How It Works
 
-# Receiver
-wormhole-rs receive --manual-signaling
-```
+1. **Sender** creates ICE agent, gathers TCP candidates via STUN
+2. **Sender** publishes to Nostr relay and waits for receiver
+3. **Receiver** creates ICE agent, gathers candidates, sends answer via Nostr
+4. **Sender** receives answer, publishes offer with credentials
+5. ICE connection established (TCP-based, NAT-traversed)
+6. SPAKE2 key exchange using transfer ID
+7. Unified transfer protocol runs over encrypted connection
 
-### Custom Nostr Relays
+## Comparison with Other Transports
 
-```bash
-# Use specific relay
-wormhole-rs send-webrtc --nostr-relay wss://my-relay.com /path/to/file
-
-# Skip discovery, use defaults
-wormhole-rs send-webrtc --use-default-relays /path/to/file
-```
-
-## When to Use WebRTC
-
-WebRTC mode may still be useful in specific scenarios:
-
-1. **Manual signaling** - When you need to exchange signaling data out-of-band (copy/paste) without any relay servers
-2. **Custom Nostr infrastructure** - If you already run Nostr relays for other purposes
-
-For most use cases, **iroh mode** is recommended instead.
+| Transport | NAT Traversal | Relay | Protocol |
+|-----------|---------------|-------|----------|
+| **ICE** | STUN/TURN | Nostr signaling | Unified |
+| iroh | STUN + relay | iroh network | Unified |
+| mDNS | LAN only | None | Unified |
+| Tor | .onion | Tor network | Unified |
 
 ## Documentation
 
-- [Architecture & Protocol](docs/ARCHITECTURE.md) - Detailed protocol flows and wire formats
+- [Architecture & Protocol](docs/ARCHITECTURE.md) - Detailed protocol flows
+
+## Future Enhancements
+
+- [ ] Offline/manual signaling mode (copy-paste credentials)
+- [ ] TURN relay support for restricted networks
