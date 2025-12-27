@@ -22,6 +22,22 @@ use wormhole_common::core::transfer::{format_bytes, run_receiver_transfer};
 /// Timeout for mDNS browsing (seconds)
 const BROWSE_TIMEOUT_SECS: u64 = 30;
 
+/// Check if an IP address is routable (usable for connections).
+/// Rejects loopback, link-local, and unspecified addresses.
+fn is_routable(addr: &IpAddr) -> bool {
+    match addr {
+        IpAddr::V4(v4) => {
+            !v4.is_loopback()
+                && !v4.is_link_local()
+                && !v4.is_unspecified()
+                && !v4.is_broadcast()
+        }
+        IpAddr::V6(v6) => {
+            !v6.is_loopback() && !v6.is_unicast_link_local() && !v6.is_unspecified()
+        }
+    }
+}
+
 /// Browse for available wormhole senders and let user select.
 ///
 /// Discovers senders advertising via mDNS, displays them to the user,
@@ -80,7 +96,7 @@ pub async fn receive_mdns(output_dir: Option<PathBuf>) -> Result<()> {
                         .map(|v| v.val_str().to_string())
                         .unwrap_or_else(|| "file".to_string());
 
-                    // Filter and deduplicate addresses: prefer IPv4 and non-link-local IPv6
+                    // Filter and deduplicate addresses: prefer non-loopback IPv4 and non-link-local IPv6
                     let all_addrs: Vec<IpAddr> = info
                         .get_addresses()
                         .iter()
@@ -89,7 +105,7 @@ pub async fn receive_mdns(output_dir: Option<PathBuf>) -> Result<()> {
                     let filtered: HashSet<IpAddr> = all_addrs
                         .into_iter()
                         .filter(|addr| match addr {
-                            IpAddr::V4(_) => true,
+                            IpAddr::V4(v4) => !v4.is_loopback(),
                             IpAddr::V6(v6) => !v6.is_unicast_link_local() && !v6.is_loopback(),
                         })
                         .collect();
@@ -178,15 +194,27 @@ pub async fn receive_mdns(output_dir: Option<PathBuf>) -> Result<()> {
         return Ok(());
     }
 
+    // Filter services to only those with routable addresses
+    let service_list: Vec<_> = services
+        .values()
+        .filter(|s| s.addresses.iter().any(is_routable))
+        .collect();
+
+    if service_list.is_empty() {
+        println!("\nFound {} sender(s) but none have routable addresses.", services.len());
+        println!("This may indicate a network configuration issue.");
+        return Ok(());
+    }
+
     println!("\n--- Available Senders ---");
-    let service_list: Vec<_> = services.values().collect();
     for (i, service) in service_list.iter().enumerate() {
-        let addrs: Vec<_> = service.addresses.iter().map(|a| a.to_string()).collect();
-        let addr_str = if addrs.is_empty() {
-            "no routable addr".to_string()
-        } else {
-            addrs.join(", ")
-        };
+        let addrs: Vec<_> = service
+            .addresses
+            .iter()
+            .filter(|a| is_routable(a))
+            .map(|a| a.to_string())
+            .collect();
+        let addr_str = addrs.join(", ");
         // For folders, show the original folder name (strip .tar extension)
         let display_name = if service.transfer_type == "folder" {
             service
@@ -222,11 +250,12 @@ pub async fn receive_mdns(output_dir: Option<PathBuf>) -> Result<()> {
     // Prompt for PIN
     let pin = prompt_pin()?;
 
-    // Connect to sender
+    // Connect to sender - use first routable address
     let addr = selected
         .addresses
-        .first()
-        .context("No addresses found for sender")?;
+        .iter()
+        .find(|a| is_routable(a))
+        .expect("Service was filtered to have routable addresses");
     let socket_addr = std::net::SocketAddr::new(*addr, selected.port);
 
     println!("Connecting to {}...", socket_addr);

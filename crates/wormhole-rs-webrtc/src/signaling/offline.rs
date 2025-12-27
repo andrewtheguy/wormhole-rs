@@ -58,12 +58,17 @@ const OFFER_END_MARKER: &str = "-----END WORMHOLE WEBRTC OFFER-----";
 const ANSWER_BEGIN_MARKER: &str = "-----BEGIN WORMHOLE WEBRTC ANSWER-----";
 const ANSWER_END_MARKER: &str = "-----END WORMHOLE WEBRTC ANSWER-----";
 
-/// Get current Unix timestamp in seconds
+/// Get current Unix timestamp in seconds.
+///
+/// # Panics
+///
+/// Panics if the system clock is set before the Unix epoch (1970-01-01),
+/// which indicates a serious system misconfiguration.
 fn current_timestamp() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
+        .expect("System clock is set before Unix epoch - check system time configuration")
+        .as_secs()
 }
 
 // ============================================================================
@@ -135,7 +140,7 @@ pub fn ice_candidates_to_payloads(candidates: Vec<RTCIceCandidate>) -> Vec<IceCa
 /// Panics if the input contains non-ASCII characters. This function is designed
 /// for base64url-encoded strings which are guaranteed to be ASCII.
 fn wrap_lines(s: &str, width: usize) -> String {
-    debug_assert!(
+    assert!(
         s.is_ascii(),
         "wrap_lines only supports ASCII input, got non-ASCII string"
     );

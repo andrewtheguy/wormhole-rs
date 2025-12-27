@@ -220,8 +220,17 @@ impl WebRtcPeer {
                 loop {
                     tokio::select! {
                         candidate = ice_rx.recv() => {
-                            if let Some(candidate) = candidate {
-                                candidates.push(candidate);
+                            match candidate {
+                                Some(candidate) => {
+                                    candidates.push(candidate);
+                                }
+                                None => {
+                                    // Channel closed (sender dropped), drain any remaining and exit
+                                    while let Ok(candidate) = ice_rx.try_recv() {
+                                        candidates.push(candidate);
+                                    }
+                                    break;
+                                }
                             }
                         }
                         result = gathering_rx.changed() => {
@@ -637,9 +646,33 @@ impl AsyncWrite for DataChannelStream {
         }
     }
 
-    fn poll_flush(self: Pin<&mut Self>, _cx: &mut TaskContext<'_>) -> Poll<io::Result<()>> {
-        // WebRTC data channels handle their own buffering
-        Poll::Ready(Ok(()))
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut TaskContext<'_>) -> Poll<io::Result<()>> {
+        let this = self.get_mut();
+
+        // Check if there's a pending write operation that needs to complete
+        if let Some(ref mut pending_rx) = this.write_pending {
+            match Pin::new(pending_rx).poll(cx) {
+                Poll::Ready(Ok(Ok(_))) => {
+                    this.write_pending = None;
+                    Poll::Ready(Ok(()))
+                }
+                Poll::Ready(Ok(Err(e))) => {
+                    this.write_pending = None;
+                    Poll::Ready(Err(io::Error::new(io::ErrorKind::Other, e)))
+                }
+                Poll::Ready(Err(_)) => {
+                    this.write_pending = None;
+                    Poll::Ready(Err(io::Error::new(
+                        io::ErrorKind::BrokenPipe,
+                        "Write operation cancelled during flush",
+                    )))
+                }
+                Poll::Pending => Poll::Pending,
+            }
+        } else {
+            // No pending write, flush is complete
+            Poll::Ready(Ok(()))
+        }
     }
 
     fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut TaskContext<'_>) -> Poll<io::Result<()>> {

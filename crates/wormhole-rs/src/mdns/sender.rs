@@ -187,6 +187,10 @@ async fn transfer_data_internal(
     listener.set_nonblocking(true)?;
     let listener = tokio::net::TcpListener::from_std(listener)?;
 
+    // Limit failed connection attempts to prevent resource exhaustion
+    const MAX_FAILED_ATTEMPTS: u32 = 10;
+    let mut failed_attempts: u32 = 0;
+
     // Loop to handle invalid connections gracefully
     loop {
         let (mut stream, peer_addr) = listener
@@ -224,11 +228,27 @@ async fn transfer_data_internal(
             }
             Ok(Err(e)) => {
                 eprintln!("SPAKE2 handshake failed from {}: {}", peer_addr, e);
+                failed_attempts += 1;
+                if failed_attempts >= MAX_FAILED_ATTEMPTS {
+                    anyhow::bail!(
+                        "Too many failed connection attempts ({}/{})",
+                        failed_attempts,
+                        MAX_FAILED_ATTEMPTS
+                    );
+                }
                 drop(stream);
                 continue;
             }
             Err(_) => {
                 eprintln!("Handshake timeout from {}, closing connection", peer_addr);
+                failed_attempts += 1;
+                if failed_attempts >= MAX_FAILED_ATTEMPTS {
+                    anyhow::bail!(
+                        "Too many failed connection attempts ({}/{})",
+                        failed_attempts,
+                        MAX_FAILED_ATTEMPTS
+                    );
+                }
                 drop(stream);
                 continue;
             }
