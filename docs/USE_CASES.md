@@ -17,55 +17,65 @@ This guide describes common scenarios where `wormhole-rs` shines and which mode 
   ```
 - **Experience**: The sender sets a passphrase (e.g., "secret"). The receiver finds the sender automatically and prompts for that passphrase.
 
-**Solution B**: **WebRTC Manual Signaling** (`--manual-signaling`)
-- **Why**: When mDNS discovery doesn't work (different subnets, VPN issues), manual signaling allows WebRTC P2P transfer by exchanging codes out-of-band.
+**Solution B**: **iroh Mode with Manual IP**
+- **Why**: When mDNS discovery doesn't work (different subnets, VPN issues), use iroh mode which supports discovery across subnets.
 - **Command**:
   ```bash
   # Sender
-  wormhole-rs send --manual-signaling /path/to/file
+  wormhole-rs send-iroh /path/to/file
 
   # Receiver
-  wormhole-rs receive --manual-signaling
+  wormhole-rs receive --code <WORMHOLE_CODE>
   ```
-- **Experience**: Exchange base64 codes via any channel (chat, paper, verbal). No internet or relay servers needed.
+- **Experience**: Share the wormhole code via any channel (chat, paper, verbal). iroh handles NAT traversal automatically.
 
 ---
 
 ## 2. Cannot Copy-Paste (Cross-device / Remote Terminal)
 **Scenario**: You are sending a file from a laptop to a friend's phone, or to a remote server console where you cannot easily copy and paste the long "Wormhole Code". Typing a huge base64 string is impossible.
 
-**Solution**: **PIN Mode** (`--pin`)
-- **Why**: Instead of a massive code string, you only need to type a **12-character PIN**.
+**Solution A**: **Local Mode** (Recommended for same network)
+- **Why**: Uses a short 12-character PIN with mDNS discovery. No code copying needed.
 - **Command**:
   ```bash
-  # Sender (uses WebRTC by default, or use send-iroh/send-tor)
-  wormhole-rs send --pin /path/to/file
+  # Sender
+  wormhole-rs send-local /path/to/file
+
+  # Receiver
+  wormhole-rs receive-local
+  ```
+- **Experience**:
+  1. Sender sees: `PIN: A1b2C3d4E5f6` (example)
+  2. Receiver runs `receive-local` and types `A1b2C3d4E5f6`.
+
+**Solution B**: **Tor Mode with PIN** (For internet transfers)
+- **Why**: Uses a short 12-character PIN via Nostr relays.
+- **Command**:
+  ```bash
+  # Sender
+  wormhole-rs send-tor --pin /path/to/file
 
   # Receiver
   wormhole-rs receive --pin
   ```
-- **Experience**: 
-  1. Sender sees: `PIN: A1b2C3d4E5f6` (example)
-  2. Receiver runs `receive --pin` and types `A1b2C3d4E5f6`.
-  3. The app handles the complex key exchange automatically behind the scenes using Nostr.
 
 ---
 
 ## 3. Strict Firewalls / Restricted Networks
 **Scenario**: You are on a corporate or university network that blocks UDP, non-standard ports, and direct P2P connections. Standard transfers hang or fail.
 
-**Solution A**: **WebRTC Mode** (try first)
-- **Why**: WebRTC tries to punch through NATs using STUN. Works in many restricted environments.
+**Solution A**: **iroh Mode** (Recommended)
+- **Why**: iroh uses QUIC with automatic relay fallback. It tries direct P2P first, then falls back to iroh's relay servers if needed.
 - **Command**:
   ```bash
-  wormhole-rs send --pin /path/to/file
+  wormhole-rs send-iroh /path/to/file
   ```
 
-**Solution B**: **Tor Mode** (if WebRTC fails)
+**Solution B**: **Tor Mode** (if iroh fails)
 - **Why**: If direct P2P connection fails completely, Tor mode provides a reliable relay path through the Tor network with better privacy than any third-party relay.
 - **Command**:
   ```bash
-  wormhole-rs send-tor --pin /path/to/file
+  wormhole-rs send-tor /path/to/file
   ```
 
 ---
@@ -85,12 +95,8 @@ This guide describes common scenarios where `wormhole-rs` shines and which mode 
 ## 5. Large File Transfer
 **Scenario**: Transferring a massive dataset (GBs) over the internet.
 
-**Solution**: **WebRTC Mode** (Recommended) or **Iroh Mode**
-- **WebRTC**: The recommended mode works well for large files over stable connections.
-  ```bash
-  wormhole-rs send /path/to/large-video.mp4
-  ```
-- **Iroh**: Alternative using QUIC, optimized for high throughput and congestion control.
+**Solution**: **iroh Mode** (Recommended)
+- **Why**: Uses QUIC, optimized for high throughput and congestion control. Automatic relay fallback ensures reliable delivery.
   ```bash
   wormhole-rs send-iroh /path/to/large-video.mp4
   ```
@@ -100,53 +106,31 @@ This guide describes common scenarios where `wormhole-rs` shines and which mode 
 ## 6. Self-Hosted Infrastructure (Zero Third-Party Dependency)
 **Scenario**: You require complete control over the network infrastructure and cannot rely on public relays or discovery servers due to policy or privacy concerns.
 
-**Solution A**: **Iroh Mode + Custom DERP Relays**
-- **Why**: Iroh allows you to run your own lightweight relay (DERP). By pointing `wormhole-rs` to your own infrastructure, you achieve a true peer-to-peer connection where no third-party relays are involved.
-- **Current Status**: Custom relays are supported today via `--relay-url`, but peer discovery still uses iroh's public DNS/pkarr services. Until custom DNS support lands (see ROADMAP: Support Custom Iroh DNS Server), the fully zero-third-party options are:
-  - **WebRTC Manual Signaling** (`--manual-signaling`), exchanging signaling blobs out-of-band; or
+**Solution A**: **iroh Mode + Custom DERP Relays** (Recommended)
+- **Why**: iroh allows you to run your own lightweight relay (DERP). By pointing `wormhole-rs` to your own infrastructure, you achieve a true peer-to-peer connection where no third-party relays are involved.
+- **Current Status**: Custom relays are supported today via `--relay-url`, but peer discovery still uses iroh's public DNS/pkarr services. Until custom DNS support lands (see ROADMAP: Support Custom Iroh DNS Server), the fully zero-third-party option is:
   - **Local Mode** (`send-local` / `receive-local`) when both peers share a LAN and can rely on mDNS.
-- **Resources**: Implementation for the relay server allows for independence and is available in the [Iroh repository](https://github.com/n0-computer/iroh).
+- **Resources**: Implementation for the relay server is available in the [iroh repository](https://github.com/n0-computer/iroh).
 - **Command**:
   ```bash
   wormhole-rs send-iroh --relay-url https://my-private-relay.com /path/to/file
   ```
 
-**Solution B**: **WebRTC Mode + Custom Nostr Relays**
-- **Why**: Run your own Nostr relay for signaling, keeping all metadata private.
+**Solution B**: **Local Mode** (Same network)
+- **Why**: Uses mDNS discovery with no external dependencies. Works completely offline.
 - **Command**:
   ```bash
-  wormhole-rs send --nostr-relay wss://my-nostr-relay.com /path/to/file
+  wormhole-rs send-local /path/to/file
   ```
 
 ---
 
-## 7. No Nostr Relays Available (Manual Signaling)
-**Scenario**: You want to use WebRTC for P2P transfer but cannot access Nostr relays (blocked network, air-gapped with internet for STUN only, or privacy concerns about relay metadata).
-
-**Solution**: **Manual Signaling Mode** (`--manual-signaling`)
-- **Why**: Bypasses Nostr relays entirely. You manually copy/paste signaling data between sender and receiver via any out-of-band channel (chat, email, paper).
-- **Features**:
-  - Step-by-step instructions guide both parties
-  - CRC32 checksum validates copy/paste integrity
-  - Explicit BEGIN/END markers frame each payload
-  - 30-minute TTL prevents stale session attacks
-- **Command**:
-  ```bash
-  # Sender
-  wormhole-rs send --manual-signaling /path/to/file
-
-  # Receiver
-  wormhole-rs receive --manual-signaling
-  ```
-- **Experience**:
-  1. Sender generates offer code (base64) and displays it between BEGIN/END markers
-  2. Sender shares the code via any channel (Signal, email, read aloud, etc.)
-  3. Receiver pastes the code and generates a response code
-  4. Receiver shares the response back to sender
-  5. WebRTC connection establishes directly between peers
-
----
-
-## 8. Planned / Future Scenarios
+## 7. Planned / Future Scenarios
 
 See [ROADMAP.md](ROADMAP.md) for planned features and development priorities.
+
+---
+
+## Legacy: WebRTC Mode
+
+WebRTC mode is still available for specific use cases. See [WebRTC crate documentation](../crates/wormhole-rs-webrtc/README.md) for details.
