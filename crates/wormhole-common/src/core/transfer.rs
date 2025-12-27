@@ -376,24 +376,33 @@ pub fn format_resume_progress(offset: u64, file_size: u64) -> String {
 /// Prompt user for confirmation if folder archive exceeds soft limit.
 /// Only used for folders since they are NOT resumable. Files are resumable and don't need this warning.
 /// Returns Ok(true) to proceed, Ok(false) to cancel.
-pub fn confirm_large_folder_transfer(file_size: u64, filename: &str) -> Result<bool> {
+///
+/// This function is async and runs blocking I/O in a separate thread to avoid
+/// blocking the Tokio runtime.
+pub async fn confirm_large_folder_transfer(file_size: u64, filename: &str) -> Result<bool> {
     if file_size <= LARGE_FILE_THRESHOLD {
         return Ok(true);
     }
 
-    println!(
-        "\n⚠️  Warning: {} is large ({}).",
-        filename,
-        format_bytes(file_size)
-    );
-    println!("Folder transfers are NOT resumable. If interrupted, you must start over.");
-    println!("Large folders are recommended for local connections only (wormhole-rs send-local).");
-    print!("Continue anyway? [y/N]: ");
-    std::io::stdout().flush()?;
+    // Capture values needed in the blocking closure
+    let filename = filename.to_string();
+    let size_str = format_bytes(file_size);
 
-    let mut input = String::new();
-    std::io::stdin().read_line(&mut input)?;
-    Ok(input.trim().eq_ignore_ascii_case("y"))
+    tokio::task::spawn_blocking(move || {
+        println!("\n⚠️  Warning: {} is large ({}).", filename, size_str);
+        println!("Folder transfers are NOT resumable. If interrupted, you must start over.");
+        println!(
+            "Large folders are recommended for local connections only (wormhole-rs send-local)."
+        );
+        print!("Continue anyway? [y/N]: ");
+        std::io::stdout().flush()?;
+
+        let mut input = String::new();
+        std::io::stdin().read_line(&mut input)?;
+        Ok(input.trim().eq_ignore_ascii_case("y"))
+    })
+    .await
+    .context("Blocking task panicked")?
 }
 
 /// Result of preparing a file for transfer
@@ -482,7 +491,7 @@ pub async fn prepare_folder_for_send(folder_path: &Path) -> Result<Option<Prepar
     );
 
     // Confirm if archive is large (folders are NOT resumable)
-    if !confirm_large_folder_transfer(file_size, &filename)? {
+    if !confirm_large_folder_transfer(file_size, &filename).await? {
         println!("Transfer cancelled.");
         return Ok(None);
     }

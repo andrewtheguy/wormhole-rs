@@ -438,6 +438,10 @@ pub struct DataChannelStream {
     message_rx: mpsc::Receiver<Vec<u8>>,
     read_buffer: VecDeque<u8>,
     closed: Arc<std::sync::atomic::AtomicBool>,
+    /// Tracks if any messages were dropped due to buffer overflow.
+    /// If true, the stream will return an error on the next read to prevent
+    /// silent data corruption in file transfers.
+    messages_dropped: Arc<std::sync::atomic::AtomicBool>,
     /// Pending write operation result receiver
     write_pending: Option<tokio::sync::oneshot::Receiver<Result<usize, String>>>,
 }
@@ -453,6 +457,7 @@ impl DataChannelStream {
     ) -> Self {
         let (message_tx, message_rx) = mpsc::channel::<Vec<u8>>(1000);
         let closed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let messages_dropped = Arc::new(std::sync::atomic::AtomicBool::new(false));
 
         let dc_label = data_channel.label().to_string();
 
@@ -468,18 +473,22 @@ impl DataChannelStream {
 
         // On message - forward to channel synchronously to preserve ordering.
         // try_send is non-blocking and maintains message order. If the channel
-        // is full (which shouldn't happen with our 1000-message buffer), we log
-        // a warning and drop the message rather than spawn a task that could
-        // reorder messages.
+        // is full (which shouldn't happen with our 1000-message buffer), we set
+        // a flag to surface an error on the next read rather than silently
+        // dropping data which would corrupt file transfers.
         let tx = message_tx.clone();
+        let dropped_flag = messages_dropped.clone();
         data_channel.on_message(Box::new(move |msg: DataChannelMessage| {
             let data = msg.data.to_vec();
             match tx.try_send(data) {
                 Ok(_) => {}
                 Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
+                    // Mark that messages were dropped - the reader will detect this
+                    // and return an error to prevent silent data corruption.
+                    dropped_flag.store(true, std::sync::atomic::Ordering::SeqCst);
                     log::error!(
-                        "Data channel message buffer full - this should not happen. \
-                         Dropping message to preserve ordering."
+                        "Data channel message buffer full - message dropped. \
+                         Transfer will fail to prevent data corruption."
                     );
                 }
                 Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
@@ -510,6 +519,7 @@ impl DataChannelStream {
             message_rx,
             read_buffer: VecDeque::new(),
             closed,
+            messages_dropped,
             write_pending: None,
         }
     }
@@ -517,6 +527,13 @@ impl DataChannelStream {
     /// Check if the data channel is closed
     pub fn is_closed(&self) -> bool {
         self.closed.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// Check if any messages were dropped due to buffer overflow.
+    /// If true, the transfer data may be corrupted.
+    fn has_dropped_messages(&self) -> bool {
+        self.messages_dropped
+            .load(std::sync::atomic::Ordering::SeqCst)
     }
 }
 
@@ -526,6 +543,14 @@ impl AsyncRead for DataChannelStream {
         cx: &mut TaskContext<'_>,
         buf: &mut ReadBuf<'_>,
     ) -> Poll<io::Result<()>> {
+        // Check if any messages were dropped - fail fast to prevent silent corruption
+        if self.has_dropped_messages() {
+            return Poll::Ready(Err(io::Error::new(
+                io::ErrorKind::Other,
+                "Data channel buffer overflow - messages were dropped, transfer data corrupted",
+            )));
+        }
+
         // First, drain any buffered data
         if !self.read_buffer.is_empty() {
             let to_read = std::cmp::min(buf.remaining(), self.read_buffer.len());

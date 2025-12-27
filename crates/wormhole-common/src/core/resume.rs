@@ -330,6 +330,15 @@ pub fn check_resume(
 /// Uses pwrite on Unix to avoid seek/write/seek pattern that could leave the
 /// file pointer in an incorrect position if any operation fails.
 pub fn update_resume_metadata(file: &mut File, metadata: &ResumeMetadata) -> Result<()> {
+    // Validate metadata consistency before writing
+    if metadata.bytes_received > metadata.file_size {
+        anyhow::bail!(
+            "Invalid resume metadata: bytes_received ({}) exceeds file_size ({})",
+            metadata.bytes_received,
+            metadata.file_size
+        );
+    }
+
     // Serialize and pad metadata
     let header_bytes = serialize_metadata_header(metadata)?;
 
