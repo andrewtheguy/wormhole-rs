@@ -16,28 +16,30 @@ onion = ["dep:arti-client", "dep:tor-hsservice", "dep:tor-cell", "dep:safelog", 
 # Common library
 wormhole-common = { path = "../wormhole-common" }
 
-# Core dependencies
+# Core dependencies (workspace)
 tokio = { workspace = true }
 anyhow = { workspace = true }
 clap = { workspace = true }
-tracing-subscriber = { workspace = true }
-tokio-util = { workspace = true }
 rand = { workspace = true }
 hex = { workspace = true }
 futures = { workspace = true }
 log = { workspace = true }
 nostr-sdk = { workspace = true }
 
+# Crate-specific core deps
+tokio-util = "0.7"
+tempfile = "3"
+
 # iroh transport (optional)
-iroh = { workspace = true, optional = true }
+iroh = { version = "0.95.1", features = ["discovery-local-network"], optional = true }
 
-# mDNS discovery (always enabled)
-mdns-sd = { workspace = true }
+# Crate-specific dependencies
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+mdns-sd = "0.15"
 
-# Tor/Onion transport (optional)
-arti-client = { workspace = true, optional = true }
-tor-hsservice = { workspace = true, optional = true }
-tor-cell = { workspace = true, optional = true }
-safelog = { workspace = true, optional = true }
-rusqlite = { workspace = true, optional = true }
-tempfile = { workspace = true }
+# Tor/Onion transport (optional, crate-specific)
+arti-client = { version = "0.37", features = ["onion-service-service", "onion-service-client", "tokio"], optional = true }
+tor-hsservice = { version = "0.37", optional = true }
+tor-cell = { version = "0.37", optional = true }
+safelog = { version = "0.7.1", optional = true }
+rusqlite = { version = "0.37", features = ["bundled"], optional = true }
