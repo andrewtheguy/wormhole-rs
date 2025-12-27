@@ -1,68 +1,71 @@
-//! ICE signaling - exchange credentials and candidates via Nostr or manual mode.
+//! Nostr-based WebRTC signaling for webrtc transport
 //!
-//! Adapts the existing Nostr signaling to work with ICE credentials and candidates
-//! instead of WebRTC SDP.
+//! This module provides WebRTC signaling via Nostr events, replacing the PeerJS
+//! WebSocket signaling server. It enables decentralized peer discovery and
+//! connection establishment using Nostr relays.
+//!
+//! Event structure (reuses kind 24242):
+//! - type="webrtc-offer": SDP offer from sender
+//! - type="webrtc-answer": SDP answer from receiver
 
 use anyhow::{Context, Result};
 use base64::{engine::general_purpose::STANDARD, Engine};
 use nostr_sdk::prelude::*;
 use serde::{Deserialize, Serialize};
+use tokio::sync::mpsc;
 use tokio::time::{timeout, Duration};
 
-use super::agent::{IceCandidateInfo, IceCredentials};
 use wormhole_common::signaling::nostr_protocol::{
     generate_transfer_id, get_best_relays, nostr_file_transfer_kind, DEFAULT_NOSTR_RELAYS,
 };
 
-// Signaling event types for ICE
-const SIGNALING_TYPE_ICE_OFFER: &str = "ice-offer";
-const SIGNALING_TYPE_ICE_ANSWER: &str = "ice-answer";
+// Signaling event types
+const SIGNALING_TYPE_OFFER: &str = "webrtc-offer";
+const SIGNALING_TYPE_ANSWER: &str = "webrtc-answer";
 
-/// ICE signaling payload exchanged via Nostr.
+/// SDP payload for offer/answer exchange
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct IceSignalingPayload {
-    /// ICE username fragment
-    pub ufrag: String,
-    /// ICE password
-    pub pwd: String,
-    /// List of ICE candidates
-    pub candidates: Vec<IceCandidateInfo>,
+pub struct SdpPayload {
+    pub sdp: String,
+    #[serde(rename = "type")]
+    pub sdp_type: String,
+    pub candidates: Vec<IceCandidatePayload>,
 }
 
-impl IceSignalingPayload {
-    pub fn new(creds: &IceCredentials, candidates: Vec<IceCandidateInfo>) -> Self {
-        Self {
-            ufrag: creds.ufrag.clone(),
-            pwd: creds.pwd.clone(),
-            candidates,
-        }
-    }
+/// ICE candidate payload
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IceCandidatePayload {
+    pub candidate: String,
+    #[serde(rename = "sdpMLineIndex")]
+    pub sdp_m_line_index: Option<u16>,
+    #[serde(rename = "sdpMid")]
+    pub sdp_mid: Option<String>,
 }
 
-/// ICE signaling message received from Nostr.
+/// Signaling message types received from Nostr
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
-pub enum IceSignalingMessage {
+pub enum SignalingMessage {
     Offer {
         sender_pubkey: PublicKey,
-        payload: IceSignalingPayload,
+        sdp: SdpPayload,
     },
     Answer {
         sender_pubkey: PublicKey,
-        payload: IceSignalingPayload,
+        sdp: SdpPayload,
     },
 }
 
-/// Nostr signaling client for ICE transport.
-pub struct IceNostrSignaling {
+/// Nostr signaling client for WebRTC
+pub struct NostrSignaling {
     pub client: Client,
     pub keys: Keys,
     transfer_id: String,
     relay_urls: Vec<String>,
 }
 
-impl IceNostrSignaling {
-    /// Create a new ICE Nostr signaling client.
+impl NostrSignaling {
+    /// Create a new Nostr signaling client
     pub async fn new(custom_relays: Option<Vec<String>>, use_default_relays: bool) -> Result<Self> {
         let keys = Keys::generate();
 
@@ -108,22 +111,22 @@ impl IceNostrSignaling {
         })
     }
 
-    /// Get our public key.
+    /// Get our public key
     pub fn public_key(&self) -> PublicKey {
         self.keys.public_key()
     }
 
-    /// Get the transfer ID.
+    /// Get the transfer ID
     pub fn transfer_id(&self) -> &str {
         &self.transfer_id
     }
 
-    /// Get the relay URLs.
+    /// Get the relay URLs
     pub fn relay_urls(&self) -> &[String] {
         &self.relay_urls
     }
 
-    /// Create a signaling event with common tags.
+    /// Create a signaling event with common tags
     fn create_signaling_event(
         &self,
         peer_pubkey: &PublicKey,
@@ -149,45 +152,55 @@ impl IceNostrSignaling {
         Ok(event)
     }
 
-    /// Publish an ICE offer (sender's credentials + candidates).
+    /// Publish an SDP offer
     pub async fn publish_offer(
         &self,
         receiver_pubkey: &PublicKey,
-        payload: &IceSignalingPayload,
+        sdp: &str,
+        candidates: Vec<IceCandidatePayload>,
     ) -> Result<()> {
-        let content = STANDARD.encode(serde_json::to_string(payload)?);
+        let payload = SdpPayload {
+            sdp: sdp.to_string(),
+            sdp_type: "offer".to_string(),
+            candidates,
+        };
+        let content = STANDARD.encode(serde_json::to_string(&payload)?);
 
-        let event =
-            self.create_signaling_event(receiver_pubkey, SIGNALING_TYPE_ICE_OFFER, &content)?;
+        let event = self.create_signaling_event(receiver_pubkey, SIGNALING_TYPE_OFFER, &content)?;
 
         self.client
             .send_event(&event)
             .await
-            .context("Failed to publish ICE offer")?;
+            .context("Failed to publish SDP offer")?;
 
         Ok(())
     }
 
-    /// Publish an ICE answer (receiver's credentials + candidates).
+    /// Publish an SDP answer
     pub async fn publish_answer(
         &self,
         sender_pubkey: &PublicKey,
-        payload: &IceSignalingPayload,
+        sdp: &str,
+        candidates: Vec<IceCandidatePayload>,
     ) -> Result<()> {
-        let content = STANDARD.encode(serde_json::to_string(payload)?);
+        let payload = SdpPayload {
+            sdp: sdp.to_string(),
+            sdp_type: "answer".to_string(),
+            candidates,
+        };
+        let content = STANDARD.encode(serde_json::to_string(&payload)?);
 
-        let event =
-            self.create_signaling_event(sender_pubkey, SIGNALING_TYPE_ICE_ANSWER, &content)?;
+        let event = self.create_signaling_event(sender_pubkey, SIGNALING_TYPE_ANSWER, &content)?;
 
         self.client
             .send_event(&event)
             .await
-            .context("Failed to publish ICE answer")?;
+            .context("Failed to publish SDP answer")?;
 
         Ok(())
     }
 
-    /// Subscribe to signaling events for our public key.
+    /// Subscribe to signaling events for our public key
     pub async fn subscribe(&self) -> Result<()> {
         let filter = Filter::new()
             .kind(nostr_file_transfer_kind())
@@ -208,8 +221,8 @@ impl IceNostrSignaling {
         Ok(())
     }
 
-    /// Parse a signaling event into an IceSignalingMessage.
-    fn parse_signaling_event(event: &Event) -> Option<IceSignalingMessage> {
+    /// Parse a signaling event into a SignalingMessage
+    fn parse_signaling_event(event: &Event) -> Option<SignalingMessage> {
         // Get event type
         let event_type = event
             .tags
@@ -218,116 +231,155 @@ impl IceNostrSignaling {
             .and_then(|t| t.content())?;
 
         match event_type {
-            SIGNALING_TYPE_ICE_OFFER => {
+            SIGNALING_TYPE_OFFER => {
                 let decoded = STANDARD.decode(&event.content).ok()?;
-                let payload: IceSignalingPayload = serde_json::from_slice(&decoded).ok()?;
-                Some(IceSignalingMessage::Offer {
+                let payload: SdpPayload = serde_json::from_slice(&decoded).ok()?;
+                Some(SignalingMessage::Offer {
                     sender_pubkey: event.pubkey,
-                    payload,
+                    sdp: payload,
                 })
             }
-            SIGNALING_TYPE_ICE_ANSWER => {
+            SIGNALING_TYPE_ANSWER => {
                 let decoded = STANDARD.decode(&event.content).ok()?;
-                let payload: IceSignalingPayload = serde_json::from_slice(&decoded).ok()?;
-                Some(IceSignalingMessage::Answer {
+                let payload: SdpPayload = serde_json::from_slice(&decoded).ok()?;
+                Some(SignalingMessage::Answer {
                     sender_pubkey: event.pubkey,
-                    payload,
+                    sdp: payload,
                 })
             }
             _ => None,
         }
     }
 
-    /// Wait for a specific signaling message type with timeout.
-    pub async fn wait_for_message(&self, timeout_secs: u64) -> Result<Option<IceSignalingMessage>> {
+    /// Wait for a specific signaling message type with timeout
+    #[allow(dead_code)]
+    pub async fn wait_for_message(&self, timeout_secs: u64) -> Result<Option<SignalingMessage>> {
         let mut notifications = self.client.notifications();
         let deadline = tokio::time::Instant::now() + Duration::from_secs(timeout_secs);
-
-        eprintln!("[Signaling] Waiting for message, transfer_id={}", self.transfer_id);
 
         while tokio::time::Instant::now() < deadline {
             match timeout(Duration::from_secs(1), notifications.recv()).await {
                 Ok(Ok(RelayPoolNotification::Event { event, .. })) => {
-                    eprintln!("[Signaling] Got event from {}", event.pubkey.to_hex());
-
                     // Check if this is for our transfer
                     let is_our_transfer = event.tags.iter().any(|t| {
                         t.kind() == TagKind::SingleLetter(SingleLetterTag::lowercase(Alphabet::T))
                             && t.content() == Some(&self.transfer_id)
                     });
 
-                    eprintln!("[Signaling] is_our_transfer={}", is_our_transfer);
-
                     if is_our_transfer {
                         if let Some(msg) = Self::parse_signaling_event(&event) {
-                            eprintln!("[Signaling] Parsed message successfully");
                             return Ok(Some(msg));
-                        } else {
-                            eprintln!("[Signaling] Failed to parse message");
                         }
                     }
                 }
                 Ok(Ok(RelayPoolNotification::Message { message, .. })) => {
                     // Handle Event messages that come through as Message notifications
                     if let nostr_sdk::RelayMessage::Event { event, .. } = message {
-                        eprintln!("[Signaling] Got event via Message notification from {}", event.pubkey.to_hex());
-
                         // Check if this is for our transfer
                         let is_our_transfer = event.tags.iter().any(|t| {
-                            t.kind() == TagKind::SingleLetter(SingleLetterTag::lowercase(Alphabet::T))
+                            t.kind()
+                                == TagKind::SingleLetter(SingleLetterTag::lowercase(Alphabet::T))
                                 && t.content() == Some(&self.transfer_id)
                         });
 
-                        eprintln!("[Signaling] is_our_transfer={}", is_our_transfer);
-
                         if is_our_transfer {
                             if let Some(msg) = Self::parse_signaling_event(&event) {
-                                eprintln!("[Signaling] Parsed message successfully");
                                 return Ok(Some(msg));
-                            } else {
-                                eprintln!("[Signaling] Failed to parse message");
                             }
                         }
                     }
                     continue;
                 }
-                Ok(Ok(RelayPoolNotification::Shutdown)) => {
-                    eprintln!("[Signaling] Got shutdown notification");
-                    break;
-                }
-                Ok(Err(e)) => {
-                    eprintln!("[Signaling] Recv error: {}", e);
-                    break;
-                }
-                Err(_) => continue, // Timeout, keep waiting
+                Ok(Ok(_)) => continue,
+                Ok(Err(_)) => break,
+                Err(_) => continue,
             }
         }
 
-        eprintln!("[Signaling] Timeout waiting for message");
         Ok(None)
     }
 
-    /// Disconnect from relays.
+    /// Start a message receiver task that sends messages to a channel
+    pub fn start_message_receiver(
+        &self,
+    ) -> (
+        mpsc::Receiver<SignalingMessage>,
+        tokio::task::JoinHandle<()>,
+    ) {
+        let (tx, rx) = mpsc::channel(100);
+        let client = self.client.clone();
+        let transfer_id = self.transfer_id.clone();
+
+        let handle = tokio::spawn(async move {
+            let mut notifications = client.notifications();
+
+            loop {
+                match notifications.recv().await {
+                    Ok(RelayPoolNotification::Event { event, .. }) => {
+                        // Check if this is for our transfer
+                        let is_our_transfer = event.tags.iter().any(|t| {
+                            t.kind()
+                                == TagKind::SingleLetter(SingleLetterTag::lowercase(Alphabet::T))
+                                && t.content() == Some(&transfer_id)
+                        });
+
+                        if is_our_transfer {
+                            if let Some(msg) = Self::parse_signaling_event(&event) {
+                                if tx.send(msg).await.is_err() {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    Ok(RelayPoolNotification::Message { message, .. }) => {
+                        // Handle Event messages that come through as Message notifications
+                        if let nostr_sdk::RelayMessage::Event { event, .. } = message {
+                            let is_our_transfer = event.tags.iter().any(|t| {
+                                t.kind()
+                                    == TagKind::SingleLetter(SingleLetterTag::lowercase(Alphabet::T))
+                                    && t.content() == Some(&transfer_id)
+                            });
+
+                            if is_our_transfer {
+                                if let Some(msg) = Self::parse_signaling_event(&event) {
+                                    if tx.send(msg).await.is_err() {
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        continue;
+                    }
+                    Ok(_) => continue,
+                    Err(_) => break,
+                }
+            }
+        });
+
+        (rx, handle)
+    }
+
+    /// Disconnect from relays
     pub async fn disconnect(&self) {
         self.client.disconnect().await;
     }
 }
 
-/// Create signaling for sender side.
+/// Create a NostrSignaling for sender side
 pub async fn create_sender_signaling(
     custom_relays: Option<Vec<String>>,
     use_default_relays: bool,
-) -> Result<IceNostrSignaling> {
-    let signaling = IceNostrSignaling::new(custom_relays, use_default_relays).await?;
+) -> Result<NostrSignaling> {
+    let signaling = NostrSignaling::new(custom_relays, use_default_relays).await?;
     signaling.subscribe().await?;
     Ok(signaling)
 }
 
-/// Create signaling for receiver side with existing transfer info.
+/// Create a NostrSignaling for receiver side with existing transfer info
 pub async fn create_receiver_signaling(
     transfer_id: &str,
     relay_urls: Vec<String>,
-) -> Result<IceNostrSignaling> {
+) -> Result<NostrSignaling> {
     let keys = Keys::generate();
     let client = Client::new(keys.clone());
 
@@ -351,7 +403,7 @@ pub async fn create_receiver_signaling(
     client.connect().await;
     tokio::time::sleep(Duration::from_secs(2)).await;
 
-    let signaling = IceNostrSignaling {
+    let signaling = NostrSignaling {
         client,
         keys,
         transfer_id: transfer_id.to_string(),

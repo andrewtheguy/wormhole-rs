@@ -26,13 +26,12 @@ log = { workspace = true }
 # Nostr signaling
 nostr-sdk = { workspace = true }
 
-# ICE transport (crate-specific)
-webrtc-ice = "0.14"
-webrtc-util = "0.12"
-pin-project-lite = "0.2"
+# WebRTC transport (crate-specific)
+webrtc = "0.11"
 tokio-tungstenite = { version = "0.21", features = ["native-tls"] }
 uuid = { version = "1", features = ["v4"] }
 bytes = "1"
+crc32fast = "1"
 
 # CLI
 clap = { workspace = true }
