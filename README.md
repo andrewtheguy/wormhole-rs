@@ -5,7 +5,7 @@ A secure peer-to-peer file transfer tool with two main transport categories:
 **1. Internet Transfers** (Wormhole Code)
 - **iroh mode** (Recommended) - Direct P2P transfers using [iroh](https://github.com/n0-computer/iroh) with QUIC/TLS (automatic relay fallback) - requires `iroh` feature
 - **Tor mode** - Anonymous transfers via Tor hidden services (.onion addresses), also serves as relay when P2P fails - requires `onion` feature
-- **WebRTC mode** - Direct P2P via WebRTC DataChannels with Nostr signaling - requires `webrtc` feature (see [WebRTC crate](crates/wormhole-rs-webrtc/))
+- **WebRTC mode** - Direct P2P via WebRTC DataChannels with Nostr signaling - requires `webrtc` feature
 
 **2. Local Transfers** (PIN + SPAKE2)
 - **Local mode** - LAN transfers using mDNS discovery, SPAKE2 key exchange from a 12-character PIN, and TCP transport (no internet required)
@@ -139,13 +139,38 @@ wormhole-rs send-tor /path/to/file
 wormhole-rs send-tor --pin /path/to/file
 ```
 
-#### 3. WebRTC Mode (Legacy) - `send-webrtc`
-*WebRTC transfers with Nostr signaling. Consider using iroh mode instead.*
-> Requires building with `--features webrtc`. See [WebRTC crate documentation](crates/wormhole-rs-webrtc/README.md) for details.
+#### 3. WebRTC Mode - `send-webrtc`
+*WebRTC transfers with Nostr signaling for NAT traversal.*
+> Requires building with `--features webrtc`. WebRTC crate is NOT in the main workspace - build separately with `cargo build -p wormhole-rs-webrtc`.
 
 ```bash
-wormhole-rs send-webrtc /path/to/file
+# Send with default Nostr relays
+wormhole-rs-webrtc send /path/to/file
+
+# Send with custom relay
+wormhole-rs-webrtc send --relay wss://my-relay.com /path/to/file
+
+# Receive (sender displays transfer-id, pubkey, relay)
+wormhole-rs-webrtc receive \
+    --transfer-id <TRANSFER_ID> \
+    --sender-pubkey <SENDER_PUBKEY_HEX> \
+    --relay wss://relay.example.com
 ```
+
+##### Manual Mode (Copy/Paste SDP)
+For air-gapped or restricted environments where Nostr relays are unavailable:
+
+```bash
+# Sender
+wormhole-rs-webrtc send-manual /path/to/file
+
+# Receiver
+wormhole-rs-webrtc receive-manual
+```
+
+Manual mode exchanges SDP offers/answers via copy-paste. The codes contain the encryption key, so only share them through secure channels (SSH, remote desktop, encrypted chat).
+
+If WebRTC connection fails (e.g., both peers behind symmetric NAT), use Tor mode as a relay fallback.
 
 #### Receiving (Internet)
 The receiver auto-detects the protocol from the wormhole code.

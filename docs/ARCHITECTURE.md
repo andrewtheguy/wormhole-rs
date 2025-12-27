@@ -268,7 +268,7 @@ All wormhole codes and signaling offers include a creation timestamp and are val
 
 **Validation Points:**
 1. **Wormhole Codes** (iroh/tor/webrtc via Nostr): Validated in `parse_code()` before connection
-2. **Manual Signaling Offers** (`--manual-signaling` WebRTC): Validated in `read_offer_json()` before WebRTC handshake
+2. **Manual Signaling Offers** (`send-manual`/`receive-manual` WebRTC): Validated in `read_offer_json()` before WebRTC handshake
 
 **Not used for mDNS (Local Mode):**
 TTL validation is not applied to local mDNS transfers because it is unnecessary:

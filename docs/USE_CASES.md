@@ -141,6 +141,6 @@ See [ROADMAP.md](ROADMAP.md) for planned features and development priorities.
 
 ---
 
-## Legacy: WebRTC Mode
+## WebRTC Mode
 
-WebRTC mode is still available for specific use cases. See [WebRTC crate documentation](../crates/wormhole-rs-webrtc/README.md) for details.
+WebRTC mode provides P2P transfers with Nostr signaling for NAT traversal. See [main README](../README.md#3-webrtc-mode---send-webrtc) for usage details.
