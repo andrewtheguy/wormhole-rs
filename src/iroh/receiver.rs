@@ -1,8 +1,6 @@
 use anyhow::{Context, Result};
 use iroh::Watcher;
 use std::path::PathBuf;
-use std::sync::Arc;
-use tokio::sync::Mutex;
 
 use crate::core::folder::{
     extract_tar_archive, get_extraction_dir, print_skipped_entries, print_tar_extraction_info,
@@ -11,27 +9,11 @@ use crate::core::folder::{
 use crate::core::transfer::{
     finalize_file_receiver, find_available_filename, format_bytes, prepare_file_receiver,
     prompt_file_exists, receive_file_data, recv_encrypted_header, send_abort, send_ack,
-    send_proceed, send_resume, setup_resumable_cleanup_handler, ControlSignal, FileExistsChoice,
-    TransferType,
+    send_proceed, send_resume, setup_dir_cleanup_handler, setup_resumable_cleanup_handler,
+    ControlSignal, FileExistsChoice, TransferType,
 };
 use crate::core::wormhole::parse_code;
 use crate::iroh::common::{create_receiver_endpoint, ALPN};
-
-/// Shared state for extraction directory cleanup on interrupt
-type ExtractDirCleanup = Arc<Mutex<Option<PathBuf>>>;
-
-/// Set up Ctrl+C handler to clean up extraction directory.
-fn setup_dir_cleanup_handler(cleanup_path: ExtractDirCleanup) {
-    tokio::spawn(async move {
-        if tokio::signal::ctrl_c().await.is_ok() {
-            if let Some(path) = cleanup_path.lock().await.take() {
-                let _ = tokio::fs::remove_dir_all(&path).await;
-                log::error!("Interrupted. Cleaned up extraction directory.");
-            }
-            std::process::exit(130);
-        }
-    });
-}
 
 /// Receive a file or folder using a wormhole code.
 /// Auto-detects whether it's a file or folder transfer based on the header.
@@ -248,8 +230,7 @@ where
     std::fs::create_dir_all(&extract_dir).context("Failed to create extraction directory")?;
 
     // Set up cleanup handler for Ctrl+C
-    let cleanup_path: ExtractDirCleanup = Arc::new(Mutex::new(Some(extract_dir.clone())));
-    setup_dir_cleanup_handler(cleanup_path.clone());
+    let cleanup_path = setup_dir_cleanup_handler(extract_dir.clone());
 
     eprintln!("Extracting to: {}", extract_dir.display());
     print_tar_extraction_info();

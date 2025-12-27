@@ -1054,3 +1054,48 @@ pub fn setup_resumable_cleanup_handler(
 
     cleanup_path
 }
+
+/// Type alias for cleanup path shared state
+pub type CleanupPath = std::sync::Arc<tokio::sync::Mutex<Option<PathBuf>>>;
+
+/// Set up Ctrl+C handler to always clean up a temp file on interrupt.
+/// Used by senders for folder transfers (temp tar archives are not resumable).
+///
+/// Note: Spawns a task that lives until Ctrl+C or program exit.
+pub fn setup_temp_file_cleanup_handler(temp_path: PathBuf) -> CleanupPath {
+    let cleanup_path: CleanupPath = std::sync::Arc::new(tokio::sync::Mutex::new(Some(temp_path)));
+    let cleanup_clone = cleanup_path.clone();
+
+    tokio::spawn(async move {
+        if tokio::signal::ctrl_c().await.is_ok() {
+            if let Some(path) = cleanup_clone.lock().await.take() {
+                let _ = tokio::fs::remove_file(&path).await;
+                log::error!("Interrupted. Cleaned up temp file.");
+            }
+            std::process::exit(130);
+        }
+    });
+
+    cleanup_path
+}
+
+/// Set up Ctrl+C handler to clean up extraction directory on interrupt.
+/// Used by receivers for folder transfers to clean up partial extraction.
+///
+/// Note: Spawns a task that lives until Ctrl+C or program exit.
+pub fn setup_dir_cleanup_handler(extract_dir: PathBuf) -> CleanupPath {
+    let cleanup_path: CleanupPath = std::sync::Arc::new(tokio::sync::Mutex::new(Some(extract_dir)));
+    let cleanup_clone = cleanup_path.clone();
+
+    tokio::spawn(async move {
+        if tokio::signal::ctrl_c().await.is_ok() {
+            if let Some(path) = cleanup_clone.lock().await.take() {
+                let _ = tokio::fs::remove_dir_all(&path).await;
+                log::error!("Interrupted. Cleaned up extraction directory.");
+            }
+            std::process::exit(130);
+        }
+    });
+
+    cleanup_path
+}

@@ -1,9 +1,30 @@
 # Project Roadmap
 
 ---
+## Completed
+- ~~Add file lock to the file being received to prevent multiple receivers writing to the same file simultaneously.~~
+- ~~Add resumable transfers for large files on top of file locking above.~~
+
+---
+
 ## In Scope
-- Add file lock to the file being received to prevent multiple receivers writing to the same file simultaneously.
-- Add resumable transfers for large files on top of file locking above.
+
+### Code Quality: WebRTC Refactoring
+**Domain:** Core / Code Quality
+**Priority:** Low (not user-facing)
+**Estimated Effort:** Medium
+
+The WebRTC transport implementations have code duplication that could be consolidated:
+
+1. **Consolidate WebRTC streaming readers (~250 LOC)**
+   - `webrtc/receiver.rs` and `webrtc/offline_receiver.rs` have similar `WebRtcStreamingReader` implementations
+   - Should extract to a shared struct in `webrtc/common.rs`
+
+2. **Refactor WebRTC chunk loops (~400 LOC)**
+   - Both WebRTC receivers have similar chunk processing loops
+   - Should consolidate into shared functions in `core/transfer.rs`
+
+**Benefit:** Reduced code duplication, easier maintenance, fewer places for bugs.
 
 ---
 
@@ -30,12 +51,6 @@ Ideas and feature requests for future consideration.
 **Domain:** Core / Feature Flags
 - **Feature:** Decouple Nostr dependencies completely.
 - **Benefit:** Users who only want to use Iroh or Tor (or Local mode) shouldn't be required to build/include the Nostr stack.
-
-### Transfer Resumability
-**Domain:** Core / Transfer Logic
-- **Feature:** Ability to resume interrupted transfers (especially for large files) from where they left off.
-- **Benefit:** Prevents data loss and wasted bandwidth on unstable connections.
-- **Implementation:** Needs tracking of received chunks and a handshake to negotiate resume offset.
 
 ### Support Custom Iroh DNS Server
 **Domain:** Iroh Mode

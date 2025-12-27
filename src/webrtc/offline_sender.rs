@@ -6,7 +6,7 @@
 use anyhow::{Context, Result};
 use bytes::Bytes;
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::fs::File;
@@ -20,8 +20,8 @@ use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 use crate::core::crypto::{encrypt, generate_key, CHUNK_SIZE};
 use crate::core::transfer::{
     calc_percent, format_bytes, format_resume_progress, make_webrtc_done_msg, num_chunks,
-    parse_webrtc_control_msg, prepare_file_for_send, prepare_folder_for_send, ControlSignal,
-    FileHeader, TransferType,
+    parse_webrtc_control_msg, prepare_file_for_send, prepare_folder_for_send,
+    setup_temp_file_cleanup_handler, ControlSignal, FileHeader, TransferType,
 };
 use crate::signaling::offline::{
     display_offer_json, ice_candidates_to_payloads, read_answer_json, OfflineAnswer, OfflineOffer,
@@ -34,22 +34,6 @@ const ICE_GATHERING_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Timeout for WebRTC connection (3 minutes to allow time for copy/paste signaling)
 const CONNECTION_TIMEOUT: Duration = Duration::from_secs(180);
-
-/// Shared state for temp file cleanup on interrupt
-type TempFileCleanup = Arc<Mutex<Option<PathBuf>>>;
-
-/// Set up Ctrl+C handler to clean up temp file.
-fn setup_cleanup_handler(cleanup_path: TempFileCleanup) {
-    tokio::spawn(async move {
-        if tokio::signal::ctrl_c().await.is_ok() {
-            if let Some(path) = cleanup_path.lock().await.take() {
-                let _ = tokio::fs::remove_file(&path).await;
-                log::error!("\nInterrupted. Cleaned up temp file.");
-            }
-            std::process::exit(130);
-        }
-    });
-}
 
 /// Set up data channel close handler that notifies via channel
 fn setup_data_channel_close_handler(
@@ -95,8 +79,7 @@ pub async fn send_folder_offline(folder_path: &Path) -> Result<()> {
 
     // Set up cleanup handler
     let temp_path = prepared.temp_file.path().to_path_buf();
-    let cleanup_path: TempFileCleanup = Arc::new(Mutex::new(Some(temp_path.clone())));
-    setup_cleanup_handler(cleanup_path.clone());
+    let cleanup_path = setup_temp_file_cleanup_handler(temp_path.clone());
 
     let result = transfer_offline_internal(
         prepared.file,

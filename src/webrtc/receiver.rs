@@ -10,7 +10,7 @@ use bytes::Bytes;
 use std::io::{Seek, SeekFrom, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::mpsc;
 use tokio::time::{timeout, Duration};
 use webrtc::ice_transport::ice_candidate::RTCIceCandidateInit;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
@@ -24,10 +24,10 @@ use crate::core::resume::{
     ResumeMetadata,
 };
 use crate::core::transfer::{
-    find_available_filename, format_bytes, format_resume_progress, make_webrtc_abort_msg,
-    make_webrtc_ack_msg, make_webrtc_proceed_msg, make_webrtc_resume_msg, num_chunks,
-    parse_webrtc_control_msg, prompt_file_exists, ControlSignal, FileExistsChoice, FileHeader,
-    TransferType,
+    calc_percent, find_available_filename, format_bytes, format_resume_progress,
+    make_webrtc_abort_msg, make_webrtc_ack_msg, make_webrtc_proceed_msg, make_webrtc_resume_msg,
+    num_chunks, parse_webrtc_control_msg, prompt_file_exists, setup_dir_cleanup_handler,
+    setup_temp_file_cleanup_handler, ControlSignal, FileExistsChoice, FileHeader, TransferType,
 };
 use crate::signaling::nostr::{create_receiver_signaling, NostrSignaling, SignalingMessage};
 
@@ -38,18 +38,12 @@ use crate::webrtc::common::{setup_data_channel_handlers, WebRtcPeer};
 /// Connection timeout for WebRTC handshake
 const WEBRTC_CONNECTION_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// Shared state for temp file cleanup on interrupt
-type TempFileCleanup = Arc<Mutex<Option<PathBuf>>>;
-
-/// Shared state for extraction directory cleanup on interrupt
-type ExtractDirCleanup = Arc<Mutex<Option<PathBuf>>>;
-
 /// Print transfer progress, handling zero-byte files safely
 fn print_progress(bytes_received: u64, total_size: u64) {
     let percent = if total_size == 0 {
         100
     } else {
-        (bytes_received as f64 / total_size as f64 * 100.0) as u32
+        calc_percent(bytes_received, total_size) as u32
     };
     print!(
         "\r   Progress: {}% ({}/{})",
@@ -58,32 +52,6 @@ fn print_progress(bytes_received: u64, total_size: u64) {
         format_bytes(total_size)
     );
     let _ = std::io::stdout().flush();
-}
-
-/// Set up Ctrl+C handler to clean up temp file.
-fn setup_file_cleanup_handler(cleanup_path: TempFileCleanup) {
-    tokio::spawn(async move {
-        if tokio::signal::ctrl_c().await.is_ok() {
-            if let Some(path) = cleanup_path.lock().await.take() {
-                let _ = tokio::fs::remove_file(&path).await;
-                eprintln!("Interrupted. Cleaned up temp file.");
-            }
-            std::process::exit(130);
-        }
-    });
-}
-
-/// Set up Ctrl+C handler to clean up extraction directory.
-fn setup_dir_cleanup_handler(cleanup_path: ExtractDirCleanup) {
-    tokio::spawn(async move {
-        if tokio::signal::ctrl_c().await.is_ok() {
-            if let Some(path) = cleanup_path.lock().await.take() {
-                let _ = tokio::fs::remove_dir_all(&path).await;
-                eprintln!("Interrupted. Cleaned up extraction directory.");
-            }
-            std::process::exit(130);
-        }
-    });
 }
 
 /// Result of WebRTC connection attempt
@@ -516,12 +484,13 @@ async fn receive_file_impl(
     };
 
     // Set up cleanup handler (keep temp file if resumable and interrupted)
-    let cleanup_path: TempFileCleanup = Arc::new(Mutex::new(if is_resumable {
-        None // Don't delete on interrupt - we want to resume
+    let cleanup_path = if is_resumable {
+        // Resumable: don't set up cleanup, we want to keep the temp file for resume
+        std::sync::Arc::new(tokio::sync::Mutex::new(None))
     } else {
-        Some(temp_path.clone())
-    }));
-    setup_file_cleanup_handler(cleanup_path.clone());
+        // Not resumable: set up cleanup to delete temp file on interrupt
+        setup_temp_file_cleanup_handler(temp_path.clone())
+    };
 
     // Send appropriate control signal
     if resume_offset > 0 {
@@ -659,8 +628,7 @@ async fn receive_folder_impl(
     std::fs::create_dir_all(&extract_dir).context("Failed to create extraction directory")?;
 
     // Set up cleanup handler
-    let cleanup_path: ExtractDirCleanup = Arc::new(Mutex::new(Some(extract_dir.clone())));
-    setup_dir_cleanup_handler(cleanup_path.clone());
+    let cleanup_path = setup_dir_cleanup_handler(extract_dir.clone());
 
     eprintln!("Extracting to: {}", extract_dir.display());
     print_tar_extraction_info();

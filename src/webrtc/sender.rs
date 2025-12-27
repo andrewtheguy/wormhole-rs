@@ -8,7 +8,7 @@
 use anyhow::{Context, Result};
 use bytes::Bytes;
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 use tokio::fs::File;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncSeekExt};
@@ -21,8 +21,8 @@ use crate::cli::instructions::print_receiver_command;
 use crate::core::crypto::{encrypt, generate_key, CHUNK_SIZE};
 use crate::core::transfer::{
     calc_percent, format_bytes, format_resume_progress, make_webrtc_done_msg, num_chunks,
-    parse_webrtc_control_msg, prepare_file_for_send, prepare_folder_for_send, ControlSignal,
-    FileHeader, TransferType,
+    parse_webrtc_control_msg, prepare_file_for_send, prepare_folder_for_send,
+    setup_temp_file_cleanup_handler, ControlSignal, FileHeader, TransferType,
 };
 use crate::core::wormhole::generate_webrtc_code;
 use crate::signaling::nostr::{create_sender_signaling, NostrSignaling, SignalingMessage};
@@ -31,22 +31,6 @@ use crate::webrtc::common::{setup_data_channel_handlers, WebRtcPeer};
 
 /// Connection timeout for WebRTC handshake
 const WEBRTC_CONNECTION_TIMEOUT: Duration = Duration::from_secs(30);
-
-/// Shared state for temp file cleanup on interrupt
-type TempFileCleanup = Arc<Mutex<Option<PathBuf>>>;
-
-/// Set up Ctrl+C handler to clean up temp file.
-fn setup_cleanup_handler(cleanup_path: TempFileCleanup) {
-    tokio::spawn(async move {
-        if tokio::signal::ctrl_c().await.is_ok() {
-            if let Some(path) = cleanup_path.lock().await.take() {
-                let _ = tokio::fs::remove_file(&path).await;
-                eprintln!("\nInterrupted. Cleaned up temp file.");
-            }
-            std::process::exit(130);
-        }
-    });
-}
 
 /// Set up data channel close handler that notifies via channel
 fn setup_data_channel_close_handler(
@@ -626,8 +610,7 @@ async fn send_folder_webrtc_internal(
 
     // Set up cleanup handler for Ctrl+C
     let temp_path = prepared.temp_file.path().to_path_buf();
-    let cleanup_path: TempFileCleanup = Arc::new(Mutex::new(Some(temp_path)));
-    setup_cleanup_handler(cleanup_path.clone());
+    let cleanup_path = setup_temp_file_cleanup_handler(temp_path);
 
     let result = transfer_data_webrtc_internal(
         prepared.file,

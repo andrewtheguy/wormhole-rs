@@ -8,18 +8,16 @@ use mdns_sd::{ServiceDaemon, ServiceInfo};
 use std::collections::HashMap;
 use std::net::TcpListener;
 use std::path::Path;
-use std::sync::Arc;
 use tokio::fs::File;
 use tokio::io::AsyncSeekExt;
 use tokio::net::TcpStream;
-use tokio::sync::Mutex;
 
 use crate::auth::spake2::handshake_as_responder;
 use crate::cli::instructions::print_receiver_command;
 use crate::core::transfer::{
     format_bytes, format_resume_progress, handle_receiver_response, prepare_file_for_send,
-    prepare_folder_for_send, recv_control, send_encrypted_header, send_file_data, ControlSignal,
-    FileHeader, ResumeResponse, TransferType,
+    prepare_folder_for_send, recv_control, send_encrypted_header, send_file_data,
+    setup_temp_file_cleanup_handler, ControlSignal, FileHeader, ResumeResponse, TransferType,
 };
 use crate::mdns::common::{
     generate_pin, generate_transfer_id, PORT_RANGE_END, PORT_RANGE_START, SERVICE_TYPE,
@@ -98,9 +96,7 @@ pub async fn send_folder_mdns(folder_path: &Path) -> Result<()> {
 
     // Set up cleanup handler for temp file
     let temp_path = prepared.temp_file.path().to_path_buf();
-    let cleanup_path: Arc<Mutex<Option<std::path::PathBuf>>> =
-        Arc::new(Mutex::new(Some(temp_path)));
-    setup_cleanup_handler(cleanup_path.clone());
+    let cleanup_path = setup_temp_file_cleanup_handler(temp_path);
 
     // Generate random PIN (key will be derived via SPAKE2 handshake)
     let pin = generate_pin();
@@ -314,15 +310,3 @@ async fn send_data_over_tcp(
     Ok(())
 }
 
-/// Set up Ctrl+C handler for cleanup.
-fn setup_cleanup_handler(cleanup_path: Arc<Mutex<Option<std::path::PathBuf>>>) {
-    tokio::spawn(async move {
-        if tokio::signal::ctrl_c().await.is_ok() {
-            if let Some(path) = cleanup_path.lock().await.take() {
-                let _ = tokio::fs::remove_file(&path).await;
-                log::error!("Interrupted. Cleaned up temp file.");
-            }
-            std::process::exit(130);
-        }
-    });
-}

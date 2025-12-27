@@ -1,39 +1,18 @@
 use anyhow::{Context, Result};
 use iroh::Watcher;
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::path::Path;
 use tokio::fs::File;
 use tokio::io::AsyncSeekExt;
-use tokio::sync::Mutex;
 
 use crate::cli::instructions::print_receiver_command;
 use crate::core::crypto::generate_key;
 use crate::core::transfer::{
     format_bytes, handle_receiver_response, prepare_file_for_send, prepare_folder_for_send,
-    recv_control, send_encrypted_header, send_file_data, ControlSignal, FileHeader,
-    ResumeResponse, TransferType,
+    recv_control, send_encrypted_header, send_file_data, setup_temp_file_cleanup_handler,
+    ControlSignal, FileHeader, ResumeResponse, TransferType,
 };
 use crate::core::wormhole::generate_code;
 use crate::iroh::common::create_sender_endpoint;
-
-/// Shared state for temp file cleanup on interrupt
-type TempFileCleanup = Arc<Mutex<Option<PathBuf>>>;
-
-/// Set up Ctrl+C handler to clean up temp file.
-///
-/// Note: Spawns a task that lives until Ctrl+C or program exit. This is appropriate
-/// for CLI tools but would accumulate tasks if called repeatedly in a long-running process.
-fn setup_cleanup_handler(cleanup_path: TempFileCleanup) {
-    tokio::spawn(async move {
-        if tokio::signal::ctrl_c().await.is_ok() {
-            if let Some(path) = cleanup_path.lock().await.take() {
-                let _ = tokio::fs::remove_file(&path).await;
-                log::error!("\nInterrupted. Cleaned up temp file.");
-            }
-            std::process::exit(130);
-        }
-    });
-}
 
 /// Internal helper for common transfer logic.
 /// Handles encryption setup, endpoint creation, connection, data transfer, and acknowledgment.
@@ -227,8 +206,7 @@ pub async fn send_folder(folder_path: &Path, relay_urls: Vec<String>, use_pin: b
 
     // Set up cleanup handler for Ctrl+C
     let temp_path = prepared.temp_file.path().to_path_buf();
-    let cleanup_path: TempFileCleanup = Arc::new(Mutex::new(Some(temp_path)));
-    setup_cleanup_handler(cleanup_path.clone());
+    let cleanup_path = setup_temp_file_cleanup_handler(temp_path);
 
     let result = transfer_data_internal(
         prepared.file,

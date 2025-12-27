@@ -13,8 +13,8 @@ use crate::cli::instructions::print_receiver_command;
 use crate::core::crypto::generate_key;
 use crate::core::transfer::{
     format_resume_progress, handle_receiver_response, prepare_file_for_send,
-    prepare_folder_for_send, recv_control, send_encrypted_header, send_file_data, ControlSignal,
-    FileHeader, ResumeResponse, TransferType,
+    prepare_folder_for_send, recv_control, send_encrypted_header, send_file_data,
+    setup_temp_file_cleanup_handler, ControlSignal, FileHeader, ResumeResponse, TransferType,
 };
 use crate::core::wormhole::generate_tor_code;
 
@@ -189,8 +189,11 @@ pub async fn send_folder_tor(folder_path: &Path, use_pin: bool) -> Result<()> {
         None => return Ok(()),
     };
 
-    // Note: prepared.temp_file is kept alive until this function returns, ensuring the file exists
-    transfer_data_tor_internal(
+    // Set up cleanup handler
+    let temp_path = prepared.temp_file.path().to_path_buf();
+    let cleanup_path = setup_temp_file_cleanup_handler(temp_path.clone());
+
+    let result = transfer_data_tor_internal(
         prepared.file,
         prepared.filename,
         prepared.file_size,
@@ -198,5 +201,11 @@ pub async fn send_folder_tor(folder_path: &Path, use_pin: bool) -> Result<()> {
         TransferType::Folder,
         use_pin,
     )
-    .await
+    .await;
+
+    // Clean up temp file
+    cleanup_path.lock().await.take();
+    let _ = tokio::fs::remove_file(&temp_path).await;
+
+    result
 }
