@@ -137,6 +137,25 @@ fn validate_and_parse_event_with_id(event: &Event, transfer_id: &str) -> Option<
     }
 }
 
+/// Process an event in the background receiver task.
+///
+/// Validates the event, parses it, and sends to the channel if valid.
+/// Returns `true` if the task should continue, `false` if it should exit
+/// (channel closed).
+async fn process_event_for_receiver(
+    event: &Event,
+    transfer_id: &str,
+    tx: &mpsc::Sender<SignalingMessage>,
+) -> bool {
+    if let Some(msg) = validate_and_parse_event_with_id(event, transfer_id) {
+        if tx.send(msg).await.is_err() {
+            log::debug!("Message receiver channel closed, stopping background task");
+            return false;
+        }
+    }
+    true
+}
+
 impl NostrSignaling {
     /// Create a new Nostr signaling client
     pub async fn new(custom_relays: Option<Vec<String>>, use_default_relays: bool) -> Result<Self> {
@@ -377,28 +396,26 @@ impl NostrSignaling {
             loop {
                 match notifications.recv().await {
                     Ok(RelayPoolNotification::Event { event, .. }) => {
-                        if let Some(msg) =
-                            validate_and_parse_event_with_id(&event, &transfer_id)
-                        {
-                            if tx.send(msg).await.is_err() {
-                                break;
-                            }
+                        if !process_event_for_receiver(&event, &transfer_id, &tx).await {
+                            break;
                         }
                     }
                     Ok(RelayPoolNotification::Message { message, .. }) => {
                         // Handle Event messages that come through as Message notifications
                         if let nostr_sdk::RelayMessage::Event { event, .. } = message {
-                            if let Some(msg) =
-                                validate_and_parse_event_with_id(&event, &transfer_id)
-                            {
-                                if tx.send(msg).await.is_err() {
-                                    break;
-                                }
+                            if !process_event_for_receiver(&event, &transfer_id, &tx).await {
+                                break;
                             }
                         }
                     }
                     Ok(_) => continue,
-                    Err(_) => break,
+                    Err(e) => {
+                        log::warn!(
+                            "Nostr relay notification stream error, stopping receiver: {}",
+                            e
+                        );
+                        break;
+                    }
                 }
             }
         });
