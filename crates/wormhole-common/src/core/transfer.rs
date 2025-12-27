@@ -110,6 +110,14 @@ impl FileHeader {
         let filename = String::from_utf8(data[3..3 + filename_len].to_vec())
             .context("Invalid filename encoding")?;
 
+        // Validate filename doesn't contain path traversal or invalid characters
+        if filename.contains("..") || filename.contains('/') || filename.contains('\\') || filename.contains('\0') {
+            anyhow::bail!("Invalid filename: contains path traversal or invalid characters");
+        }
+        if filename.is_empty() {
+            anyhow::bail!("Invalid filename: empty");
+        }
+
         let size_start = 3 + filename_len;
         let file_size = u64::from_be_bytes(data[size_start..size_start + 8].try_into().unwrap());
 
@@ -475,6 +483,14 @@ pub async fn prepare_folder_for_send(folder_path: &Path) -> Result<Option<Prepar
         .file_name()
         .and_then(|n| n.to_str())
         .context("Invalid folder name")?;
+
+    // Validate folder name
+    if folder_name.contains("..") || folder_name.contains('/') || folder_name.contains('\\') || folder_name.contains('\0') {
+        anyhow::bail!("Invalid folder name: contains path traversal or invalid characters");
+    }
+    if folder_name.is_empty() {
+        anyhow::bail!("Invalid folder name: empty");
+    }
 
     println!("📁 Creating tar archive of: {}", folder_name);
     print_tar_creation_info();
@@ -1423,9 +1439,16 @@ where
 
         match choice {
             FileExistsChoice::Overwrite => {
-                tokio::fs::remove_file(&output_path)
-                    .await
-                    .context("Failed to remove existing file")?;
+                // Handle TOCTOU race: file may have been removed between check and now
+                match tokio::fs::remove_file(&output_path).await {
+                    Ok(()) => {}
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                        // File was already removed - this is fine
+                    }
+                    Err(e) => {
+                        return Err(e).context("Failed to remove existing file");
+                    }
+                }
                 output_path
             }
             FileExistsChoice::Rename => {
