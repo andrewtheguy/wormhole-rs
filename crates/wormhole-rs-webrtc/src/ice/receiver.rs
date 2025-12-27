@@ -109,6 +109,9 @@ pub async fn receive_ice(code: &str, output_dir: Option<PathBuf>, no_resume: boo
     })
     .await?;
 
+    // Add remote candidates
+    ice.add_remote_candidates(&offer.candidates)?;
+
     // Connect as controlled agent (acceptor)
     eprintln!("Establishing ICE connection...");
     let conn = ice.accept(&offer.ufrag, &offer.pwd).await?;

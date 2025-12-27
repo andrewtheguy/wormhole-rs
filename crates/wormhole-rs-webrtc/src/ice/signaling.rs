@@ -243,27 +243,67 @@ impl IceNostrSignaling {
         let mut notifications = self.client.notifications();
         let deadline = tokio::time::Instant::now() + Duration::from_secs(timeout_secs);
 
+        eprintln!("[Signaling] Waiting for message, transfer_id={}", self.transfer_id);
+
         while tokio::time::Instant::now() < deadline {
             match timeout(Duration::from_secs(1), notifications.recv()).await {
                 Ok(Ok(RelayPoolNotification::Event { event, .. })) => {
+                    eprintln!("[Signaling] Got event from {}", event.pubkey.to_hex());
+
                     // Check if this is for our transfer
                     let is_our_transfer = event.tags.iter().any(|t| {
                         t.kind() == TagKind::SingleLetter(SingleLetterTag::lowercase(Alphabet::T))
                             && t.content() == Some(&self.transfer_id)
                     });
 
+                    eprintln!("[Signaling] is_our_transfer={}", is_our_transfer);
+
                     if is_our_transfer {
                         if let Some(msg) = Self::parse_signaling_event(&event) {
+                            eprintln!("[Signaling] Parsed message successfully");
                             return Ok(Some(msg));
+                        } else {
+                            eprintln!("[Signaling] Failed to parse message");
                         }
                     }
                 }
-                Ok(Ok(_)) => continue,
-                Ok(Err(_)) => break,
-                Err(_) => continue,
+                Ok(Ok(RelayPoolNotification::Message { message, .. })) => {
+                    // Handle Event messages that come through as Message notifications
+                    if let nostr_sdk::RelayMessage::Event { event, .. } = message {
+                        eprintln!("[Signaling] Got event via Message notification from {}", event.pubkey.to_hex());
+
+                        // Check if this is for our transfer
+                        let is_our_transfer = event.tags.iter().any(|t| {
+                            t.kind() == TagKind::SingleLetter(SingleLetterTag::lowercase(Alphabet::T))
+                                && t.content() == Some(&self.transfer_id)
+                        });
+
+                        eprintln!("[Signaling] is_our_transfer={}", is_our_transfer);
+
+                        if is_our_transfer {
+                            if let Some(msg) = Self::parse_signaling_event(&event) {
+                                eprintln!("[Signaling] Parsed message successfully");
+                                return Ok(Some(msg));
+                            } else {
+                                eprintln!("[Signaling] Failed to parse message");
+                            }
+                        }
+                    }
+                    continue;
+                }
+                Ok(Ok(RelayPoolNotification::Shutdown)) => {
+                    eprintln!("[Signaling] Got shutdown notification");
+                    break;
+                }
+                Ok(Err(e)) => {
+                    eprintln!("[Signaling] Recv error: {}", e);
+                    break;
+                }
+                Err(_) => continue, // Timeout, keep waiting
             }
         }
 
+        eprintln!("[Signaling] Timeout waiting for message");
         Ok(None)
     }
 

@@ -190,6 +190,9 @@ async fn transfer_via_ice(
     })
     .await?;
 
+    // Add remote candidates
+    ice.add_remote_candidates(&receiver_payload.candidates)?;
+
     // Connect as controlling agent (dialer)
     eprintln!("Establishing ICE connection...");
     let mut conn = ice

@@ -12,6 +12,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use webrtc_ice::agent::agent_config::AgentConfig;
 use webrtc_ice::agent::Agent;
+use webrtc_ice::candidate::candidate_base::unmarshal_candidate;
 use webrtc_ice::candidate::Candidate;
 use webrtc_ice::network_type::NetworkType;
 use webrtc_ice::url::Url;
@@ -71,10 +72,10 @@ impl IceTransport {
         // Channel for receiving candidates as they're gathered
         let (candidate_tx, candidate_rx) = mpsc::channel(32);
 
-        // Configure agent for TCP candidates only
+        // Configure agent for UDP candidates (standard ICE)
         let config = AgentConfig {
             urls,
-            network_types: vec![NetworkType::Tcp4, NetworkType::Tcp6],
+            network_types: vec![NetworkType::Udp4, NetworkType::Udp6],
             ..Default::default()
         };
 
@@ -151,6 +152,27 @@ impl IceTransport {
             .set_remote_credentials(creds.ufrag.clone(), creds.pwd.clone())
             .await
             .context("Failed to set remote credentials")?;
+        Ok(())
+    }
+
+    /// Add remote candidates received via signaling.
+    ///
+    /// This must be called after set_remote_credentials and before dial/accept.
+    pub fn add_remote_candidates(&self, candidates: &[IceCandidateInfo]) -> Result<()> {
+        for c in candidates {
+            match unmarshal_candidate(&c.candidate) {
+                Ok(candidate) => {
+                    eprintln!("Adding remote candidate: {}", candidate);
+                    let candidate: Arc<dyn Candidate + Send + Sync> = Arc::new(candidate);
+                    if let Err(e) = self.agent.add_remote_candidate(&candidate) {
+                        eprintln!("Warning: Failed to add remote candidate: {}", e);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Warning: Failed to unmarshal candidate '{}': {}", c.candidate, e);
+                }
+            }
+        }
         Ok(())
     }
 
