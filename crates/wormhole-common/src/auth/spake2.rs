@@ -18,6 +18,25 @@ const MAX_TRANSFER_ID_LEN: usize = 256;
 const IDENTITY_SENDER: &[u8] = b"wormhole-rs-sender";
 const IDENTITY_RECEIVER: &[u8] = b"wormhole-rs-receiver";
 
+/// Constant-time comparison of two byte slices.
+///
+/// Returns true if and only if the slices have equal length and equal contents.
+/// The comparison takes the same amount of time regardless of where (or whether)
+/// the slices differ, preventing timing attacks.
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+
+    // XOR all bytes and accumulate; result is 0 iff all bytes match
+    let mut result = 0u8;
+    for (x, y) in a.iter().zip(b.iter()) {
+        result |= x ^ y;
+    }
+
+    result == 0
+}
+
 /// Perform SPAKE2 handshake as initiator (receiver role in mDNS).
 ///
 /// The receiver connects first and sends their SPAKE2 message along with
@@ -139,13 +158,9 @@ where
         .context("Failed to read transfer ID")?;
     let transfer_id = String::from_utf8(transfer_id_buf).context("Invalid transfer ID encoding")?;
 
-    // Validate transfer ID
-    if transfer_id != expected_transfer_id {
-        anyhow::bail!(
-            "Transfer ID mismatch: expected '{}', got '{}'",
-            expected_transfer_id,
-            transfer_id
-        );
+    // Validate transfer ID using constant-time comparison to prevent timing attacks
+    if !constant_time_eq(transfer_id.as_bytes(), expected_transfer_id.as_bytes()) {
+        anyhow::bail!("Transfer ID mismatch");
     }
 
     // Receive peer's SPAKE2 message

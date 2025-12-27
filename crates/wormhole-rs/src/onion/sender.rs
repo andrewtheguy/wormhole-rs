@@ -1,10 +1,12 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use arti_client::{config::TorClientConfigBuilder, TorClient};
 use futures::StreamExt;
 use rand::Rng;
 use safelog::DisplayRedacted;
 use std::path::Path;
+use std::time::Duration;
 use tokio::fs::File;
+use tokio::time::timeout;
 use tor_cell::relaycell::msg::Connected;
 use tor_hsservice::{config::OnionServiceConfigBuilder, handle_rend_requests};
 
@@ -16,6 +18,9 @@ use wormhole_common::core::transfer::{
 };
 use wormhole_common::core::wormhole::generate_tor_code;
 use wormhole_common::signaling::nostr_protocol::generate_transfer_id;
+
+/// Timeout for publishing wormhole code via PIN (Nostr relay)
+const PIN_PUBLISH_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Internal helper for common Tor transfer logic.
 /// Handles Tor bootstrap, onion service, connection, data transfer, and acknowledgment.
@@ -79,12 +84,17 @@ async fn transfer_data_tor_internal(
         let keys = nostr_sdk::Keys::generate();
         // Generate unique transfer ID to avoid collisions with concurrent transfers
         let transfer_id = generate_transfer_id();
-        let pin = wormhole_common::auth::nostr_pin::publish_wormhole_code_via_pin(
-            &keys,
-            &code,
-            &transfer_id,
+        let pin = timeout(
+            PIN_PUBLISH_TIMEOUT,
+            wormhole_common::auth::nostr_pin::publish_wormhole_code_via_pin(
+                &keys,
+                &code,
+                &transfer_id,
+            ),
         )
-        .await?;
+        .await
+        .map_err(|_| anyhow::anyhow!("Timed out publishing PIN to Nostr relay"))?
+        .context("Failed to publish wormhole code via PIN")?;
 
         println!("🔢 PIN: {}\n", pin);
         println!("Then enter the PIN above when prompted.\n");

@@ -74,8 +74,13 @@ pub async fn receive(
         eprintln!("Connection type: {:?}", conn_type);
     }
 
+const ACCEPT_STREAM_TIMEOUT: Duration = Duration::from_secs(30);
+
     // Accept bi-directional stream
-    let (send_stream, recv_stream) = conn.accept_bi().await.context("Failed to accept stream")?;
+    let (send_stream, recv_stream) = timeout(ACCEPT_STREAM_TIMEOUT, conn.accept_bi())
+        .await
+        .context("Timed out waiting for sender to open stream")?
+        .context("Failed to accept stream")?;
 
     // Create owned duplex for unified transfer logic
     let duplex = OwnedIrohDuplex::new(send_stream, recv_stream);

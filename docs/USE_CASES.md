@@ -5,8 +5,8 @@ This guide describes common scenarios where `wormhole-rs` shines and which mode 
 ## 1. No Internet Access (LAN / Air-gapped)
 **Scenario**: You need to transfer files between two computers on the same Wi-Fi or Ethernet network, but the internet is down, slow, or you are in an isolated environment (air-gapped).
 
-**Solution A**: **Local Mode** (`send-local` / `receive-local`)
-- **Why**: Uses mDNS for discovery and direct TCP connections. No data leaves your local network. Relies on a short passphrase instead of a long code.
+**Solution**: **Local Mode** (`send-local` / `receive-local`)
+- **Why**: Uses mDNS for discovery and direct TCP connections. No data leaves your local network. Relies on a short passphrase instead of a long code. **This is the only mode that works fully offline.**
 - **Command**:
   ```bash
   # Sender
@@ -17,8 +17,15 @@ This guide describes common scenarios where `wormhole-rs` shines and which mode 
   ```
 - **Experience**: The sender sets a passphrase (e.g., "secret"). The receiver finds the sender automatically and prompts for that passphrase.
 
-**Solution B**: **iroh Mode** (Cross-subnet discovery)
-- **Why**: When mDNS discovery doesn't work (different subnets, VPN issues), iroh mode automatically discovers peers across network boundaries using iroh's distributed hash table (DHT) and relay infrastructure—no manual IP input required.
+> **Note**: iroh Mode and Tor Mode both require internet access for DHT/relay/network operations and will not work in air-gapped environments.
+
+---
+
+## 2. Cross-Subnet / VPN Discovery Issues
+**Scenario**: mDNS discovery doesn't work because peers are on different subnets, across VPNs, or on networks that block multicast.
+
+**Solution**: **iroh Mode**
+- **Why**: iroh automatically discovers peers across network boundaries using its distributed hash table (DHT) and relay infrastructure—no manual IP input required. Requires internet access.
 - **Command**:
   ```bash
   # Sender
@@ -31,7 +38,7 @@ This guide describes common scenarios where `wormhole-rs` shines and which mode 
 
 ---
 
-## 2. Cannot Copy-Paste (Cross-device / Remote Terminal)
+## 3. Cannot Copy-Paste (Cross-device / Remote Terminal)
 **Scenario**: You are sending a file from a laptop to a friend's phone, or to a remote server console where you cannot easily copy and paste the long "Wormhole Code". Typing a huge base64 string is impossible.
 
 **Solution A**: **Local Mode** (Recommended for same network)
@@ -64,7 +71,7 @@ This guide describes common scenarios where `wormhole-rs` shines and which mode 
 
 ---
 
-## 3. Strict Firewalls / Restricted Networks
+## 4. Strict Firewalls / Restricted Networks
 **Scenario**: You are on a corporate or university network that blocks UDP, non-standard ports, and direct P2P connections. Standard transfers hang or fail.
 
 **Solution A**: **iroh Mode** (Recommended)
@@ -83,7 +90,7 @@ This guide describes common scenarios where `wormhole-rs` shines and which mode 
 
 ---
 
-## 4. Maximum Anonymity
+## 5. Maximum Anonymity
 **Scenario**: You want to transfer a file without revealing your IP address to the peer or any relay servers.
 
 **Solution**: **Tor Mode** (`send-tor`)
@@ -95,7 +102,7 @@ This guide describes common scenarios where `wormhole-rs` shines and which mode 
 
 ---
 
-## 5. Large File Transfer
+## 6. Large File Transfer
 **Scenario**: Transferring a massive dataset (GBs) over the internet.
 
 **Solution**: **iroh Mode** (Recommended)
@@ -106,7 +113,7 @@ This guide describes common scenarios where `wormhole-rs` shines and which mode 
 
 ---
 
-## 6. Self-Hosted Infrastructure (Zero Third-Party Dependency)
+## 7. Self-Hosted Infrastructure (Zero Third-Party Dependency)
 **Scenario**: You require complete control over the network infrastructure and cannot rely on public relays or discovery servers due to policy or privacy concerns.
 
 **Solution A**: **iroh Mode + Custom DERP Relays** (Recommended)
@@ -128,7 +135,7 @@ This guide describes common scenarios where `wormhole-rs` shines and which mode 
 
 ---
 
-## 7. Planned / Future Scenarios
+## 8. Planned / Future Scenarios
 
 See [ROADMAP.md](ROADMAP.md) for planned features and development priorities.
 

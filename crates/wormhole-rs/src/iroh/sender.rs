@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use iroh::Watcher;
 use std::path::Path;
 use tokio::fs::File;
+use tokio::sync::oneshot;
 
 use crate::cli::instructions::print_receiver_command;
 use super::common::{create_sender_endpoint, IrohDuplex};
@@ -15,6 +16,9 @@ use wormhole_common::signaling::nostr_protocol::generate_transfer_id;
 
 /// Internal helper for common transfer logic.
 /// Handles encryption setup, endpoint creation, connection, data transfer, and acknowledgment.
+///
+/// If `shutdown_rx` is provided and receives a signal, the transfer will be cancelled
+/// and the connection will be properly closed before returning `Interrupted`.
 async fn transfer_data_internal(
     mut file: File,
     filename: String,
@@ -23,6 +27,7 @@ async fn transfer_data_internal(
     transfer_type: TransferType,
     relay_urls: Vec<String>,
     use_pin: bool,
+    shutdown_rx: Option<oneshot::Receiver<()>>,
 ) -> Result<()> {
     // Always generate encryption key for application-layer encryption
     let key = generate_key();
@@ -122,7 +127,21 @@ async fn transfer_data_internal(
     let header = FileHeader::new(transfer_type, filename, file_size, checksum);
     let mut duplex = IrohDuplex::new(&mut send_stream, &mut recv_stream);
 
-    let result = run_sender_transfer(&mut file, &mut duplex, &key, &header).await?;
+    // Run transfer with optional shutdown handling
+    let result = if let Some(shutdown_rx) = shutdown_rx {
+        tokio::select! {
+            result = run_sender_transfer(&mut file, &mut duplex, &key, &header) => result?,
+            _ = shutdown_rx => {
+                // Graceful shutdown requested - notify receiver and close connection
+                eprintln!("\nShutdown requested, cancelling transfer...");
+                conn.close(0u32.into(), b"cancelled");
+                endpoint.close().await;
+                return Err(Interrupted.into());
+            }
+        }
+    } else {
+        run_sender_transfer(&mut file, &mut duplex, &key, &header).await?
+    };
 
     if result == TransferResult::Aborted {
         conn.close(0u32.into(), b"cancelled");
@@ -149,6 +168,7 @@ pub async fn send_file(file_path: &Path, relay_urls: Vec<String>, use_pin: bool)
         None => return Ok(()),
     };
 
+    // Files are resumable, so no special interrupt handling needed
     transfer_data_internal(
         prepared.file,
         prepared.filename,
@@ -157,6 +177,7 @@ pub async fn send_file(file_path: &Path, relay_urls: Vec<String>, use_pin: bool)
         TransferType::File,
         relay_urls,
         use_pin,
+        None, // No shutdown receiver for resumable file transfers
     )
     .await
 }
@@ -177,27 +198,32 @@ pub async fn send_folder(folder_path: &Path, relay_urls: Vec<String>, use_pin: b
     let temp_path = prepared.temp_file.path().to_path_buf();
     let cleanup_handler = setup_temp_file_cleanup_handler(temp_path.clone());
 
-    // Run transfer with interrupt handling
-    let result = tokio::select! {
-        result = transfer_data_internal(
-            prepared.file,
-            prepared.filename,
-            prepared.file_size,
-            prepared.checksum, // 0 for folders (not resumable)
-            TransferType::Folder,
-            relay_urls,
-            use_pin,
-        ) => result,
-        _ = cleanup_handler.shutdown_rx => {
-            // Graceful shutdown requested - clean up and return Interrupted error
-            cleanup_handler.cleanup_path.lock().await.take();
-            let _ = tokio::fs::remove_file(&temp_path).await;
-            return Err(Interrupted.into());
-        }
-    };
+    // Run transfer - shutdown handling is done inside transfer_data_internal
+    // which properly closes the connection before returning Interrupted
+    let result = transfer_data_internal(
+        prepared.file,
+        prepared.filename,
+        prepared.file_size,
+        prepared.checksum, // 0 for folders (not resumable)
+        TransferType::Folder,
+        relay_urls,
+        use_pin,
+        Some(cleanup_handler.shutdown_rx),
+    )
+    .await;
 
     // Clear cleanup path (transfer succeeded or failed, temp file handled)
     cleanup_handler.cleanup_path.lock().await.take();
+
+    // Clean up temp file on interrupt (connection already closed by transfer_data_internal)
+    if result
+        .as_ref()
+        .err()
+        .map(|e| e.is::<Interrupted>())
+        .unwrap_or(false)
+    {
+        let _ = tokio::fs::remove_file(&temp_path).await;
+    }
 
     // Temp file is automatically cleaned up when NamedTempFile (prepared.temp_file) is dropped
 

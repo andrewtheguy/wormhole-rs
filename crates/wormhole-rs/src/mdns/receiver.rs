@@ -12,6 +12,7 @@ use std::net::IpAddr;
 use std::path::PathBuf;
 use std::time::Duration;
 use tokio::net::TcpStream;
+use tokio::time::timeout;
 
 use super::common::{
     MdnsServiceInfo, SERVICE_TYPE, TXT_FILENAME, TXT_FILE_SIZE, TXT_TRANSFER_ID, TXT_TRANSFER_TYPE,
@@ -21,6 +22,12 @@ use wormhole_common::core::transfer::{format_bytes, run_receiver_transfer};
 
 /// Timeout for mDNS browsing (seconds)
 const BROWSE_TIMEOUT_SECS: u64 = 30;
+
+/// Timeout for TCP connection to sender
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Timeout for SPAKE2 handshake
+const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Check if an IP address is routable (usable for connections).
 /// Rejects loopback, link-local, and unspecified addresses.
@@ -256,16 +263,21 @@ pub async fn receive_mdns(output_dir: Option<PathBuf>) -> Result<()> {
     let socket_addr = std::net::SocketAddr::new(*addr, selected.port);
 
     println!("Connecting to {}...", socket_addr);
-    let mut stream = TcpStream::connect(socket_addr)
+    let mut stream = timeout(CONNECT_TIMEOUT, TcpStream::connect(socket_addr))
         .await
+        .map_err(|_| anyhow::anyhow!("Timed out connecting to sender"))?
         .context("Failed to connect to sender")?;
 
     println!("Connected! Performing SPAKE2 key exchange...");
 
     // Perform SPAKE2 handshake to derive encryption key
-    let key = handshake_as_initiator(&mut stream, &pin, &selected.transfer_id)
-        .await
-        .context("SPAKE2 handshake failed - wrong PIN?")?;
+    let key = timeout(
+        HANDSHAKE_TIMEOUT,
+        handshake_as_initiator(&mut stream, &pin, &selected.transfer_id),
+    )
+    .await
+    .map_err(|_| anyhow::anyhow!("Timed out during SPAKE2 handshake"))?
+    .context("SPAKE2 handshake failed - wrong PIN?")?;
 
     println!("Key exchange successful!");
 

@@ -121,8 +121,8 @@ async fn transfer_offline_internal(
     // Create and display offer JSON
     let created_at = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+        .expect("System clock is set before Unix epoch")
+        .as_secs();
 
     let offline_offer = OfflineOffer {
         sdp: offer.sdp,

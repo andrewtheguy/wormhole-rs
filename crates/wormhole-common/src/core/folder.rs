@@ -297,7 +297,7 @@ pub fn get_extraction_dir(output_dir: Option<PathBuf>) -> PathBuf {
         None => {
             let timestamp = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
+                .expect("System clock is set before Unix epoch")
                 .as_secs();
             let random_id: u32 = rand::random();
             PathBuf::from(format!("wormhole_{}_{:08x}", timestamp, random_id))
