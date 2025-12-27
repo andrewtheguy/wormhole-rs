@@ -279,10 +279,10 @@ async fn receive_data_over_tcp(
     key: &[u8; 32],
     output_dir: Option<PathBuf>,
 ) -> Result<()> {
-    // Run unified receiver transfer
+    // Run unified receiver transfer (sends ACK internally)
     let (_path, _stream) = run_receiver_transfer(stream, *key, output_dir, false).await?;
 
-    println!("Sent confirmation to sender");
+    println!("Transfer completed successfully");
 
     Ok(())
 }
