@@ -4,6 +4,25 @@
 //! - Deriving encryption keys from PINs using Argon2id
 //! - Creating and parsing PIN exchange events (kind 24243)
 //! - Encrypting/decrypting wormhole codes with PIN-derived keys
+//!
+//! # Security Notes
+//!
+//! ## PIN Hint Tradeoff
+//!
+//! The PIN hint (first 16 bits of SHA256(PIN)) is published with events to enable
+//! efficient relay filtering. This is a deliberate tradeoff:
+//!
+//! - **Benefit**: Receivers can filter ~65k buckets instead of scanning all events
+//! - **Cost**: Reduces effective PIN entropy by 16 bits
+//!
+//! For a 12-char PIN with ~65 bits of entropy, this leaves ~49 bits of effective
+//! security. An attacker with relay access can:
+//! 1. Pre-filter events by hint (reduces work by factor of 65536)
+//! 2. Still must brute-force remaining ~49 bits against Argon2id
+//!
+//! The Argon2id KDF (64 MiB memory, 3 iterations) makes brute-force expensive
+//! even with the reduced entropy. For higher security, use longer PINs or
+//! consider direct code exchange without the PIN hint mechanism.
 
 use aes_gcm::{
     aead::{Aead, KeyInit},
@@ -44,12 +63,16 @@ const ARGON2_PARALLELISM: u32 = 4;
 /// PIN exchange event expiration (1 hour)
 const PIN_EVENT_EXPIRATION_SECS: u64 = 3600;
 
-/// Compute PIN hint for event filtering (first 8 hex chars of SHA256).
+/// Compute PIN hint for event filtering (first 4 hex chars of SHA256).
+///
+/// Uses only 16 bits (2 bytes) to balance filtering efficiency against entropy loss.
+/// This provides ~65k buckets for relay filtering while preserving most of the
+/// PIN's entropy. See module-level security notes for the tradeoff analysis.
 pub fn compute_pin_hint(pin: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(pin.as_bytes());
     let hash = hasher.finalize();
-    hex::encode(&hash[..4]) // First 4 bytes = 8 hex chars
+    hex::encode(&hash[..2]) // First 2 bytes = 4 hex chars = 16 bits
 }
 
 /// Derive a 256-bit key from PIN using Argon2id.
@@ -135,7 +158,7 @@ pub fn pin_exchange_kind() -> Kind {
 /// - kind: 24243
 /// - content: base64(encrypted_wormhole_code)
 /// - tags:
-///   - ["h", "<pin_hint>"] - First 8 hex chars of SHA256(PIN) for filtering
+///   - ["h", "<pin_hint>"] - First 4 hex chars of SHA256(PIN) for filtering (16 bits)
 ///   - ["s", "<base64(salt)>"] - Argon2id salt
 ///   - ["t", "<transfer_id>"] - Transfer ID
 ///   - ["type", "pin_exchange"] - Event type marker
@@ -367,7 +390,8 @@ mod tests {
         let hint1 = compute_pin_hint(pin);
         let hint2 = compute_pin_hint(pin);
         assert_eq!(hint1, hint2);
-        assert_eq!(hint1.len(), 8);
+        // 4 hex chars = 16 bits (reduced from 8 chars/32 bits for security)
+        assert_eq!(hint1.len(), 4);
     }
 
     #[test]

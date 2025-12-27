@@ -86,11 +86,25 @@ pub fn ice_candidates_to_payloads(candidates: Vec<RTCIceCandidate>) -> Vec<IceCa
 // Display Functions
 // ============================================================================
 
-/// Wrap a string to multiple lines of specified width
+/// Wrap an ASCII string to multiple lines of specified width.
+///
+/// # Panics
+///
+/// Panics if the input contains non-ASCII characters. This function is designed
+/// for base64url-encoded strings which are guaranteed to be ASCII.
 fn wrap_lines(s: &str, width: usize) -> String {
+    debug_assert!(
+        s.is_ascii(),
+        "wrap_lines only supports ASCII input, got non-ASCII string"
+    );
+
+    // Safe to chunk by bytes since input is ASCII (each char is 1 byte)
     s.as_bytes()
         .chunks(width)
-        .map(|chunk| std::str::from_utf8(chunk).unwrap())
+        .map(|chunk| {
+            // SAFETY: We've verified the input is ASCII, so each chunk is valid UTF-8
+            std::str::from_utf8(chunk).expect("ASCII string should be valid UTF-8")
+        })
         .collect::<Vec<_>>()
         .join("\n")
 }
