@@ -450,7 +450,8 @@ pub fn finalize_resume_file(
 
     // Write to staging file
     // Scope the staging_file so it's dropped before rename
-    {
+    // Use a helper to ensure cleanup on any error path
+    let copy_result: Result<()> = (|| {
         let mut staging_file =
             File::create(&staging_path).context("Failed to create staging file")?;
 
@@ -469,9 +470,6 @@ pub fn finalize_resume_file(
                 .read(&mut buffer[..to_read])
                 .context("Failed to read from temp file")?;
             if bytes_read == 0 {
-                // Clean up staging file on error, but preserve temp file
-                drop(staging_file);
-                let _ = std::fs::remove_file(&staging_path);
                 anyhow::bail!(
                     "Temp file truncated: expected {} bytes, but {} bytes remaining (copied {} of {} bytes)",
                     data_size,
@@ -482,11 +480,7 @@ pub fn finalize_resume_file(
             }
             staging_file
                 .write_all(&buffer[..bytes_read])
-                .with_context(|| {
-                    // Clean up staging file on error, but preserve temp file
-                    let _ = std::fs::remove_file(&staging_path);
-                    "Failed to write to staging file"
-                })?;
+                .context("Failed to write to staging file")?;
             remaining -= bytes_read as u64;
         }
 
@@ -494,6 +488,15 @@ pub fn finalize_resume_file(
         staging_file
             .sync_all()
             .context("Failed to sync staging file")?;
+
+        // staging_file is dropped here, before rename
+        Ok(())
+    })();
+
+    // Clean up staging file on any error (file is already closed)
+    if let Err(e) = copy_result {
+        let _ = std::fs::remove_file(&staging_path);
+        return Err(e);
     }
 
     // Sync parent directory to ensure staging file entry is persisted
