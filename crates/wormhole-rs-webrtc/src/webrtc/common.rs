@@ -493,12 +493,6 @@ impl AsyncRead for DataChannelStream {
         // First, drain any buffered data
         if !self.read_buffer.is_empty() {
             let to_read = std::cmp::min(buf.remaining(), self.read_buffer.len());
-            log::trace!(
-                "DataChannelStream: draining {} bytes from buffer (buffer has {}, requested {})",
-                to_read,
-                self.read_buffer.len(),
-                buf.remaining()
-            );
             for _ in 0..to_read {
                 if let Some(byte) = self.read_buffer.pop_front() {
                     buf.put_slice(&[byte]);
@@ -509,20 +503,13 @@ impl AsyncRead for DataChannelStream {
 
         // Check if channel is closed
         if self.is_closed() {
-            log::debug!("DataChannelStream: closed flag set, returning EOF");
             return Poll::Ready(Ok(())); // EOF
         }
 
         // Poll the receiver directly - we have &mut self so exclusive access
-        // Get a mutable reference to the inner data
         let this = self.as_mut().get_mut();
         match this.message_rx.poll_recv(cx) {
             Poll::Ready(Some(data)) => {
-                log::debug!(
-                    "DataChannelStream: received {} bytes, requested {}",
-                    data.len(),
-                    buf.remaining()
-                );
                 // Buffer the data
                 this.read_buffer.extend(data);
 
@@ -537,13 +524,9 @@ impl AsyncRead for DataChannelStream {
             }
             Poll::Ready(None) => {
                 // Channel closed - EOF
-                log::debug!("DataChannelStream: channel closed (recv returned None)");
                 Poll::Ready(Ok(()))
             }
-            Poll::Pending => {
-                log::trace!("DataChannelStream: poll_recv returned Pending");
-                Poll::Pending
-            }
+            Poll::Pending => Poll::Pending,
         }
     }
 }
@@ -569,7 +552,6 @@ impl AsyncWrite for DataChannelStream {
             match Pin::new(pending_rx).poll(cx) {
                 Poll::Ready(Ok(Ok(len))) => {
                     this.write_pending = None;
-                    log::trace!("DataChannelStream: write completed, {} bytes", len);
                     return Poll::Ready(Ok(len));
                 }
                 Poll::Ready(Ok(Err(e))) => {
@@ -611,10 +593,7 @@ impl AsyncWrite for DataChannelStream {
 
         // Poll immediately to register the waker, then store if still pending
         match Pin::new(&mut rx).poll(cx) {
-            Poll::Ready(Ok(Ok(len))) => {
-                log::trace!("DataChannelStream: write completed immediately, {} bytes", len);
-                Poll::Ready(Ok(len))
-            }
+            Poll::Ready(Ok(Ok(len))) => Poll::Ready(Ok(len)),
             Poll::Ready(Ok(Err(e))) => {
                 Poll::Ready(Err(io::Error::new(io::ErrorKind::Other, e)))
             }
