@@ -5,10 +5,11 @@ A secure peer-to-peer file transfer tool with two main transport categories:
 **1. Internet Transfers** (Wormhole Code)
 - **iroh mode** (Recommended) - Direct P2P transfers using [iroh](https://github.com/n0-computer/iroh) with QUIC/TLS (automatic relay fallback) - requires `iroh` feature
 - **Tor mode** - Anonymous transfers via Tor hidden services (.onion addresses), also serves as relay when P2P fails - requires `onion` feature
-- **WebRTC mode** - Direct P2P via WebRTC DataChannels with Nostr signaling - use the `wormhole-rs-webrtc` binary
+- **WebRTC mode** - Direct P2P via WebRTC DataChannels with Nostr signaling; also supports offline manual exchange for air-gapped networks - use the `wormhole-rs-webrtc` binary
 
-**2. Local Transfers** (PIN + SPAKE2)
+**2. Local / Offline Transfers** (PIN + SPAKE2 or WebRTC Manual)
 - **Local mode** - LAN transfers using mDNS discovery, SPAKE2 key exchange from a 12-character PIN, and TCP transport (no internet required)
+- **WebRTC manual mode** - Copy/paste SDP for air‑gapped or relay‑blocked environments (uses `wormhole-rs-webrtc`)
 
 ## Features
 
@@ -192,7 +193,21 @@ wormhole-rs receive --pin
 
 ---
 
-### Local LAN Transfers (`wormhole-rs send-local`)
+### Local / Offline Transfers
+
+There are **two** ways to transfer without relying on the public internet:
+
+1) **LAN discovery (recommended when both devices share a network)**
+   - Uses mDNS discovery + SPAKE2 PIN
+   - Fast, zero copy/paste, no internet required
+
+2) **Manual WebRTC (when mDNS is blocked or devices are on different networks but you can copy/paste)**
+   - Uses WebRTC DataChannels with **manual** SDP exchange
+   - Works even when Nostr relays are unavailable
+
+> **Note**: Tor mode requires internet access. iroh mode can be air‑gapped **only if** you self‑host both the relay **and** discovery services on the same network; the default public relay/discovery endpoints require internet access.
+
+#### LAN discovery (`wormhole-rs send-local`)
 
 Use this mode for transfers on the same network (no internet required). A **PIN** is shown and fed into a SPAKE2 PAKE to derive the AES key (not a wormhole code).
 
@@ -206,6 +221,18 @@ wormhole-rs send-local /path/to/folder --folder
 # Receive locally
 wormhole-rs receive-local
 ```
+
+#### Manual WebRTC (`wormhole-rs-webrtc send-manual`)
+
+```bash
+# Sender
+wormhole-rs-webrtc send-manual /path/to/file
+
+# Receiver
+wormhole-rs-webrtc receive-manual
+```
+
+Manual mode exchanges SDP offers/answers via copy-paste. The codes contain the encryption key, so only share them through secure channels (SSH, remote desktop, encrypted chat).
 
 ## Security
 

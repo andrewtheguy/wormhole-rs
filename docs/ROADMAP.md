@@ -26,7 +26,7 @@ Ideas and feature requests for future consideration.
 
 ### Support Custom Iroh DNS Server
 **Domain:** Iroh Mode
-- **Priority:** Low (public Iroh DNS/pkarr is stable today).
+- **Priority:** Low (public Iroh DNS/pkarr is stable today, common iroh relays between sender and receiver such as custom iroh relay can function w/o Iroh DNS Server).
 - **Goal:** Let `wormhole-rs` point at a self-hosted Iroh DNS / discovery endpoint instead of the default n0 services.
 - **Benefit:** Completes the fully self-hosted stack (air-gapped or private P2P discovery) when combined with custom DERP relays.
 - **Current State:** CLI already supports custom DERP relays via `--relay-url`; discovery still depends on Iroh's public DNS/pkarr at https://dns.iroh.link/pkarr. Custom DNS wiring to point at your own server is not yet implemented.
