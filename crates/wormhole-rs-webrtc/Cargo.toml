@@ -27,7 +27,7 @@ log = { workspace = true }
 nostr-sdk = { workspace = true }
 
 # WebRTC transport (crate-specific)
-webrtc = "0.11"
+webrtc = "0.14"
 tokio-tungstenite = { version = "0.21", features = ["native-tls"] }
 uuid = { version = "1", features = ["v4"] }
 bytes = "1"
