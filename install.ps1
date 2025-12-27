@@ -3,30 +3,26 @@
 # Wormhole-rs installer for Windows
 # Downloads latest binary from: https://github.com/andrewtheguy/wormhole-rs/releases
 #
-# Usage: .\install.ps1 [RELEASE_TAG] [-Admin] [-PreRelease] [-WebRTC]
-# Or set $env:RELEASE_TAG environment variable
+# Invocation is now argument-parsed only (compat-breaking): flags are read from
+# $args or $env:WORMHOLE_INSTALL_ARGS. Param binding is removed.
 
-param(
-    [Parameter(Position = 0)]
-    [string]$ReleaseTag,
-
-    [Parameter()]
-    [switch]$Admin,
-
-    [Parameter()]
-    [switch]$PreRelease,
-
-    [Parameter()]
-    [switch]$DownloadOnly,
-
-    [Parameter()]
-    [switch]$WebRTC
-)
+# Defaults (will be overwritten by fallback arg parser)
+$ReleaseTag   = $null
+$Admin        = $false
+$PreRelease   = $false
+$DownloadOnly = $false
+$WebRTC       = $false
 
 $ErrorActionPreference = "Stop"
 
 $REPO_OWNER = "andrewtheguy"
 $REPO_NAME = "wormhole-rs"
+
+# Allow passing flags when the script is piped into Invoke-Expression (iex) where
+# normal PowerShell parameter binding is unavailable. Users can set
+# $env:WORMHOLE_INSTALL_ARGS to a PowerShell-style argument string, e.g.:
+#   $env:WORMHOLE_INSTALL_ARGS='-WebRTC'; irm https://andrewtheguy.github.io/wormhole-rs/install.ps1 | iex
+# This keeps the single-line install experience while still supporting flags.
 
 # Function to print colored messages
 function Print-Info {
@@ -207,6 +203,71 @@ function Get-InstallName {
     return "wormhole-rs.exe"
 }
 
+# Parse argument strings (e.g., from environment variables) using PowerShell's tokenizer
+function Parse-ArgString {
+    param([string]$ArgString)
+
+    if ([string]::IsNullOrWhiteSpace($ArgString)) {
+        return @()
+    }
+
+    $errors = $null
+    $tokens = [System.Management.Automation.PSParser]::Tokenize($ArgString, [ref]$errors)
+
+    if ($errors -and $errors.Count -gt 0) {
+        Print-Warn "Could not parse WORMHOLE_INSTALL_ARGS: $($errors[0].Message)"
+        return @()
+    }
+
+    return $tokens |
+        Where-Object { $_.Type -in @('CommandArgument', 'CommandParameter', 'String', 'Number') } |
+        ForEach-Object { $_.Content }
+}
+
+# Bind arguments when invoked via Invoke-Expression (iex) where parameter binding is unavailable
+function Apply-FallbackArgs {
+    param([string[]]$ArgList)
+
+    if (-not $ArgList -or $ArgList.Count -eq 0) {
+        return
+    }
+
+    $unhandled = @()
+
+    foreach ($arg in $ArgList) {
+        if (-not $arg) { continue }
+
+        $argLower = $arg.ToLowerInvariant()
+        switch ($argLower) {
+            '-admin' { $script:Admin = $true; continue }
+            '/admin' { $script:Admin = $true; continue }
+            '-prerelease' { $script:PreRelease = $true; continue }
+            '/prerelease' { $script:PreRelease = $true; continue }
+            '-downloadonly' { $script:DownloadOnly = $true; continue }
+            '/downloadonly' { $script:DownloadOnly = $true; continue }
+            '-webrtc' { $script:WebRTC = $true; continue }
+            '/webrtc' { $script:WebRTC = $true; continue }
+            '-h' { Show-Usage; exit 0 }
+            '/h' { Show-Usage; exit 0 }
+            '--help' { Show-Usage; exit 0 }
+            '-?' { Show-Usage; exit 0 }
+            '/?' { Show-Usage; exit 0 }
+            default {
+                if (-not $script:ReleaseTag) {
+                    $script:ReleaseTag = $arg
+                }
+                else {
+                    $unhandled += $arg
+                }
+            }
+        }
+    }
+
+    if ($unhandled.Count -gt 0) {
+        Print-Warn "Ignoring unrecognized fallback arguments: $($unhandled -join ' ')"
+    }
+}
+
 # Download binary and verify checksum
 function Download-Binary {
     param(
@@ -366,20 +427,22 @@ Options:
   -h, --help     Show this help message
 
 Arguments:
-  RELEASE_TAG    GitHub release tag to download (default: latest)
+    RELEASE_TAG    GitHub release tag to download (default: latest)
 
 Environment variables:
   `$env:RELEASE_TAG    Alternative way to specify release tag
+    `$env:WORMHOLE_INSTALL_ARGS  Fallback flags for iex one-liners (e.g. "-WebRTC")
 
 Examples:
-  .\install.ps1                              # Install latest wormhole-rs
-  .\install.ps1 -WebRTC                      # Install wormhole-rs-webrtc
-  .\install.ps1 20251210172710               # Install specific release
-  .\install.ps1 -PreRelease                  # Install latest prerelease
-  .\install.ps1 -DownloadOnly                # Download latest to current directory
-  .\install.ps1 -DownloadOnly 20251210172710 # Download specific release
-  .\install.ps1 -Admin                       # Allow admin installation (not recommended)
-  `$env:RELEASE_TAG='latest'; .\install.ps1  # Use environment variable
+    .\install.ps1                              # Install latest wormhole-rs (args-only parser)
+    .\install.ps1 -WebRTC                      # Install wormhole-rs-webrtc (args-only parser)
+    .\install.ps1 20251210172710               # Install specific release
+    .\install.ps1 -PreRelease                  # Install latest prerelease
+    .\install.ps1 -DownloadOnly                # Download latest to current directory
+    .\install.ps1 -DownloadOnly 20251210172710 # Download specific release
+    .\install.ps1 -Admin                       # Allow admin installation (not recommended)
+    `$env:RELEASE_TAG='latest'; .\install.ps1  # Use environment variable
+    `$env:WORMHOLE_INSTALL_ARGS='-WebRTC'; irm https://andrewtheguy.github.io/wormhole-rs/install.ps1 | iex
 
 Supported platforms: Windows (amd64)
 
@@ -466,6 +529,16 @@ function Start-Installation {
 
 # Main execution
 function Main {
+    # Capture arguments from $args and env for both iex and direct runs
+        $fallbackArgs = @()
+        if ($args -and $args.Count -gt 0) {
+            $fallbackArgs += $args
+        }
+        if ($env:WORMHOLE_INSTALL_ARGS) {
+            $fallbackArgs += (Parse-ArgString -ArgString $env:WORMHOLE_INSTALL_ARGS)
+        }
+        Apply-FallbackArgs -ArgList $fallbackArgs
+
     # Handle help flags - check both parameter and ReleaseTag value
     if ($args -contains "--help" -or $args -contains "-h" -or $args -contains "-?" -or $args -contains "/?" -or $args -contains "/h" -or
         $ReleaseTag -eq "--help" -or $ReleaseTag -eq "-h" -or $ReleaseTag -eq "-?" -or $ReleaseTag -eq "/?" -or $ReleaseTag -eq "/h") {
