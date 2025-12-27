@@ -10,7 +10,7 @@ use tar::{Archive, Builder};
 use tempfile::NamedTempFile;
 use walkdir::WalkDir;
 
-use crate::core::transfer::recv_encrypted_chunk;
+use crate::core::transfer::{contains_path_traversal, recv_encrypted_chunk};
 
 /// Result of creating a tar archive from a folder.
 pub struct TarArchive {
@@ -313,9 +313,8 @@ pub fn extract_tar_archive_returning_reader<R: Read>(
             .into_owned();
 
         // Security: Validate entry path to prevent directory traversal
-        // Check for obvious path traversal attempts before joining
         let path_str = entry_path.to_string_lossy();
-        if path_str.contains("..") {
+        if contains_path_traversal(&path_str) {
             skipped.push(format!("{} (path traversal attempt)", entry_path.display()));
             log::warn!(
                 "Skipping entry with path traversal: {}",

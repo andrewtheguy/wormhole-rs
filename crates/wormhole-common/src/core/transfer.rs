@@ -29,6 +29,34 @@ pub fn is_interrupted(err: &anyhow::Error) -> bool {
     err.downcast_ref::<Interrupted>().is_some()
 }
 
+/// Check if a path contains traversal patterns.
+///
+/// Returns `true` if the path contains dangerous patterns like:
+/// - Starts with ".." (e.g., "../etc/passwd")
+/// - Contains "/.." (e.g., "foo/../bar")
+/// - Contains "\\.." (Windows path traversal)
+///
+/// Allows legitimate names like "file..txt" or "archive..tar.gz".
+/// Use this for paths that may legitimately contain separators (e.g., tar entries).
+pub fn contains_path_traversal(path: &str) -> bool {
+    path.starts_with("..") || path.contains("/..") || path.contains("\\..")
+}
+
+/// Check if a filename contains invalid characters.
+///
+/// Returns `true` if the name contains:
+/// - Path traversal patterns (starts with "..")
+/// - Path separators (`/` or `\`)
+/// - Null bytes
+///
+/// Use this for single-component names (filenames, folder names).
+pub fn is_invalid_filename(name: &str) -> bool {
+    name.starts_with("..")
+        || name.contains('/')
+        || name.contains('\\')
+        || name.contains('\0')
+}
+
 /// Soft limit for large file transfers (100MB)
 pub const LARGE_FILE_THRESHOLD: u64 = 100 * 1024 * 1024;
 
@@ -111,7 +139,7 @@ impl FileHeader {
             .context("Invalid filename encoding")?;
 
         // Validate filename doesn't contain path traversal or invalid characters
-        if filename.contains("..") || filename.contains('/') || filename.contains('\\') || filename.contains('\0') {
+        if is_invalid_filename(&filename) {
             anyhow::bail!("Invalid filename: contains path traversal or invalid characters");
         }
         if filename.is_empty() {
@@ -484,8 +512,8 @@ pub async fn prepare_folder_for_send(folder_path: &Path) -> Result<Option<Prepar
         .and_then(|n| n.to_str())
         .context("Invalid folder name")?;
 
-    // Validate folder name
-    if folder_name.contains("..") || folder_name.contains('/') || folder_name.contains('\\') || folder_name.contains('\0') {
+    // Validate folder name - must not contain path separators or traversal patterns
+    if is_invalid_filename(folder_name) {
         anyhow::bail!("Invalid folder name: contains path traversal or invalid characters");
     }
     if folder_name.is_empty() {
