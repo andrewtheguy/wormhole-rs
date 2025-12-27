@@ -115,7 +115,7 @@ async fn try_webrtc_receive(
     // Take data channel receiver from peer
     let mut data_channel_rx = rtc_peer
         .take_data_channel_rx()
-        .expect("Data channel receiver already taken");
+        .ok_or_else(|| anyhow::anyhow!("Data channel receiver already taken"))?;
 
     // Wait for data channel from sender
     eprintln!("Waiting for data channel from sender...");

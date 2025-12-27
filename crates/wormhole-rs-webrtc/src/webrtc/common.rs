@@ -430,6 +430,34 @@ use std::io;
 use std::pin::Pin;
 use std::task::{Context as TaskContext, Poll};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+
+/// Efficiently drain bytes from a VecDeque into a ReadBuf using bulk copies.
+///
+/// Uses `as_slices()` to get contiguous slices and copies them in at most two
+/// bulk operations instead of byte-by-byte, providing much better performance.
+fn drain_vecdeque_to_readbuf(buffer: &mut VecDeque<u8>, buf: &mut ReadBuf<'_>) -> usize {
+    let to_read = std::cmp::min(buf.remaining(), buffer.len());
+    if to_read == 0 {
+        return 0;
+    }
+
+    let (first, second) = buffer.as_slices();
+
+    if to_read <= first.len() {
+        // All bytes come from the first slice
+        buf.put_slice(&first[..to_read]);
+    } else {
+        // Need bytes from both slices
+        buf.put_slice(first);
+        let remaining = to_read - first.len();
+        buf.put_slice(&second[..remaining]);
+    }
+
+    // Remove the bytes we just copied
+    buffer.drain(..to_read);
+
+    to_read
+}
 /// A stream adapter that wraps a WebRTC data channel to implement AsyncRead + AsyncWrite.
 ///
 /// This allows using the common transfer protocol with WebRTC data channels.
@@ -551,14 +579,10 @@ impl AsyncRead for DataChannelStream {
             )));
         }
 
-        // First, drain any buffered data
+        // First, drain any buffered data using bulk copy
         if !self.read_buffer.is_empty() {
-            let to_read = std::cmp::min(buf.remaining(), self.read_buffer.len());
-            for _ in 0..to_read {
-                if let Some(byte) = self.read_buffer.pop_front() {
-                    buf.put_slice(&[byte]);
-                }
-            }
+            let this = self.as_mut().get_mut();
+            drain_vecdeque_to_readbuf(&mut this.read_buffer, buf);
             return Poll::Ready(Ok(()));
         }
 
@@ -574,13 +598,8 @@ impl AsyncRead for DataChannelStream {
                 // Buffer the data
                 this.read_buffer.extend(data);
 
-                // Now read from buffer
-                let to_read = std::cmp::min(buf.remaining(), this.read_buffer.len());
-                for _ in 0..to_read {
-                    if let Some(byte) = this.read_buffer.pop_front() {
-                        buf.put_slice(&[byte]);
-                    }
-                }
+                // Read from buffer using bulk copy
+                drain_vecdeque_to_readbuf(&mut this.read_buffer, buf);
                 Poll::Ready(Ok(()))
             }
             Poll::Ready(None) => {
