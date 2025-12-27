@@ -889,7 +889,7 @@ pub fn prepare_file_receiver(
             filename: header.filename.clone(),
         };
         let temp_file = create_resume_file(&temp_path, &metadata)?;
-        let data_offset = get_data_offset(&metadata);
+        let data_offset = get_data_offset();
 
         return Ok((
             FileReceiver {
@@ -939,7 +939,7 @@ pub fn prepare_file_receiver(
                 filename: header.filename.clone(),
             };
             let temp_file = create_resume_file(&temp_path, &metadata)?;
-            let data_offset = get_data_offset(&metadata);
+            let data_offset = get_data_offset();
 
             Ok((
                 FileReceiver {

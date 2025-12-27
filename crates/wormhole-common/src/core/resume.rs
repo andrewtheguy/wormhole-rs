@@ -262,12 +262,28 @@ pub fn read_resume_metadata(temp_path: &Path) -> Result<Option<ResumeCheck>> {
         .len();
     let actual_data_bytes = file_size.saturating_sub(data_offset);
 
-    // If file has less data than metadata claims, update metadata
+    // If file has less data than metadata claims, update and persist corrected metadata
     let adjusted_metadata = if actual_data_bytes < metadata.bytes_received {
-        ResumeMetadata {
+        log::warn!(
+            "Resume file has less data than metadata claims: {} bytes actual vs {} bytes recorded. Correcting metadata.",
+            actual_data_bytes,
+            metadata.bytes_received
+        );
+        let corrected = ResumeMetadata {
             bytes_received: actual_data_bytes,
             ..metadata
-        }
+        };
+
+        // Persist the corrected metadata immediately
+        // Seek to beginning and rewrite the metadata header
+        file.seek(SeekFrom::Start(0))
+            .context("Failed to seek to metadata for correction")?;
+        write_metadata_header(&mut file, &corrected)
+            .context("Failed to persist corrected metadata")?;
+        file.sync_all()
+            .context("Failed to sync corrected metadata")?;
+
+        corrected
     } else {
         metadata
     };
@@ -447,10 +463,10 @@ pub fn finalize_resume_file(
     Ok(())
 }
 
-/// Get the data offset for a given metadata.
-/// This is the position in the temp file where actual file data starts.
-/// Since metadata is always padded to PADDED_METADATA_SIZE, offset is constant.
-pub fn get_data_offset(_metadata: &ResumeMetadata) -> u64 {
+/// Get the data offset in a resume temp file.
+/// This is the position where actual file data starts.
+/// Since metadata is always padded to PADDED_METADATA_SIZE, the offset is constant.
+pub fn get_data_offset() -> u64 {
     (HEADER_PREFIX_SIZE + PADDED_METADATA_SIZE) as u64
 }
 
@@ -550,7 +566,7 @@ mod tests {
         file.write_all(test_data).unwrap();
         file.flush().unwrap();
 
-        let data_offset = get_data_offset(&metadata);
+        let data_offset = get_data_offset();
 
         // Finalize
         finalize_resume_file(file, &temp_path, &final_path, data_offset).unwrap();
