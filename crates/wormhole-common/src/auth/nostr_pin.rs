@@ -63,6 +63,15 @@ const ARGON2_PARALLELISM: u32 = 4;
 /// PIN exchange event expiration (1 hour)
 const PIN_EVENT_EXPIRATION_SECS: u64 = 3600;
 
+/// Timeout for waiting for relay connections
+const RELAY_CONNECTION_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Timeout for verifying event was published
+const EVENT_VERIFICATION_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Interval for polling event verification
+const EVENT_VERIFICATION_POLL_INTERVAL: Duration = Duration::from_millis(100);
+
 /// Compute PIN hint for event filtering (first 4 hex chars of SHA256).
 ///
 /// Uses only 16 bits (2 bytes) to balance filtering efficiency against entropy loss.
@@ -296,17 +305,71 @@ pub async fn publish_wormhole_code_via_pin(
     }
     client.connect().await;
 
+    // Wait for at least one relay to connect
+    client.wait_for_connection(RELAY_CONNECTION_TIMEOUT).await;
+
+    // Check how many relays connected
+    let connected_relays = client.relays().await;
+    let connected_count = connected_relays
+        .values()
+        .filter(|r| r.is_connected())
+        .count();
+
+    if connected_count == 0 {
+        client.disconnect().await;
+        anyhow::bail!(
+            "Failed to connect to any relays after {:?}",
+            RELAY_CONNECTION_TIMEOUT
+        );
+    }
+
+    log::debug!(
+        "Connected to {}/{} relays for PIN exchange",
+        connected_count,
+        relays_added
+    );
+
     // Publish event
     let send_result = client.send_event(&event).await;
 
-    // Give it a moment to propagate
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    // Handle send result before verification
+    let output = send_result.context("Failed to publish PIN exchange event")?;
 
-    // Disconnect (always, regardless of send result)
-    let _ = client.disconnect().await;
+    // Verify event was published by querying for it
+    let event_id = event.id;
+    let pin_hint = compute_pin_hint(&pin);
+    let verification_filter = Filter::new()
+        .kind(pin_exchange_kind())
+        .id(event_id)
+        .custom_tag(SingleLetterTag::lowercase(Alphabet::H), pin_hint);
 
-    // Handle send result
-    send_result.context("Failed to publish PIN exchange event")?;
+    let start = std::time::Instant::now();
+    let mut verified = false;
+
+    while start.elapsed() < EVENT_VERIFICATION_TIMEOUT {
+        match client
+            .fetch_events(verification_filter.clone(), Duration::from_secs(2))
+            .await
+        {
+            Ok(events) if !events.is_empty() => {
+                verified = true;
+                log::debug!("PIN exchange event verified on relay");
+                break;
+            }
+            _ => {
+                tokio::time::sleep(EVENT_VERIFICATION_POLL_INTERVAL).await;
+            }
+        }
+    }
+
+    if !verified {
+        log::warn!(
+            "Could not verify PIN exchange event, but {} relay(s) acknowledged",
+            output.success.len()
+        );
+    }
+
+    client.disconnect().await;
 
     Ok(pin)
 }
@@ -324,13 +387,42 @@ pub async fn fetch_wormhole_code_via_pin(pin: &str) -> Result<String> {
 
     eprintln!("Connecting to Nostr relays...");
     let client = Client::default();
+    let mut relays_added = 0;
     for relay in DEFAULT_NOSTR_RELAYS {
-        let _ = client.add_relay(relay.to_string()).await;
+        if client.add_relay(relay.to_string()).await.is_ok() {
+            relays_added += 1;
+        }
     }
+
+    if relays_added == 0 {
+        anyhow::bail!("Failed to add any relays");
+    }
+
     client.connect().await;
 
-    // Wait for connection
-    tokio::time::sleep(Duration::from_secs(2)).await;
+    // Wait for at least one relay to connect
+    client.wait_for_connection(RELAY_CONNECTION_TIMEOUT).await;
+
+    // Check connection status
+    let connected_relays = client.relays().await;
+    let connected_count = connected_relays
+        .values()
+        .filter(|r| r.is_connected())
+        .count();
+
+    if connected_count == 0 {
+        client.disconnect().await;
+        anyhow::bail!(
+            "Failed to connect to any relays after {:?}",
+            RELAY_CONNECTION_TIMEOUT
+        );
+    }
+
+    log::debug!(
+        "Connected to {}/{} relays for PIN lookup",
+        connected_count,
+        relays_added
+    );
 
     // Query
     let filter = Filter::new()
