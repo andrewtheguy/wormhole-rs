@@ -27,12 +27,12 @@ sha2 = "0.10"
 spake2 = "0.4"
 
 # File handling
-tempfile = "3"
+tempfile = { workspace = true }
+tokio-util = { workspace = true }
 tar = "0.4"
 walkdir = "2"
 fs4 = "0.12"
 xxhash-rust = { version = "0.8", features = ["xxh64"] }
-tokio-util = "0.7"
 
 # HTTP client for relay fetching
 reqwest = { version = "0.12", features = ["json", "multipart", "stream"] }
