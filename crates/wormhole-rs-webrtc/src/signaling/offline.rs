@@ -3,6 +3,40 @@
 //! This module provides signaling for WebRTC connections without any servers.
 //! Users manually copy and paste JSON between sender and receiver to establish
 //! the connection. This is useful for direct LAN transfers without internet.
+//!
+//! # Security Model
+//!
+//! **Important**: In offline mode, the encryption key is included in the offer
+//! payload that users copy and paste. This is a deliberate trade-off for
+//! serverless operation:
+//!
+//! - **Benefit**: No servers required - works in fully air-gapped environments
+//! - **Trade-off**: The signaling channel must be trusted, as it carries the key
+//!
+//! ## Threat Model
+//!
+//! The encryption protects data **in transit over the WebRTC connection**, but
+//! an attacker who can intercept the signaling payload can also decrypt the
+//! transfer. This includes:
+//!
+//! - Clipboard snooping malware
+//! - Shoulder surfing during copy/paste
+//! - Insecure intermediary services (chat apps, email) used to exchange codes
+//! - Screen recording or screenshots
+//!
+//! ## Recommendations
+//!
+//! - Exchange codes through a trusted, private channel (in-person, encrypted chat)
+//! - Avoid pasting codes into untrusted applications or services
+//! - For higher security with untrusted signaling, use the normal Nostr-based
+//!   mode which derives keys via SPAKE2 password-authenticated key exchange
+//!
+//! ## Why Not PAKE for Offline Mode?
+//!
+//! PAKE (Password-Authenticated Key Exchange) requires multiple round trips
+//! between parties to derive a shared secret. Offline mode uses single-direction
+//! copy/paste (offer → answer), which doesn't support the interactive protocol
+//! PAKE requires. The key must therefore be transmitted directly.
 
 use anyhow::{Context, Result};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
@@ -36,13 +70,21 @@ fn current_timestamp() -> u64 {
 // JSON Signaling Structures
 // ============================================================================
 
-/// Transfer information included in the offer
+/// Transfer information included in the offer.
+///
+/// # Security Note
+///
+/// The `encryption_key` is transmitted in the offer payload. See module-level
+/// documentation for the security implications of this design.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TransferInfo {
     pub filename: String,
     pub file_size: u64,
     pub transfer_type: String, // "file" or "folder"
-    /// Encryption key (hex-encoded 32 bytes)
+    /// Encryption key (hex-encoded 32 bytes).
+    ///
+    /// **Security**: This key travels through the signaling channel.
+    /// The signaling channel must be trusted. See module docs.
     pub encryption_key: String,
 }
 
