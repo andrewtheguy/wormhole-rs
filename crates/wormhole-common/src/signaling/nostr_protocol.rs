@@ -256,20 +256,29 @@ async fn discover_best_relays() -> Vec<String> {
 
     // Limit number of relays to probe to avoid too many connections
     // Reserve space for default relays, then fill remaining slots with random discovered relays
-    let discovered_slots = MAX_RELAYS_TO_PROBE.saturating_sub(DEFAULT_NOSTR_RELAYS.len());
+    let default_relay_set: std::collections::HashSet<_> = DEFAULT_NOSTR_RELAYS
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+
+    // Remove default relays from discovered set to avoid duplicates
+    let mut discovered_relays: Vec<_> = discovered
+        .into_iter()
+        .filter(|r| !default_relay_set.contains(r))
+        .collect();
 
     // Shuffle randomly to avoid alphabetic bias (which would favor relays starting with numbers/early letters)
-    let mut relays_to_probe: Vec<_> = discovered.into_iter().collect();
     use rand::seq::SliceRandom;
-    relays_to_probe.shuffle(&mut rand::thread_rng());
-    relays_to_probe.truncate(discovered_slots);
+    discovered_relays.shuffle(&mut rand::thread_rng());
 
-    // Always include default relays in the probe set (they're known to be reliable)
+    // Reserve slots for default relays
+    let discovered_slots = MAX_RELAYS_TO_PROBE.saturating_sub(DEFAULT_NOSTR_RELAYS.len());
+    discovered_relays.truncate(discovered_slots);
+
+    // Combine: discovered relays + default relays
+    let mut relays_to_probe = discovered_relays;
     for default_relay in DEFAULT_NOSTR_RELAYS {
-        let relay_str = default_relay.to_string();
-        if !relays_to_probe.contains(&relay_str) {
-            relays_to_probe.push(relay_str);
-        }
+        relays_to_probe.push(default_relay.to_string());
     }
 
     // Probe relays in parallel: NIP-11 capability check + WebSocket connectivity test
