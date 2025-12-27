@@ -481,7 +481,7 @@ async fn test_encrypted_different_keys_produce_different_headers() {
 
     // Same file metadata
     let header = FileHeader::new(TransferType::File, "same_file.txt".to_string(), 12345, 0);
-    let header_bytes = header.to_bytes();
+    let header_bytes = header.to_bytes().unwrap();
 
     // Two different keys (two separate transfers of same file)
     let key1 = generate_key();

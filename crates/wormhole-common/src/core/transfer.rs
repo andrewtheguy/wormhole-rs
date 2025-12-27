@@ -52,13 +52,17 @@ impl FileHeader {
 
     /// Serialize header for transmission
     /// Format: transfer_type (1 byte) || filename_len (2 bytes) || filename || file_size (8 bytes) || checksum (8 bytes)
-    pub fn to_bytes(&self) -> Vec<u8> {
+    ///
+    /// Returns an error if the filename exceeds the protocol limit (65535 bytes).
+    pub fn to_bytes(&self) -> Result<Vec<u8>> {
         let filename_bytes = self.filename.as_bytes();
-        assert!(
-            filename_bytes.len() <= u16::MAX as usize,
-            "Filename too long for protocol (max {} bytes)",
-            u16::MAX
-        );
+        if filename_bytes.len() > u16::MAX as usize {
+            anyhow::bail!(
+                "Filename too long for protocol: {} bytes (max {} bytes)",
+                filename_bytes.len(),
+                u16::MAX
+            );
+        }
         let mut bytes = Vec::with_capacity(1 + 2 + filename_bytes.len() + 8 + 8);
 
         bytes.push(self.transfer_type as u8);
@@ -67,7 +71,7 @@ impl FileHeader {
         bytes.extend_from_slice(&self.file_size.to_be_bytes());
         bytes.extend_from_slice(&self.checksum.to_be_bytes());
 
-        bytes
+        Ok(bytes)
     }
 
     /// Deserialize header from bytes
@@ -107,7 +111,7 @@ pub async fn send_header<W: AsyncWriteExt + Unpin>(
     writer: &mut W,
     header: &FileHeader,
 ) -> Result<()> {
-    let header_bytes = header.to_bytes();
+    let header_bytes = header.to_bytes().context("Failed to serialize header")?;
 
     // Write length prefix
     let len = header_bytes.len() as u32;
@@ -126,7 +130,7 @@ pub async fn send_encrypted_header<W: AsyncWriteExt + Unpin>(
     key: &[u8; 32],
     header: &FileHeader,
 ) -> Result<()> {
-    let header_bytes = header.to_bytes();
+    let header_bytes = header.to_bytes().context("Failed to serialize header")?;
     let encrypted = encrypt(key, &header_bytes)?;
 
     // Write length prefix
@@ -286,6 +290,15 @@ pub async fn recv_encrypted_chunk<R: AsyncReadExt + Unpin>(
         .await
         .context("Failed to read chunk length")?;
     let len = u32::from_be_bytes(len_buf) as usize;
+
+    // Validate chunk size to prevent OOM from malicious length prefix
+    if len > MAX_CHUNK_SIZE {
+        anyhow::bail!(
+            "Encrypted chunk size {} exceeds maximum {}",
+            len,
+            MAX_CHUNK_SIZE
+        );
+    }
 
     // Read encrypted data
     let mut encrypted = vec![0u8; len];

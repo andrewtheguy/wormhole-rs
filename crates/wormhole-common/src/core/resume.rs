@@ -113,6 +113,19 @@ pub fn try_exclusive_lock(file: &File) -> Result<bool> {
 /// Create a new resume temp file with metadata header.
 /// The file is created with an exclusive lock.
 pub fn create_resume_file(temp_path: &Path, metadata: &ResumeMetadata) -> Result<File> {
+    // Check if file exists and try to acquire lock before truncating
+    // This prevents TOCTOU race where we truncate another process's in-progress file
+    if temp_path.exists() {
+        if let Ok(existing) = OpenOptions::new().read(true).write(true).open(temp_path) {
+            if !try_exclusive_lock(&existing)? {
+                anyhow::bail!("Another transfer is in progress for this file");
+            }
+            // Lock acquired on existing file, we can proceed to truncate
+            // Drop the existing handle - we'll reopen with truncate
+            drop(existing);
+        }
+    }
+
     // Create or truncate the temp file
     let mut file = OpenOptions::new()
         .read(true)
@@ -122,7 +135,7 @@ pub fn create_resume_file(temp_path: &Path, metadata: &ResumeMetadata) -> Result
         .open(temp_path)
         .context("Failed to create temp file")?;
 
-    // Try to acquire exclusive lock
+    // Acquire exclusive lock on the new/truncated file
     if !try_exclusive_lock(&file)? {
         anyhow::bail!("Another transfer is in progress for this file");
     }
@@ -353,7 +366,13 @@ pub fn finalize_resume_file(
             .read(&mut buffer[..to_read])
             .context("Failed to read from temp file")?;
         if bytes_read == 0 {
-            break;
+            anyhow::bail!(
+                "Temp file truncated: expected {} bytes, but {} bytes remaining (copied {} of {} bytes)",
+                data_size,
+                remaining,
+                data_size - remaining,
+                data_size
+            );
         }
         final_file
             .write_all(&buffer[..bytes_read])
