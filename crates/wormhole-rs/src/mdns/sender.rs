@@ -94,24 +94,30 @@ pub async fn send_folder_mdns(folder_path: &Path) -> Result<()> {
 
     // Set up cleanup handler for temp file
     let temp_path = prepared.temp_file.path().to_path_buf();
-    let cleanup_path = setup_temp_file_cleanup_handler(temp_path);
+    let cleanup_handler = setup_temp_file_cleanup_handler(temp_path);
 
     // Generate random PIN (key will be derived via SPAKE2 handshake)
     let pin = generate_pin();
     display_receiver_instructions(&pin);
 
-    let result = transfer_data_internal(
-        prepared.file,
-        prepared.filename,
-        prepared.file_size,
-        0, // Folders are not resumable
-        TransferType::Folder,
-        pin,
-    )
-    .await;
+    // Run transfer with interrupt handling
+    let result = tokio::select! {
+        result = transfer_data_internal(
+            prepared.file,
+            prepared.filename,
+            prepared.file_size,
+            0, // Folders are not resumable
+            TransferType::Folder,
+            pin,
+        ) => result,
+        _ = cleanup_handler.shutdown_rx => {
+            // Graceful shutdown requested - exit with interrupt code
+            std::process::exit(130);
+        }
+    };
 
     // Clear cleanup path (file will be dropped with temp_file)
-    cleanup_path.lock().await.take();
+    cleanup_handler.cleanup_path.lock().await.take();
 
     result
 }

@@ -172,21 +172,27 @@ pub async fn send_folder(folder_path: &Path, relay_urls: Vec<String>, use_pin: b
 
     // Set up cleanup handler for Ctrl+C
     let temp_path = prepared.temp_file.path().to_path_buf();
-    let cleanup_path = setup_temp_file_cleanup_handler(temp_path);
+    let cleanup_handler = setup_temp_file_cleanup_handler(temp_path);
 
-    let result = transfer_data_internal(
-        prepared.file,
-        prepared.filename,
-        prepared.file_size,
-        prepared.checksum, // 0 for folders (not resumable)
-        TransferType::Folder,
-        relay_urls,
-        use_pin,
-    )
-    .await;
+    // Run transfer with interrupt handling
+    let result = tokio::select! {
+        result = transfer_data_internal(
+            prepared.file,
+            prepared.filename,
+            prepared.file_size,
+            prepared.checksum, // 0 for folders (not resumable)
+            TransferType::Folder,
+            relay_urls,
+            use_pin,
+        ) => result,
+        _ = cleanup_handler.shutdown_rx => {
+            // Graceful shutdown requested - exit with interrupt code
+            std::process::exit(130);
+        }
+    };
 
     // Clear cleanup path (transfer succeeded or failed, temp file handled)
-    cleanup_path.lock().await.take();
+    cleanup_handler.cleanup_path.lock().await.take();
 
     // Temp file is automatically cleaned up when NamedTempFile (prepared.temp_file) is dropped
 

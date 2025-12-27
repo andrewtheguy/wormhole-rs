@@ -52,19 +52,25 @@ pub async fn send_folder_offline(folder_path: &Path) -> Result<()> {
 
     // Set up cleanup handler
     let temp_path = prepared.temp_file.path().to_path_buf();
-    let cleanup_path = setup_temp_file_cleanup_handler(temp_path.clone());
+    let cleanup_handler = setup_temp_file_cleanup_handler(temp_path.clone());
 
-    let result = transfer_offline_internal(
-        prepared.file,
-        prepared.filename,
-        prepared.file_size,
-        0, // Folders are not resumable
-        TransferType::Folder,
-    )
-    .await;
+    // Run transfer with interrupt handling
+    let result = tokio::select! {
+        result = transfer_offline_internal(
+            prepared.file,
+            prepared.filename,
+            prepared.file_size,
+            0, // Folders are not resumable
+            TransferType::Folder,
+        ) => result,
+        _ = cleanup_handler.shutdown_rx => {
+            // Graceful shutdown requested - exit with interrupt code
+            std::process::exit(130);
+        }
+    };
 
     // Clean up temp file
-    cleanup_path.lock().await.take();
+    cleanup_handler.cleanup_path.lock().await.take();
     let _ = tokio::fs::remove_file(&temp_path).await;
 
     result

@@ -326,15 +326,71 @@ pub fn check_resume(
 
 /// Update the bytes_received field in the temp file metadata.
 /// Called periodically during transfer to track progress.
+///
+/// Uses pwrite on Unix to avoid seek/write/seek pattern that could leave the
+/// file pointer in an incorrect position if any operation fails.
 pub fn update_resume_metadata(file: &mut File, metadata: &ResumeMetadata) -> Result<()> {
-    // Seek to beginning
-    file.seek(SeekFrom::Start(0))
-        .context("Failed to seek to metadata")?;
+    // Serialize and pad metadata
+    let header_bytes = serialize_metadata_header(metadata)?;
 
-    // Rewrite metadata
-    write_metadata_header(file, metadata)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::FileExt;
+        // Use pwrite to write at offset 0 without affecting file position
+        file.write_all_at(&header_bytes, 0)
+            .context("Failed to write metadata with pwrite")?;
+        file.sync_data().context("Failed to sync metadata")?;
+    }
+
+    #[cfg(not(unix))]
+    {
+        // On non-Unix, save position, write, and restore
+        let original_pos = file
+            .stream_position()
+            .context("Failed to get current file position")?;
+
+        // Seek to beginning and write
+        file.seek(SeekFrom::Start(0))
+            .context("Failed to seek to metadata")?;
+
+        let write_result = file.write_all(&header_bytes);
+        let flush_result = file.flush();
+
+        // Always try to restore position, even if write failed
+        let restore_result = file.seek(SeekFrom::Start(original_pos));
+
+        // Now check results in order
+        write_result.context("Failed to write metadata")?;
+        flush_result.context("Failed to flush metadata")?;
+        restore_result.context("Failed to restore file position after metadata update")?;
+    }
 
     Ok(())
+}
+
+/// Serialize metadata to a complete header buffer (magic + length + padded JSON).
+fn serialize_metadata_header(metadata: &ResumeMetadata) -> Result<Vec<u8>> {
+    let mut json = serde_json::to_vec(metadata).context("Failed to serialize metadata")?;
+
+    // Ensure metadata fits in padded size
+    if json.len() > PADDED_METADATA_SIZE {
+        anyhow::bail!(
+            "Metadata too large: {} bytes > {} max (filename too long?)",
+            json.len(),
+            PADDED_METADATA_SIZE
+        );
+    }
+
+    // Pad JSON to fixed size (JSON parsers ignore trailing whitespace)
+    json.resize(PADDED_METADATA_SIZE, b' ');
+
+    // Build complete header: magic + length + padded JSON
+    let mut header = Vec::with_capacity(HEADER_PREFIX_SIZE + PADDED_METADATA_SIZE);
+    header.extend_from_slice(RESUME_MAGIC);
+    header.extend_from_slice(&(PADDED_METADATA_SIZE as u32).to_be_bytes());
+    header.extend_from_slice(&json);
+
+    Ok(header)
 }
 
 /// Finalize a completed transfer: strip metadata header and rename to final path.
