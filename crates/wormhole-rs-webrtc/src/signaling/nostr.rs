@@ -118,6 +118,25 @@ pub struct NostrSignaling {
     relay_urls: Vec<String>,
 }
 
+/// Validate that an event belongs to the specified transfer and parse it into a SignalingMessage.
+///
+/// This is a standalone function for use in spawned tasks where we can't use `&self`.
+/// Returns Some(SignalingMessage) if the event has the correct transfer tag and
+/// can be parsed as a valid signaling message, None otherwise.
+fn validate_and_parse_event_with_id(event: &Event, transfer_id: &str) -> Option<SignalingMessage> {
+    // Check if this is for our transfer
+    let is_our_transfer = event.tags.iter().any(|t| {
+        t.kind() == TagKind::SingleLetter(SingleLetterTag::lowercase(Alphabet::T))
+            && t.content() == Some(transfer_id)
+    });
+
+    if is_our_transfer {
+        NostrSignaling::parse_signaling_event(event)
+    } else {
+        None
+    }
+}
+
 impl NostrSignaling {
     /// Create a new Nostr signaling client
     pub async fn new(custom_relays: Option<Vec<String>>, use_default_relays: bool) -> Result<Self> {
@@ -294,48 +313,47 @@ impl NostrSignaling {
         }
     }
 
+    /// Validate that an event belongs to our transfer and parse it into a SignalingMessage.
+    ///
+    /// Returns Some(SignalingMessage) if the event has the correct transfer tag and
+    /// can be parsed as a valid signaling message, None otherwise.
+    fn validate_and_parse_event(&self, event: &Event) -> Option<SignalingMessage> {
+        validate_and_parse_event_with_id(event, &self.transfer_id)
+    }
+
     /// Wait for a specific signaling message type with timeout
     #[allow(dead_code)]
     pub async fn wait_for_message(&self, timeout_secs: u64) -> Result<Option<SignalingMessage>> {
         let mut notifications = self.client.notifications();
         let deadline = tokio::time::Instant::now() + Duration::from_secs(timeout_secs);
 
-        while tokio::time::Instant::now() < deadline {
-            match timeout(Duration::from_secs(1), notifications.recv()).await {
-                Ok(Ok(RelayPoolNotification::Event { event, .. })) => {
-                    // Check if this is for our transfer
-                    let is_our_transfer = event.tags.iter().any(|t| {
-                        t.kind() == TagKind::SingleLetter(SingleLetterTag::lowercase(Alphabet::T))
-                            && t.content() == Some(&self.transfer_id)
-                    });
+        loop {
+            // Compute remaining time to deadline, exit if past deadline
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if remaining.is_zero() {
+                break;
+            }
 
-                    if is_our_transfer {
-                        if let Some(msg) = Self::parse_signaling_event(&event) {
-                            return Ok(Some(msg));
-                        }
+            // Use remaining time capped at 1 second for the poll timeout
+            let poll_timeout = remaining.min(Duration::from_secs(1));
+
+            match timeout(poll_timeout, notifications.recv()).await {
+                Ok(Ok(RelayPoolNotification::Event { event, .. })) => {
+                    if let Some(msg) = self.validate_and_parse_event(&event) {
+                        return Ok(Some(msg));
                     }
                 }
                 Ok(Ok(RelayPoolNotification::Message { message, .. })) => {
                     // Handle Event messages that come through as Message notifications
                     if let nostr_sdk::RelayMessage::Event { event, .. } = message {
-                        // Check if this is for our transfer
-                        let is_our_transfer = event.tags.iter().any(|t| {
-                            t.kind()
-                                == TagKind::SingleLetter(SingleLetterTag::lowercase(Alphabet::T))
-                                && t.content() == Some(&self.transfer_id)
-                        });
-
-                        if is_our_transfer {
-                            if let Some(msg) = Self::parse_signaling_event(&event) {
-                                return Ok(Some(msg));
-                            }
+                        if let Some(msg) = self.validate_and_parse_event(&event) {
+                            return Ok(Some(msg));
                         }
                     }
-                    continue;
                 }
                 Ok(Ok(_)) => continue,
                 Ok(Err(_)) => break,
-                Err(_) => continue,
+                Err(_) => continue, // Timeout, loop will check deadline
             }
         }
 
@@ -359,39 +377,25 @@ impl NostrSignaling {
             loop {
                 match notifications.recv().await {
                     Ok(RelayPoolNotification::Event { event, .. }) => {
-                        // Check if this is for our transfer
-                        let is_our_transfer = event.tags.iter().any(|t| {
-                            t.kind()
-                                == TagKind::SingleLetter(SingleLetterTag::lowercase(Alphabet::T))
-                                && t.content() == Some(&transfer_id)
-                        });
-
-                        if is_our_transfer {
-                            if let Some(msg) = Self::parse_signaling_event(&event) {
-                                if tx.send(msg).await.is_err() {
-                                    break;
-                                }
+                        if let Some(msg) =
+                            validate_and_parse_event_with_id(&event, &transfer_id)
+                        {
+                            if tx.send(msg).await.is_err() {
+                                break;
                             }
                         }
                     }
                     Ok(RelayPoolNotification::Message { message, .. }) => {
                         // Handle Event messages that come through as Message notifications
                         if let nostr_sdk::RelayMessage::Event { event, .. } = message {
-                            let is_our_transfer = event.tags.iter().any(|t| {
-                                t.kind()
-                                    == TagKind::SingleLetter(SingleLetterTag::lowercase(Alphabet::T))
-                                    && t.content() == Some(&transfer_id)
-                            });
-
-                            if is_our_transfer {
-                                if let Some(msg) = Self::parse_signaling_event(&event) {
-                                    if tx.send(msg).await.is_err() {
-                                        break;
-                                    }
+                            if let Some(msg) =
+                                validate_and_parse_event_with_id(&event, &transfer_id)
+                            {
+                                if tx.send(msg).await.is_err() {
+                                    break;
                                 }
                             }
                         }
-                        continue;
                     }
                     Ok(_) => continue,
                     Err(_) => break,
