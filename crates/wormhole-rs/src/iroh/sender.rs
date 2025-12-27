@@ -2,15 +2,13 @@ use anyhow::{Context, Result};
 use iroh::Watcher;
 use std::path::Path;
 use tokio::fs::File;
-use tokio::io::AsyncSeekExt;
 
 use crate::cli::instructions::print_receiver_command;
-use super::common::create_sender_endpoint;
+use super::common::{create_sender_endpoint, IrohDuplex};
 use wormhole_common::core::crypto::generate_key;
 use wormhole_common::core::transfer::{
-    format_bytes, handle_receiver_response, prepare_file_for_send, prepare_folder_for_send,
-    recv_control, send_encrypted_header, send_file_data, setup_temp_file_cleanup_handler,
-    ControlSignal, FileHeader, ResumeResponse, TransferType,
+    prepare_file_for_send, prepare_folder_for_send, run_sender_transfer,
+    setup_temp_file_cleanup_handler, FileHeader, TransferResult, TransferType,
 };
 use wormhole_common::core::wormhole::generate_code;
 
@@ -117,52 +115,20 @@ async fn transfer_data_internal(
     let (mut send_stream, mut recv_stream) =
         conn.open_bi().await.context("Failed to open stream")?;
 
-    // Send file header with checksum
+    // Create header and run unified transfer logic
     let header = FileHeader::new(transfer_type, filename, file_size, checksum);
-    send_encrypted_header(&mut send_stream, &key, &header)
-        .await
-        .context("Failed to send header")?;
+    let mut duplex = IrohDuplex::new(&mut send_stream, &mut recv_stream);
 
-    // Wait for receiver confirmation (PROCEED, RESUME, or ABORT)
-    eprintln!("Waiting for receiver to confirm...");
-    let start_offset = match handle_receiver_response(&mut recv_stream, &key).await? {
-        ResumeResponse::Fresh => {
-            eprintln!("Receiver ready, starting transfer...");
-            0
-        }
-        ResumeResponse::Resume { offset, .. } => {
-            eprintln!("Resuming transfer from offset {}...", format_bytes(offset));
-            // Seek file to resume position
-            file.seek(std::io::SeekFrom::Start(offset)).await?;
-            offset
-        }
-        ResumeResponse::Aborted => {
-            eprintln!("Receiver declined transfer");
-            conn.close(0u32.into(), b"cancelled");
-            endpoint.close().await;
-            anyhow::bail!("Transfer cancelled by receiver");
-        }
-    };
+    let result = run_sender_transfer(&mut file, &mut duplex, &key, &header).await?;
 
-    // Send file data using shared component
-    eprintln!("Sending data...");
-    send_file_data(&mut file, &mut send_stream, &key, file_size, start_offset, 10).await?;
-
-    eprintln!("Transfer complete!");
-
-    // Finish the send stream to signal we're done sending
-    send_stream.finish().context("Failed to finish stream")?;
-
-    // Wait for receiver to acknowledge completion
-    eprintln!("Waiting for receiver to confirm...");
-    match recv_control(&mut recv_stream, &key).await? {
-        ControlSignal::Ack => {
-            eprintln!("Receiver confirmed!");
-        }
-        _ => {
-            anyhow::bail!("Unexpected control signal, expected ACK");
-        }
+    if result == TransferResult::Aborted {
+        conn.close(0u32.into(), b"cancelled");
+        endpoint.close().await;
+        anyhow::bail!("Transfer cancelled by receiver");
     }
+
+    // Finish the send stream to signal we're done sending (QUIC-specific)
+    send_stream.finish().context("Failed to finish stream")?;
 
     // Close connection gracefully
     conn.close(0u32.into(), b"done");

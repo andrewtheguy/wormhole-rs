@@ -10,32 +10,17 @@ use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::net::IpAddr;
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::TcpStream;
-use tokio::sync::Mutex;
-use tokio::task::JoinHandle;
-use tokio_util::sync::CancellationToken;
 
 use super::common::{
     MdnsServiceInfo, SERVICE_TYPE, TXT_FILENAME, TXT_FILE_SIZE, TXT_TRANSFER_ID, TXT_TRANSFER_TYPE,
 };
 use wormhole_common::auth::spake2::handshake_as_initiator;
-use wormhole_common::core::folder::{
-    extract_tar_archive_returning_reader, get_extraction_dir, print_skipped_entries,
-    print_tar_extraction_info, StreamingReader,
-};
-use wormhole_common::core::transfer::{
-    finalize_file_receiver, format_bytes, format_resume_progress, num_chunks,
-    prepare_file_receiver, receive_file_data, recv_encrypted_header, send_abort, send_ack,
-    send_proceed, send_resume, setup_resumable_cleanup_handler, ControlSignal, TransferType,
-};
+use wormhole_common::core::transfer::{format_bytes, run_receiver_transfer};
 
 /// Timeout for mDNS browsing (seconds)
 const BROWSE_TIMEOUT_SECS: u64 = 30;
-
-/// Shared state for extraction directory cleanup on interrupt
-type ExtractDirCleanup = Arc<Mutex<Option<PathBuf>>>;
 
 /// Browse for available wormhole senders and let user select.
 ///
@@ -264,164 +249,16 @@ pub async fn receive_mdns(output_dir: Option<PathBuf>) -> Result<()> {
 
 /// Receive encrypted file data over TCP.
 async fn receive_data_over_tcp(
-    mut stream: TcpStream,
+    stream: TcpStream,
     key: &[u8; 32],
     output_dir: Option<PathBuf>,
 ) -> Result<()> {
-    // Receive header
-    let header = recv_encrypted_header(&mut stream, key)
-        .await
-        .context("Failed to receive header - wrong passphrase?")?;
+    // Run unified receiver transfer
+    let (_path, _stream) = run_receiver_transfer(stream, *key, output_dir, false).await?;
 
-    println!(
-        "Receiving: {} ({})",
-        header.filename,
-        format_bytes(header.file_size)
-    );
-
-    // Determine output directory
-    let output_dir = output_dir.unwrap_or_else(|| PathBuf::from("."));
-
-    // Dispatch based on transfer type
-    match header.transfer_type {
-        TransferType::File => {
-            let final_output_path = output_dir.join(&header.filename);
-
-            // Use shared file receiver component (resume enabled by default for mDNS)
-            let (mut receiver, control_signal) =
-                prepare_file_receiver(&final_output_path, &header, false)?;
-
-            // Set up cleanup handler (resumable if checksum is present)
-            let is_resumable = header.checksum != 0;
-            let cleanup_path =
-                setup_resumable_cleanup_handler(receiver.temp_path.clone(), is_resumable);
-
-            // Send appropriate control signal to sender
-            match &control_signal {
-                ControlSignal::Proceed => {
-                    send_proceed(&mut stream, key)
-                        .await
-                        .context("Failed to send proceed signal")?;
-                    println!("Ready to receive data...");
-                }
-                ControlSignal::Resume(offset) => {
-                    send_resume(&mut stream, key, *offset)
-                        .await
-                        .context("Failed to send resume signal")?;
-                    println!("{}", format_resume_progress(*offset, header.file_size));
-                }
-                ControlSignal::Abort => {
-                    send_abort(&mut stream, key)
-                        .await
-                        .context("Failed to send abort signal")?;
-                    anyhow::bail!("Transfer cancelled by user");
-                }
-                // prepare_file_receiver only returns Proceed or Resume, but handle other variants defensively
-                other => anyhow::bail!("Unexpected control signal from prepare_file_receiver: {:?}", other),
-            }
-
-            // Receive file data using shared component
-            receive_file_data(&mut stream, &mut receiver, key, header.file_size, 10, 100).await?;
-
-            // Clear cleanup and finalize
-            cleanup_path.lock().await.take();
-            finalize_file_receiver(receiver)?;
-
-            println!("\nFile received successfully!");
-        }
-        TransferType::Folder => {
-            // Folders are not resumable - always send proceed
-            send_proceed(&mut stream, key)
-                .await
-                .context("Failed to send proceed signal")?;
-            println!("Ready to receive data...");
-
-            // Folder impl takes ownership and returns stream after extraction
-            let stream = receive_folder_impl(
-                stream,
-                &header.filename,
-                header.file_size,
-                key,
-                Some(output_dir),
-            )
-            .await?;
-
-            // Send encrypted ACK
-            let mut stream = stream;
-            send_ack(&mut stream, key)
-                .await
-                .context("Failed to send ACK")?;
-            println!("Sent confirmation to sender");
-            return Ok(());
-        }
-    }
-
-    // Send encrypted ACK for file transfers
-    send_ack(&mut stream, key)
-        .await
-        .context("Failed to send ACK")?;
     println!("Sent confirmation to sender");
 
     Ok(())
-}
-
-
-/// Receive a folder implementation (streams directly to tar extractor).
-/// Takes ownership of stream and returns it after extraction for ACK.
-async fn receive_folder_impl(
-    stream: TcpStream,
-    filename: &str,
-    file_size: u64,
-    key: &[u8; 32],
-    output_dir: Option<PathBuf>,
-) -> Result<TcpStream> {
-    println!(
-        "Receiving folder archive: {} ({})",
-        filename,
-        format_bytes(file_size)
-    );
-
-    let extract_dir = get_extraction_dir(output_dir);
-    std::fs::create_dir_all(&extract_dir)?;
-
-    let cleanup_path: ExtractDirCleanup = Arc::new(Mutex::new(Some(extract_dir.clone())));
-    let cleanup_cancel = CancellationToken::new();
-    let _cleanup_handle = setup_dir_cleanup_handler(cleanup_path.clone(), cleanup_cancel.clone());
-
-    println!("Extracting to: {}", extract_dir.display());
-    print_tar_extraction_info();
-
-    let total_chunks = num_chunks(file_size);
-    println!(
-        "Receiving {} chunks (streaming to extractor)...",
-        total_chunks
-    );
-
-    // Get runtime handle for blocking in StreamingReader
-    let runtime_handle = tokio::runtime::Handle::current();
-
-    // Create streaming reader that feeds tar extractor directly
-    let reader = StreamingReader::new(stream, *key, file_size, runtime_handle);
-
-    // Run tar extraction in blocking context, returning reader for ACK
-    let extract_dir_clone = extract_dir.clone();
-    let (skipped, reader) = tokio::task::spawn_blocking(move || {
-        extract_tar_archive_returning_reader(reader, &extract_dir_clone)
-    })
-    .await
-    .context("Extraction task panicked")??;
-
-    // Get stream back from reader
-    let stream = reader.into_inner();
-
-    print_skipped_entries(&skipped);
-    cleanup_path.lock().await.take();
-    cleanup_cancel.cancel();
-
-    println!("\nFolder received successfully!");
-    println!("Extracted to: {}", extract_dir.display());
-
-    Ok(stream)
 }
 
 /// Prompt user to select a sender.
@@ -454,31 +291,4 @@ fn prompt_selection(max: usize) -> Result<Option<usize>> {
 /// Prompt user for PIN with checksum validation.
 fn prompt_pin() -> Result<String> {
     wormhole_common::auth::pin::prompt_pin().context("Failed to read PIN")
-}
-
-/// Set up Ctrl+C handler for extraction directory cleanup.
-///
-/// Returns a JoinHandle that can be aborted when cleanup is no longer needed.
-/// The handler uses select! to race between Ctrl+C and cancellation.
-/// On Ctrl+C: cleans up the extraction directory and returns (does not exit).
-/// On cancellation: returns immediately without cleanup.
-fn setup_dir_cleanup_handler(
-    cleanup_path: ExtractDirCleanup,
-    cancel_token: CancellationToken,
-) -> JoinHandle<()> {
-    tokio::spawn(async move {
-        tokio::select! {
-            _ = cancel_token.cancelled() => {
-                // Cancelled by caller - cleanup no longer needed
-            }
-            result = tokio::signal::ctrl_c() => {
-                if result.is_ok() {
-                    if let Some(path) = cleanup_path.lock().await.take() {
-                        let _ = tokio::fs::remove_dir_all(&path).await;
-                        eprintln!("\nInterrupted. Cleaned up extraction directory.");
-                    }
-                }
-            }
-        }
-    })
 }

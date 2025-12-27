@@ -1099,3 +1099,363 @@ pub fn setup_dir_cleanup_handler(extract_dir: PathBuf) -> CleanupPath {
 
     cleanup_path
 }
+
+// ============================================================================
+// Unified transfer orchestration functions
+// ============================================================================
+
+use tokio::io::AsyncSeekExt;
+
+/// Result of a sender transfer operation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TransferResult {
+    /// Transfer completed successfully
+    Success,
+    /// Transfer was aborted by receiver
+    Aborted,
+}
+
+/// Unified sender transfer logic for all transports.
+///
+/// Handles the complete transfer flow:
+/// 1. Send encrypted header
+/// 2. Wait for receiver response (PROCEED/RESUME/ABORT)
+/// 3. Seek file if resuming
+/// 4. Send file data
+/// 5. Flush stream
+/// 6. Wait for ACK (with optional timeout)
+///
+/// # Arguments
+/// * `file` - File to send (must be seekable for resume support)
+/// * `stream` - Bidirectional stream for reading and writing
+/// * `key` - 32-byte encryption key
+/// * `header` - File header with metadata
+///
+/// # Returns
+/// * `TransferResult::Success` - Transfer completed successfully
+/// * `TransferResult::Aborted` - Receiver declined the transfer
+pub async fn run_sender_transfer<S, F>(
+    file: &mut F,
+    stream: &mut S,
+    key: &[u8; 32],
+    header: &FileHeader,
+) -> Result<TransferResult>
+where
+    S: AsyncReadExt + AsyncWriteExt + Unpin,
+    F: AsyncReadExt + AsyncSeekExt + Unpin,
+{
+    run_sender_transfer_with_timeout(file, stream, key, header, None).await
+}
+
+/// Unified sender transfer logic with optional ACK timeout.
+///
+/// Same as `run_sender_transfer` but allows specifying a timeout for ACK.
+/// If the timeout expires, the transfer is considered successful (data was sent).
+/// This is useful for unreliable transports like Tor where streams may close abruptly.
+///
+/// # Arguments
+/// * `file` - File to send (must be seekable for resume support)
+/// * `stream` - Bidirectional stream for reading and writing
+/// * `key` - 32-byte encryption key
+/// * `header` - File header with metadata
+/// * `ack_timeout` - Optional timeout for waiting for ACK. If None, waits indefinitely.
+///                   If timeout expires, considers transfer successful.
+pub async fn run_sender_transfer_with_timeout<S, F>(
+    file: &mut F,
+    stream: &mut S,
+    key: &[u8; 32],
+    header: &FileHeader,
+    ack_timeout: Option<std::time::Duration>,
+) -> Result<TransferResult>
+where
+    S: AsyncReadExt + AsyncWriteExt + Unpin,
+    F: AsyncReadExt + AsyncSeekExt + Unpin,
+{
+    // 1. Send encrypted header
+    send_encrypted_header(stream, key, header)
+        .await
+        .context("Failed to send header")?;
+
+    // 2. Wait for receiver response
+    eprintln!("Waiting for receiver to confirm...");
+    let start_offset = match handle_receiver_response(stream, key).await? {
+        ResumeResponse::Fresh => {
+            eprintln!("Receiver ready, starting transfer...");
+            0
+        }
+        ResumeResponse::Resume { offset, .. } => {
+            eprintln!("{}", format_resume_progress(offset, header.file_size));
+            file.seek(SeekFrom::Start(offset)).await?;
+            offset
+        }
+        ResumeResponse::Aborted => {
+            eprintln!("Receiver declined transfer");
+            return Ok(TransferResult::Aborted);
+        }
+    };
+
+    // 3. Send file data
+    send_file_data(file, stream, key, header.file_size, start_offset, 10).await?;
+
+    // 4. Flush stream (important for TCP-based transports)
+    stream.flush().await.context("Failed to flush stream")?;
+
+    eprintln!("\nTransfer complete!");
+
+    // 5. Wait for ACK (with optional timeout)
+    eprintln!("Waiting for receiver to confirm...");
+
+    let ack_result = match ack_timeout {
+        Some(timeout) => {
+            match tokio::time::timeout(timeout, recv_control(stream, key)).await {
+                Ok(result) => result,
+                Err(_) => {
+                    // Timeout - consider transfer successful (data was sent)
+                    eprintln!("Connection closed (transfer completed)");
+                    return Ok(TransferResult::Success);
+                }
+            }
+        }
+        None => recv_control(stream, key).await,
+    };
+
+    match ack_result {
+        Ok(ControlSignal::Ack) => {
+            eprintln!("Receiver confirmed!");
+            Ok(TransferResult::Success)
+        }
+        Ok(other) => anyhow::bail!("Expected ACK, got {:?}", other),
+        Err(e) => {
+            // For unreliable transports, connection errors after data sent are acceptable
+            if ack_timeout.is_some() {
+                eprintln!("Connection closed (transfer completed)");
+                Ok(TransferResult::Success)
+            } else {
+                Err(e).context("Failed to receive ACK")
+            }
+        }
+    }
+}
+
+use crate::core::folder::{
+    extract_tar_archive_returning_reader, get_extraction_dir, print_skipped_entries,
+    print_tar_extraction_info, StreamingReader,
+};
+
+/// Unified receiver transfer logic for all transports.
+///
+/// Handles the complete transfer flow:
+/// 1. Receive encrypted header
+/// 2. Handle file existence check (for files)
+/// 3. Prepare receiver and send control signal
+/// 4. Receive file/folder data
+/// 5. Finalize transfer
+/// 6. Send ACK
+///
+/// # Arguments
+/// * `stream` - Bidirectional stream for reading and writing
+/// * `key` - 32-byte encryption key
+/// * `output_dir` - Optional output directory (defaults to current directory)
+/// * `no_resume` - If true, disable resume support
+///
+/// # Returns
+/// * Tuple of (path to received file/directory, stream for cleanup)
+///   The stream is returned so callers can perform transport-specific cleanup
+///   (e.g., QUIC stream finish).
+pub async fn run_receiver_transfer<S>(
+    stream: S,
+    key: [u8; 32],
+    output_dir: Option<PathBuf>,
+    no_resume: bool,
+) -> Result<(PathBuf, S)>
+where
+    S: AsyncReadExt + AsyncWriteExt + Unpin + Send + 'static,
+{
+    // We need to box the stream to allow moving it between async/sync contexts
+    let mut stream = stream;
+
+    // 1. Receive header
+    let header = recv_encrypted_header(&mut stream, &key)
+        .await
+        .context("Failed to read header")?;
+
+    eprintln!(
+        "Receiving: {} ({})",
+        header.filename,
+        format_bytes(header.file_size)
+    );
+
+    let output_dir = output_dir.unwrap_or_else(|| PathBuf::from("."));
+
+    // 2. Handle based on transfer type
+    let (final_path, stream) = match header.transfer_type {
+        TransferType::File => {
+            let path =
+                receive_file_transfer_impl(&mut stream, &key, &header, &output_dir, no_resume)
+                    .await?;
+            (path, stream)
+        }
+        TransferType::Folder => {
+            receive_folder_transfer_impl(stream, &key, &header, &output_dir).await?
+        }
+    };
+
+    Ok((final_path, stream))
+}
+
+/// Internal implementation for file transfer reception.
+async fn receive_file_transfer_impl<S>(
+    stream: &mut S,
+    key: &[u8; 32],
+    header: &FileHeader,
+    output_dir: &Path,
+    no_resume: bool,
+) -> Result<PathBuf>
+where
+    S: AsyncReadExt + AsyncWriteExt + Unpin,
+{
+    // Determine final output path
+    let output_path = output_dir.join(&header.filename);
+
+    // Check file existence and get final path
+    let final_output_path = if output_path.exists() {
+        // Prompt user in blocking context
+        let path_clone = output_path.clone();
+        let choice = tokio::task::spawn_blocking(move || prompt_file_exists(&path_clone))
+            .await
+            .context("Prompt task panicked")??;
+
+        match choice {
+            FileExistsChoice::Overwrite => {
+                tokio::fs::remove_file(&output_path)
+                    .await
+                    .context("Failed to remove existing file")?;
+                output_path
+            }
+            FileExistsChoice::Rename => {
+                let new_path = find_available_filename(&output_path);
+                eprintln!("Will save as: {}", new_path.display());
+                new_path
+            }
+            FileExistsChoice::Cancel => {
+                // Send abort signal to sender
+                send_abort(stream, key)
+                    .await
+                    .context("Failed to send abort signal")?;
+                anyhow::bail!("Transfer cancelled by user");
+            }
+        }
+    } else {
+        output_path
+    };
+
+    // Prepare file receiver (checks for resume)
+    let (mut receiver, control_signal) =
+        prepare_file_receiver(&final_output_path, header, no_resume)?;
+
+    // Set up cleanup handler
+    let is_resumable = !no_resume && header.checksum != 0;
+    let cleanup_path = setup_resumable_cleanup_handler(receiver.temp_path.clone(), is_resumable);
+
+    // Send control signal
+    match &control_signal {
+        ControlSignal::Proceed => {
+            send_proceed(stream, key)
+                .await
+                .context("Failed to send proceed signal")?;
+            eprintln!("Ready to receive data...");
+        }
+        ControlSignal::Resume(offset) => {
+            send_resume(stream, key, *offset)
+                .await
+                .context("Failed to send resume signal")?;
+            eprintln!("{}", format_resume_progress(*offset, header.file_size));
+        }
+        other => anyhow::bail!(
+            "Unexpected control signal from prepare_file_receiver: {:?}",
+            other
+        ),
+    }
+
+    // Receive file data
+    receive_file_data(stream, &mut receiver, key, header.file_size, 10, 100).await?;
+
+    // Clear cleanup and finalize
+    cleanup_path.lock().await.take();
+    finalize_file_receiver(receiver)?;
+
+    eprintln!("\nFile received successfully!");
+    eprintln!("Saved to: {}", final_output_path.display());
+
+    // Send ACK
+    send_ack(stream, key)
+        .await
+        .context("Failed to send acknowledgment")?;
+
+    Ok(final_output_path)
+}
+
+/// Internal implementation for folder transfer reception.
+/// Returns (path, stream) so callers can perform transport-specific cleanup.
+async fn receive_folder_transfer_impl<S>(
+    mut stream: S,
+    key: &[u8; 32],
+    header: &FileHeader,
+    output_dir: &Path,
+) -> Result<(PathBuf, S)>
+where
+    S: AsyncReadExt + AsyncWriteExt + Unpin + Send + 'static,
+{
+    eprintln!(
+        "Receiving folder archive: {} ({})",
+        header.filename,
+        format_bytes(header.file_size)
+    );
+
+    // Folders are not resumable, always send proceed
+    send_proceed(&mut stream, key)
+        .await
+        .context("Failed to send proceed signal")?;
+    eprintln!("Ready to receive data...");
+
+    // Determine extraction directory
+    let extract_dir = get_extraction_dir(Some(output_dir.to_path_buf()));
+    std::fs::create_dir_all(&extract_dir).context("Failed to create extraction directory")?;
+
+    // Set up cleanup handler
+    let cleanup_path = setup_dir_cleanup_handler(extract_dir.clone());
+
+    eprintln!("Extracting to: {}", extract_dir.display());
+    print_tar_extraction_info();
+
+    // Get runtime handle for blocking in StreamingReader
+    let runtime_handle = tokio::runtime::Handle::current();
+
+    // Create streaming reader that feeds tar extractor
+    let reader = StreamingReader::new(stream, *key, header.file_size, runtime_handle);
+
+    // Run tar extraction in blocking context
+    let extract_dir_clone = extract_dir.clone();
+    let (skipped_entries, streaming_reader) = tokio::task::spawn_blocking(move || {
+        extract_tar_archive_returning_reader(reader, &extract_dir_clone)
+    })
+    .await
+    .context("Extraction task panicked")??;
+
+    // Report skipped entries
+    print_skipped_entries(&skipped_entries);
+
+    // Clear cleanup
+    cleanup_path.lock().await.take();
+
+    eprintln!("\nFolder received successfully!");
+    eprintln!("Extracted to: {}", extract_dir.display());
+
+    // Get stream back and send ACK
+    let mut stream = streaming_reader.into_inner();
+    send_ack(&mut stream, key)
+        .await
+        .context("Failed to send acknowledgment")?;
+
+    Ok((extract_dir, stream))
+}

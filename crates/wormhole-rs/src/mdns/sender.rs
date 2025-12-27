@@ -9,7 +9,6 @@ use std::collections::HashMap;
 use std::net::TcpListener;
 use std::path::Path;
 use tokio::fs::File;
-use tokio::io::AsyncSeekExt;
 use tokio::net::TcpStream;
 
 use crate::cli::instructions::print_receiver_command;
@@ -19,9 +18,8 @@ use super::common::{
 };
 use wormhole_common::auth::spake2::handshake_as_responder;
 use wormhole_common::core::transfer::{
-    format_bytes, format_resume_progress, handle_receiver_response, prepare_file_for_send,
-    prepare_folder_for_send, recv_control, send_encrypted_header, send_file_data,
-    setup_temp_file_cleanup_handler, ControlSignal, FileHeader, ResumeResponse, TransferType,
+    format_bytes, prepare_file_for_send, prepare_folder_for_send, run_sender_transfer,
+    setup_temp_file_cleanup_handler, FileHeader, TransferResult, TransferType,
 };
 
 /// Display receiver instructions and PIN to the user.
@@ -249,62 +247,14 @@ async fn send_data_over_tcp(
     transfer_type: TransferType,
     key: &[u8; 32],
 ) -> Result<()> {
-    // Send encrypted header with checksum
+    // Create header and run unified transfer logic
     let header = FileHeader::new(transfer_type, filename, file_size, checksum);
-    send_encrypted_header(&mut stream, key, &header)
-        .await
-        .context("Failed to send header")?;
-
     eprintln!("Sent file header");
 
-    // Wait for receiver confirmation before sending data
-    eprintln!("Waiting for receiver to confirm...");
-    let response = handle_receiver_response(&mut stream, key).await?;
+    let result = run_sender_transfer(file, &mut stream, key, &header).await?;
 
-    let start_offset = match response {
-        ResumeResponse::Fresh => {
-            eprintln!("Receiver ready, starting transfer...");
-            0
-        }
-        ResumeResponse::Resume { offset, .. } => {
-            eprintln!("{}", format_resume_progress(offset, file_size));
-            file.seek(std::io::SeekFrom::Start(offset)).await?;
-            offset
-        }
-        ResumeResponse::Aborted => {
-            eprintln!("Receiver declined transfer");
-            anyhow::bail!("Transfer cancelled by receiver");
-        }
-    };
-
-    // Send file data using shared component
-    send_file_data(file, &mut stream, key, file_size, start_offset, 10).await?;
-
-    eprintln!("\nAll data sent!");
-
-    // Wait for encrypted ACK with timeout (same as handshake timeout)
-    eprintln!("Waiting for receiver confirmation...");
-    use tokio::time::timeout;
-
-    let ack_result = timeout(
-        std::time::Duration::from_secs(10),
-        recv_control(&mut stream, key),
-    )
-    .await;
-
-    match ack_result {
-        Ok(Ok(ControlSignal::Ack)) => {
-            eprintln!("Receiver confirmed!");
-        }
-        Ok(Ok(_)) => {
-            anyhow::bail!("Unexpected control signal, expected ACK");
-        }
-        Ok(Err(e)) => {
-            return Err(e).context("Failed to receive ACK from receiver");
-        }
-        Err(_) => {
-            anyhow::bail!("Timed out waiting for receiver confirmation (10s)");
-        }
+    if result == TransferResult::Aborted {
+        anyhow::bail!("Transfer cancelled by receiver");
     }
 
     Ok(())

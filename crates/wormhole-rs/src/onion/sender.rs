@@ -1,20 +1,18 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use arti_client::{config::TorClientConfigBuilder, TorClient};
 use futures::StreamExt;
 use rand::Rng;
 use safelog::DisplayRedacted;
 use std::path::Path;
 use tokio::fs::File;
-use tokio::io::{AsyncSeekExt, AsyncWriteExt};
 use tor_cell::relaycell::msg::Connected;
 use tor_hsservice::{config::OnionServiceConfigBuilder, handle_rend_requests};
 
 use crate::cli::instructions::print_receiver_command;
 use wormhole_common::core::crypto::generate_key;
 use wormhole_common::core::transfer::{
-    format_resume_progress, handle_receiver_response, prepare_file_for_send,
-    prepare_folder_for_send, recv_control, send_encrypted_header, send_file_data,
-    setup_temp_file_cleanup_handler, ControlSignal, FileHeader, ResumeResponse, TransferType,
+    prepare_file_for_send, prepare_folder_for_send, run_sender_transfer_with_timeout,
+    setup_temp_file_cleanup_handler, FileHeader, TransferResult, TransferType,
 };
 use wormhole_common::core::wormhole::generate_tor_code;
 
@@ -103,59 +101,22 @@ async fn transfer_data_tor_internal(
         // Accept the stream request
         let mut stream = stream_req.accept(Connected::new_empty()).await?;
 
-        // Send file header with checksum for resume support
+        // Create header and run unified transfer logic with 10s ACK timeout
+        // Tor streams may close abruptly, so timeout is considered successful
         let header = FileHeader::new(transfer_type, filename, file_size, checksum);
-        send_encrypted_header(&mut stream, &key, &header)
-            .await
-            .context("Failed to send header")?;
-
-        // Wait for receiver confirmation before sending data
-        eprintln!("Waiting for receiver to confirm...");
-        let response = handle_receiver_response(&mut stream, &key).await?;
-
-        let start_offset = match response {
-            ResumeResponse::Fresh => {
-                eprintln!("Receiver ready, starting transfer...");
-                0
-            }
-            ResumeResponse::Resume { offset, .. } => {
-                eprintln!("{}", format_resume_progress(offset, file_size));
-                file.seek(std::io::SeekFrom::Start(offset)).await?;
-                offset
-            }
-            ResumeResponse::Aborted => {
-                eprintln!("Receiver declined transfer");
-                anyhow::bail!("Transfer cancelled by receiver");
-            }
-        };
-
-        // Send file data using shared component
-        send_file_data(&mut file, &mut stream, &key, file_size, start_offset, 10).await?;
-
-        // Flush the stream
-        stream.flush().await.context("Failed to flush stream")?;
-
-        eprintln!("\nTransfer complete!");
-
-        // Wait for receiver ACK (best-effort, Tor streams may close abruptly)
-        eprintln!("Waiting for receiver to confirm...");
-        match tokio::time::timeout(
-            std::time::Duration::from_secs(10),
-            recv_control(&mut stream, &key),
+        let result = run_sender_transfer_with_timeout(
+            &mut file,
+            &mut stream,
+            &key,
+            &header,
+            Some(std::time::Duration::from_secs(10)),
         )
-        .await
-        {
-            Ok(Ok(ControlSignal::Ack)) => {
-                eprintln!("Receiver confirmed!");
-            }
-            Ok(Ok(_)) => {
-                eprintln!("Received unexpected signal (transfer likely succeeded)");
-            }
-            Ok(Err(_)) | Err(_) => {
-                // Tor streams may close without proper END cell - this is normal
-                eprintln!("Connection closed (transfer completed)");
-            }
+        .await?;
+
+        if result == TransferResult::Aborted {
+            anyhow::bail!("Transfer cancelled by receiver");
         }
+
         eprintln!("Done.");
     } else {
         anyhow::bail!("No connection received");
