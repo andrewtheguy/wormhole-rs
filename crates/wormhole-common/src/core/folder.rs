@@ -33,6 +33,17 @@ pub struct TarArchive {
 /// # Returns
 /// * `TarArchive` containing the temp file, filename, and size
 pub fn create_tar_archive(folder_path: &Path) -> Result<TarArchive> {
+    // Validate that the path exists and is a directory
+    if !folder_path.exists() {
+        anyhow::bail!("Folder does not exist: {}", folder_path.display());
+    }
+    if !folder_path.is_dir() {
+        anyhow::bail!(
+            "Path is not a directory: {} (use send for files)",
+            folder_path.display()
+        );
+    }
+
     let folder_name = folder_path
         .file_name()
         .and_then(|n| n.to_str())
@@ -100,6 +111,27 @@ pub fn create_tar_archive(folder_path: &Path) -> Result<TarArchive> {
 
 /// Wrapper to bridge async chunk receiving with sync tar reading.
 /// Implements std::io::Read by fetching chunks on demand.
+///
+/// # Usage Requirements
+///
+/// This type uses `runtime_handle.block_on()` internally to fetch async chunks
+/// from within a synchronous `Read::read()` implementation. **This is only safe
+/// when called from outside the Tokio async runtime context.**
+///
+/// The correct pattern is to use `tokio::task::spawn_blocking` to move the
+/// tar extraction (which calls `Read::read()`) to a blocking thread pool:
+///
+/// ```ignore
+/// let reader = StreamingReader::new(stream, key, file_size, runtime_handle);
+/// let result = tokio::task::spawn_blocking(move || {
+///     extract_tar_archive_returning_reader(reader, &extract_dir)
+/// }).await?;
+/// ```
+///
+/// # Panics
+///
+/// Calling `Read::read()` from within an async context (e.g., directly from
+/// an async function without `spawn_blocking`) will cause a panic or deadlock.
 pub struct StreamingReader<R> {
     recv_stream: R,
     key: [u8; 32],
@@ -107,6 +139,7 @@ pub struct StreamingReader<R> {
     buffer: Vec<u8>,
     buffer_pos: usize,
     bytes_remaining: u64,
+    file_size: u64,
     runtime_handle: tokio::runtime::Handle,
 }
 
@@ -131,14 +164,28 @@ impl<R> StreamingReader<R> {
             buffer: Vec::new(),
             buffer_pos: 0,
             bytes_remaining: file_size,
+            file_size,
             runtime_handle,
         }
     }
 
     /// Consume the StreamingReader and return the underlying stream.
+    ///
     /// Use this to send ACK after extraction is complete.
-    pub fn into_inner(self) -> R {
-        self.recv_stream
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if not all expected bytes were read from the stream,
+    /// indicating an incomplete or corrupted transfer.
+    pub fn into_inner(self) -> Result<R> {
+        if self.bytes_remaining != 0 {
+            anyhow::bail!(
+                "Incomplete stream: {} of {} bytes not received",
+                self.bytes_remaining,
+                self.file_size
+            );
+        }
+        Ok(self.recv_stream)
     }
 }
 
@@ -146,9 +193,10 @@ impl<R: tokio::io::AsyncReadExt + Unpin + Send> Read for StreamingReader<R> {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         // If buffer is exhausted and there's more data, fetch next chunk
         if self.buffer_pos >= self.buffer.len() && self.bytes_remaining > 0 {
-            // Use runtime_handle.block_on() directly to run the async future.
-            // This avoids panics from block_in_place when called off a Tokio worker thread.
-            // Note: Callers should not already be inside a Tokio runtime blocking context.
+            // Use runtime_handle.block_on() to run the async future.
+            // SAFETY: This is only safe when called from a blocking thread pool
+            // (via spawn_blocking), not from within an async context.
+            // See struct documentation for the correct usage pattern.
             let chunk_result = self.runtime_handle.block_on(async {
                 recv_encrypted_chunk(&mut self.recv_stream, &self.key).await
             });

@@ -1563,7 +1563,10 @@ where
     eprintln!("Extracted to: {}", extract_dir.display());
 
     // Get stream back and send ACK
-    let mut stream = streaming_reader.into_inner();
+    // Validate that all expected bytes were received before sending ACK
+    let mut stream = streaming_reader
+        .into_inner()
+        .context("Transfer validation failed")?;
     send_ack(&mut stream, key)
         .await
         .context("Failed to send acknowledgment")?;

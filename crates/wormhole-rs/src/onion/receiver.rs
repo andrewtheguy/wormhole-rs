@@ -1,12 +1,28 @@
 use anyhow::{Context, Result};
 use arti_client::{config::TorClientConfigBuilder, ErrorKind, HasKind, TorClient};
 use std::path::PathBuf;
+use std::time::Duration;
+use tokio::time::timeout;
 
 use wormhole_common::core::transfer::run_receiver_transfer;
 use wormhole_common::core::wormhole::{decode_key, parse_code, PROTOCOL_TOR};
 
 const MAX_RETRIES: u32 = 5;
 const RETRY_DELAY_SECS: u64 = 5;
+
+/// Default timeout for file transfer over Tor (30 minutes).
+/// Tor transfers can be slow due to network latency, so this is generous.
+/// Can be overridden via WORMHOLE_TRANSFER_TIMEOUT_SECS environment variable.
+const DEFAULT_TRANSFER_TIMEOUT_SECS: u64 = 30 * 60;
+
+/// Get the transfer timeout from environment or use the default.
+fn get_transfer_timeout() -> Duration {
+    std::env::var("WORMHOLE_TRANSFER_TIMEOUT_SECS")
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok())
+        .map(Duration::from_secs)
+        .unwrap_or(Duration::from_secs(DEFAULT_TRANSFER_TIMEOUT_SECS))
+}
 
 /// Check if error is retryable (timeout, temporary network issues)
 fn is_retryable(e: &arti_client::Error) -> bool {
@@ -102,12 +118,34 @@ pub async fn receive_file_tor(code: &str, output_dir: Option<PathBuf>) -> Result
 
     eprintln!("Connected!");
 
-    // Run unified receiver transfer (no resume for Tor receiver by default)
-    let (_path, _stream) = run_receiver_transfer(stream, key, output_dir, false).await?;
+    // Run unified receiver transfer with timeout (no resume for Tor receiver by default)
+    // Stream is dropped when function returns or on timeout; no explicit close needed for Tor streams
+    let transfer_timeout = get_transfer_timeout();
+    let transfer_result = timeout(
+        transfer_timeout,
+        run_receiver_transfer(stream, key, output_dir, false),
+    )
+    .await;
 
-    eprintln!("Connection closed.");
-
-    Ok(())
+    match transfer_result {
+        Ok(Ok((_path, _stream))) => {
+            eprintln!("Transfer complete.");
+            Ok(())
+        }
+        Ok(Err(e)) => {
+            // Transfer failed with an error
+            Err(e)
+        }
+        Err(_elapsed) => {
+            // Timeout elapsed - stream is dropped here, cleaning up the connection
+            eprintln!("Transfer timed out after {:?}", transfer_timeout);
+            anyhow::bail!(
+                "Transfer timed out after {:?}. You can increase the timeout by setting \
+                 WORMHOLE_TRANSFER_TIMEOUT_SECS environment variable.",
+                transfer_timeout
+            )
+        }
+    }
 }
 
 /// Receive a file or folder via Tor
