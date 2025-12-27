@@ -22,9 +22,9 @@ This guide describes common scenarios where `wormhole-rs` shines and which mode 
 - **Command**:
   ```bash
   # Sender
-  wormhole-rs send-iroh /path/to/file
+  wormhole-rs send /path/to/file
 
-  # Receiver
+  # Receiver (unified command auto-detects mode from code)
   wormhole-rs receive --code <WORMHOLE_CODE>
   ```
 - **Experience**: Share the wormhole code via any channel (chat, paper, verbal). iroh handles peer discovery and NAT traversal automatically without needing IP addresses.
@@ -48,14 +48,17 @@ This guide describes common scenarios where `wormhole-rs` shines and which mode 
   1. Sender sees: `PIN: A1b2C3d4E5f6` (example)
   2. Receiver runs `receive-local` and types `A1b2C3d4E5f6`.
 
-**Solution B**: **Tor Mode with PIN** (For internet transfers)
-- **Why**: Uses a short 12-character PIN via Nostr relays.
+**Solution B**: **PIN Mode** (For internet transfers)
+- **Why**: Uses a short 12-character PIN instead of a long code. The PIN is exchanged via Nostr relays, while the actual file transfer uses either iroh or Tor transport.
 - **Command**:
   ```bash
-  # Sender
+  # Sender (iroh transport with PIN exchange)
+  wormhole-rs send --pin /path/to/file
+
+  # Or sender (Tor transport with PIN exchange, for anonymity)
   wormhole-rs send-tor --pin /path/to/file
 
-  # Receiver
+  # Receiver (unified command, prompts for PIN)
   wormhole-rs receive --pin
   ```
 
@@ -68,7 +71,7 @@ This guide describes common scenarios where `wormhole-rs` shines and which mode 
 - **Why**: iroh uses QUIC with automatic relay fallback. It tries direct P2P first, then falls back to iroh's relay servers if needed.
 - **Command**:
   ```bash
-  wormhole-rs send-iroh /path/to/file
+  wormhole-rs send /path/to/file
   ```
 
 **Solution B**: **Tor Mode** (if iroh fails)
@@ -98,7 +101,7 @@ This guide describes common scenarios where `wormhole-rs` shines and which mode 
 **Solution**: **iroh Mode** (Recommended)
 - **Why**: Uses QUIC, optimized for high throughput and congestion control. Automatic relay fallback ensures reliable delivery.
   ```bash
-  wormhole-rs send-iroh /path/to/large-video.mp4
+  wormhole-rs send /path/to/large-video.mp4
   ```
 
 ---
@@ -108,12 +111,12 @@ This guide describes common scenarios where `wormhole-rs` shines and which mode 
 
 **Solution A**: **iroh Mode + Custom DERP Relays** (Recommended)
 - **Why**: iroh allows you to run your own lightweight relay (DERP). By pointing `wormhole-rs` to your own infrastructure, you achieve a true peer-to-peer connection where no third-party relays are involved.
-- **Current Status**: Custom relays are supported today via `--relay-url`, but peer discovery still uses iroh's public DNS/pkarr services. Until custom DNS support lands (see ROADMAP: Support Custom Iroh DNS Server), the fully zero-third-party option is:
+- **Current Status**: Custom relays are supported today via `--relay-url`, but peer discovery still uses iroh's public DNS/pkarr services. See [ROADMAP.md](ROADMAP.md) for updates on custom DNS/discovery support. For a fully zero-third-party option today, use:
   - **Local Mode** (`send-local` / `receive-local`) when both peers share a LAN and can rely on mDNS.
 - **Resources**: Implementation for the relay server is available in the [iroh repository](https://github.com/n0-computer/iroh).
 - **Command**:
   ```bash
-  wormhole-rs send-iroh --relay-url https://my-private-relay.com /path/to/file
+  wormhole-rs send --relay-url https://my-private-relay.com /path/to/file
   ```
 
 **Solution B**: **Local Mode** (Same network)
