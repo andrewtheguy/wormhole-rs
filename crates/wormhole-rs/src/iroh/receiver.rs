@@ -83,11 +83,26 @@ pub async fn receive(
     // Run unified receiver transfer
     let (_path, duplex) = run_receiver_transfer(duplex, key, output_dir, no_resume).await?;
 
-    // Finish send stream (QUIC-specific)
-    duplex
-        .into_send_stream()
-        .finish()
-        .context("Failed to finish send stream")?;
+    // Finish send stream and wait for acknowledgment (QUIC-specific)
+    // This ensures the ACK message is fully delivered before closing the connection.
+    let mut send_stream = duplex.into_send_stream();
+    send_stream.finish().context("Failed to finish send stream")?;
+
+    // Wait for the peer to acknowledge our FIN (with timeout to avoid hanging)
+    const STREAM_CLOSE_TIMEOUT: Duration = Duration::from_secs(5);
+    match timeout(STREAM_CLOSE_TIMEOUT, send_stream.stopped()).await {
+        Ok(Ok(_)) => {}
+        Ok(Err(e)) => {
+            // Stream was reset by peer - this is fine, they got the ACK
+            log::debug!("Send stream stopped with error (likely peer closed): {}", e);
+        }
+        Err(_) => {
+            log::debug!(
+                "Waiting for stream acknowledgment timed out after {:?}",
+                STREAM_CLOSE_TIMEOUT
+            );
+        }
+    }
 
     // Close connection gracefully with timeout to avoid hanging indefinitely
     const CLOSE_TIMEOUT: Duration = Duration::from_secs(5);
