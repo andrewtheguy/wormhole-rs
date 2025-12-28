@@ -504,7 +504,7 @@ install() {
     else
         download_and_install
         print_info "Installation completed successfully!"
-        print_info "You can now run 'wormhole-rs' from your terminal."
+        print_info "You can now run '$INSTALL_NAME' from your terminal."
     fi
 }
 

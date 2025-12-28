@@ -523,7 +523,8 @@ function Start-Installation {
     else {
         Install-Binary -BaseUrl $baseUrl -BinaryName $binaryName -ExpectedChecksum $expectedChecksum
         Print-Info "Installation completed successfully!"
-        Print-Info "You can now run 'wormhole-rs' from your terminal."
+        $installName = Get-InstallName
+        Print-Info "You can now run '$installName' from your terminal."
     }
 }
 
