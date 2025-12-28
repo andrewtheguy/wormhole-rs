@@ -589,5 +589,13 @@ function Main {
     Start-Installation -Tag $tag -DownloadOnly:$DownloadOnly
 }
 
-# Run main function
-Main
+# Run main function and clean up fallback args
+try {
+    Main
+}
+finally {
+    # Clean up the fallback args variable to avoid persistence across sessions
+    if (Test-Path env:WORMHOLE_INSTALL_ARGS) {
+        Remove-Item env:WORMHOLE_INSTALL_ARGS -ErrorAction SilentlyContinue
+    }
+}
