@@ -26,7 +26,7 @@ async fn main() -> anyhow::Result<()> {
     log::info!("Tor client bootstrapped!");
 
     // Generate a random nickname for truly ephemeral service (new address each time)
-    let random_suffix: u64 = rand::thread_rng().gen();
+    let random_suffix: u64 = rand::thread_rng().r#gen();
     let nickname = format!("wh_{:016x}", random_suffix);
 
     // Configure onion service with random nickname

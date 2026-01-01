@@ -116,11 +116,11 @@ impl WebRtcPeer {
         peer_connection.on_ice_candidate(Box::new(move |candidate| {
             let ice_tx = ice_tx.clone();
             Box::pin(async move {
-                if let Some(candidate) = candidate {
-                    if ice_tx.send(candidate).await.is_err() {
-                        // Expected during shutdown when receiver is dropped
-                        log::trace!("ICE candidate channel closed");
-                    }
+                if let Some(candidate) = candidate
+                    && ice_tx.send(candidate).await.is_err()
+                {
+                    // Expected during shutdown when receiver is dropped
+                    log::trace!("ICE candidate channel closed");
                 }
             })
         }));
@@ -335,12 +335,12 @@ impl WebRtcPeer {
 
         // First pass: find the nominated candidate pair
         for report in stats.reports.values() {
-            if let StatsReportType::CandidatePair(pair) = report {
-                if pair.nominated {
-                    nominated_pair_local_id = Some(pair.local_candidate_id.clone());
-                    nominated_pair_remote_id = Some(pair.remote_candidate_id.clone());
-                    break;
-                }
+            if let StatsReportType::CandidatePair(pair) = report
+                && pair.nominated
+            {
+                nominated_pair_local_id = Some(pair.local_candidate_id.clone());
+                nominated_pair_remote_id = Some(pair.remote_candidate_id.clone());
+                break;
             }
         }
 

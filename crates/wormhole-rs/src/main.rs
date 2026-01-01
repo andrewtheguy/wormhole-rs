@@ -136,7 +136,7 @@ fn validate_path(path: &Path, folder: bool) -> Result<()> {
 
 /// Validate output directory exists and is a directory
 fn validate_output_dir(output: &Option<PathBuf>) -> Result<()> {
-    if let Some(ref dir) = output {
+    if let Some(dir) = output {
         if !dir.exists() {
             anyhow::bail!("Output path does not exist: {}", dir.display());
         }

@@ -8,7 +8,7 @@ members = [
 
 [workspace.package]
 version = "0.2.4"
-edition = "2021"
+edition = "2024"
 
 [workspace.dependencies]
 # Core dependencies shared by all crates
