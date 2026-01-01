@@ -116,11 +116,11 @@ impl WebRtcPeer {
         peer_connection.on_ice_candidate(Box::new(move |candidate| {
             let ice_tx = ice_tx.clone();
             Box::pin(async move {
-                if let Some(candidate) = candidate {
-                    if ice_tx.send(candidate).await.is_err() {
-                        // Expected during shutdown when receiver is dropped
-                        log::trace!("ICE candidate channel closed");
-                    }
+                if let Some(candidate) = candidate
+                    && ice_tx.send(candidate).await.is_err()
+                {
+                    // Expected during shutdown when receiver is dropped
+                    log::trace!("ICE candidate channel closed");
                 }
             })
         }));
@@ -334,13 +334,13 @@ impl WebRtcPeer {
         let mut nominated_pair_remote_id = None;
 
         // First pass: find the nominated candidate pair
-        for (_id, report) in &stats.reports {
-            if let StatsReportType::CandidatePair(pair) = report {
-                if pair.nominated {
-                    nominated_pair_local_id = Some(pair.local_candidate_id.clone());
-                    nominated_pair_remote_id = Some(pair.remote_candidate_id.clone());
-                    break;
-                }
+        for report in stats.reports.values() {
+            if let StatsReportType::CandidatePair(pair) = report
+                && pair.nominated
+            {
+                nominated_pair_local_id = Some(pair.local_candidate_id.clone());
+                nominated_pair_remote_id = Some(pair.remote_candidate_id.clone());
+                break;
             }
         }
 
@@ -571,8 +571,7 @@ impl AsyncRead for DataChannelStream {
     ) -> Poll<io::Result<()>> {
         // Check if any messages were dropped - fail fast to prevent silent corruption
         if self.has_dropped_messages() {
-            return Poll::Ready(Err(io::Error::new(
-                io::ErrorKind::Other,
+            return Poll::Ready(Err(io::Error::other(
                 "Data channel buffer overflow - messages were dropped, transfer data corrupted",
             )));
         }
@@ -634,7 +633,7 @@ impl AsyncWrite for DataChannelStream {
                 }
                 Poll::Ready(Ok(Err(e))) => {
                     this.write_pending = None;
-                    return Poll::Ready(Err(io::Error::new(io::ErrorKind::Other, e)));
+                    return Poll::Ready(Err(io::Error::other(e)));
                 }
                 Poll::Ready(Err(_)) => {
                     // Channel closed unexpectedly
@@ -672,7 +671,7 @@ impl AsyncWrite for DataChannelStream {
         // Poll immediately to register the waker, then store if still pending
         match Pin::new(&mut rx).poll(cx) {
             Poll::Ready(Ok(Ok(len))) => Poll::Ready(Ok(len)),
-            Poll::Ready(Ok(Err(e))) => Poll::Ready(Err(io::Error::new(io::ErrorKind::Other, e))),
+            Poll::Ready(Ok(Err(e))) => Poll::Ready(Err(io::Error::other(e))),
             Poll::Ready(Err(_)) => Poll::Ready(Err(io::Error::new(
                 io::ErrorKind::BrokenPipe,
                 "Write operation cancelled",
@@ -697,7 +696,7 @@ impl AsyncWrite for DataChannelStream {
                 }
                 Poll::Ready(Ok(Err(e))) => {
                     this.write_pending = None;
-                    Poll::Ready(Err(io::Error::new(io::ErrorKind::Other, e)))
+                    Poll::Ready(Err(io::Error::other(e)))
                 }
                 Poll::Ready(Err(_)) => {
                     this.write_pending = None;

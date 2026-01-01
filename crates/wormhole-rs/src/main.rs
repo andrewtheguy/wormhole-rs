@@ -1,7 +1,7 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use std::io::{self, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tracing_subscriber::EnvFilter;
 
 use wormhole_common::core::transfer::is_interrupted;
@@ -112,7 +112,7 @@ enum Commands {
 }
 
 /// Validate path exists and matches folder flag
-fn validate_path(path: &PathBuf, folder: bool) -> Result<()> {
+fn validate_path(path: &Path, folder: bool) -> Result<()> {
     if !path.exists() {
         anyhow::bail!("Path not found: {}", path.display());
     }
@@ -136,7 +136,7 @@ fn validate_path(path: &PathBuf, folder: bool) -> Result<()> {
 
 /// Validate output directory exists and is a directory
 fn validate_output_dir(output: &Option<PathBuf>) -> Result<()> {
-    if let Some(ref dir) = output {
+    if let Some(dir) = output {
         if !dir.exists() {
             anyhow::bail!("Output path does not exist: {}", dir.display());
         }

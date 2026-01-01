@@ -77,7 +77,6 @@ impl MinimalAddr {
     }
 
     #[cfg(feature = "iroh-addr")]
-
     /// Convert back to EndpointAddr
     pub fn to_endpoint_addr(&self) -> Result<EndpointAddr> {
         let id = self

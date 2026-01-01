@@ -117,10 +117,10 @@ async fn test_relay_connectivity(relay_url: &str) -> Option<(String, Duration)> 
 /// Returns (relay_url, response_time) if relay passes all checks
 async fn probe_relay(relay_url: &str) -> Option<(String, Duration)> {
     // First, fetch NIP-11 to check capabilities
-    if let Some(info) = fetch_relay_info(relay_url).await {
-        if !is_relay_suitable(&info) {
-            return None;
-        }
+    if let Some(info) = fetch_relay_info(relay_url).await
+        && !is_relay_suitable(&info)
+    {
+        return None;
     }
     // If NIP-11 fetch fails, we still try connectivity
     // (some relays don't serve NIP-11 but still work fine)
@@ -133,17 +133,17 @@ async fn probe_relay(relay_url: &str) -> Option<(String, Duration)> {
 fn is_relay_suitable(info: &RelayInformationDocument) -> bool {
     if let Some(ref limitation) = info.limitation {
         // Check message length limit
-        if let Some(max_msg) = limitation.max_message_length {
-            if max_msg < MIN_MESSAGE_LENGTH {
-                return false;
-            }
+        if let Some(max_msg) = limitation.max_message_length
+            && max_msg < MIN_MESSAGE_LENGTH
+        {
+            return false;
         }
 
         // Check content length limit
-        if let Some(max_content) = limitation.max_content_length {
-            if max_content < MIN_CONTENT_LENGTH {
-                return false;
-            }
+        if let Some(max_content) = limitation.max_content_length
+            && max_content < MIN_CONTENT_LENGTH
+        {
+            return false;
         }
 
         // Skip relays requiring payment (we want free public relays)
@@ -333,7 +333,7 @@ pub const TAG_TYPE: &str = "type";
 /// Generate a random transfer ID (16 bytes, hex encoded)
 pub fn generate_transfer_id() -> String {
     let mut rng = rand::thread_rng();
-    let bytes: [u8; 16] = rng.gen();
+    let bytes: [u8; 16] = rng.r#gen();
     hex::encode(bytes)
 }
 
@@ -558,7 +558,7 @@ pub async fn discover_sender_relays(sender_pubkey: &PublicKey) -> Result<Vec<Str
     let relays = events
         .iter()
         .max_by_key(|e| e.created_at)
-        .map(|e| extract_relays_from_nip65(e))
+        .map(extract_relays_from_nip65)
         .unwrap_or_default();
 
     if relays.is_empty() {

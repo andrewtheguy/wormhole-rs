@@ -24,7 +24,7 @@ pub const TXT_TRANSFER_TYPE: &str = "transfer_type";
 /// Generate a unique transfer ID for this session.
 pub fn generate_transfer_id() -> String {
     use rand::Rng;
-    let bytes: [u8; 8] = rand::thread_rng().gen();
+    let bytes: [u8; 8] = rand::thread_rng().r#gen();
     hex::encode(bytes)
 }
 

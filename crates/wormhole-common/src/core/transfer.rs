@@ -373,7 +373,7 @@ pub async fn recv_encrypted_chunk<R: AsyncReadExt + Unpin>(
 
 /// Calculate number of chunks for a file
 pub fn num_chunks(file_size: u64) -> u64 {
-    (file_size + CHUNK_SIZE as u64 - 1) / CHUNK_SIZE as u64
+    file_size.div_ceil(CHUNK_SIZE as u64)
 }
 
 /// Format bytes for human-readable display
@@ -1014,7 +1014,8 @@ pub async fn send_file_data<R: AsyncReadExt + Unpin, W: AsyncWriteExt + Unpin>(
         chunk_num += 1;
 
         // Progress update
-        if progress_interval > 0 && (chunk_num % progress_interval == 0 || bytes_sent == file_size)
+        if progress_interval > 0
+            && (chunk_num.is_multiple_of(progress_interval) || bytes_sent == file_size)
         {
             let percent = calc_percent(bytes_sent, file_size) as u32;
             eprint!(
@@ -1057,7 +1058,7 @@ pub struct FileReceiver {
 /// Check for resumable transfer and prepare file receiver.
 /// Returns (FileReceiver, control_signal_to_send).
 pub fn prepare_file_receiver(
-    final_path: &PathBuf,
+    final_path: &Path,
     header: &FileHeader,
     no_resume: bool,
 ) -> Result<(FileReceiver, ControlSignal)> {
@@ -1079,7 +1080,7 @@ pub fn prepare_file_receiver(
             FileReceiver {
                 temp_file,
                 temp_path,
-                final_path: final_path.clone(),
+                final_path: final_path.to_path_buf(),
                 bytes_received: 0,
                 is_resuming: false,
                 data_offset,
@@ -1105,7 +1106,7 @@ pub fn prepare_file_receiver(
                 FileReceiver {
                     temp_file: resume_check.file,
                     temp_path,
-                    final_path: final_path.clone(),
+                    final_path: final_path.to_path_buf(),
                     bytes_received,
                     is_resuming: true,
                     data_offset,
@@ -1129,7 +1130,7 @@ pub fn prepare_file_receiver(
                 FileReceiver {
                     temp_file,
                     temp_path,
-                    final_path: final_path.clone(),
+                    final_path: final_path.to_path_buf(),
                     bytes_received: 0,
                     is_resuming: false,
                     data_offset,
@@ -1175,7 +1176,7 @@ pub async fn receive_file_data<R: AsyncReadExt + Unpin>(
         chunk_num += 1;
 
         // Update metadata periodically for crash recovery
-        if metadata_update_interval > 0 && chunk_num % metadata_update_interval == 0 {
+        if metadata_update_interval > 0 && chunk_num.is_multiple_of(metadata_update_interval) {
             receiver.metadata.bytes_received = receiver.bytes_received;
             // Seek to beginning to update metadata
             receiver.temp_file.seek(SeekFrom::Start(0))?;
@@ -1188,7 +1189,7 @@ pub async fn receive_file_data<R: AsyncReadExt + Unpin>(
 
         // Progress update
         if progress_interval > 0
-            && (chunk_num % progress_interval == 0 || receiver.bytes_received == file_size)
+            && (chunk_num.is_multiple_of(progress_interval) || receiver.bytes_received == file_size)
         {
             let percent = calc_percent(receiver.bytes_received, file_size) as u32;
             eprint!(
@@ -1391,7 +1392,7 @@ where
 /// * `key` - 32-byte encryption key
 /// * `header` - File header with metadata
 /// * `ack_timeout` - Optional timeout for waiting for ACK. If None, waits indefinitely.
-///                   If timeout expires, considers transfer successful.
+///   If timeout expires, considers transfer successful.
 pub async fn run_sender_transfer_with_timeout<S, F>(
     file: &mut F,
     stream: &mut S,

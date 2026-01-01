@@ -144,11 +144,11 @@ async fn process_event_for_receiver(
     transfer_id: &str,
     tx: &mpsc::Sender<SignalingMessage>,
 ) -> bool {
-    if let Some(msg) = validate_and_parse_event_with_id(event, transfer_id) {
-        if tx.send(msg).await.is_err() {
-            log::debug!("Message receiver channel closed, stopping background task");
-            return false;
-        }
+    if let Some(msg) = validate_and_parse_event_with_id(event, transfer_id)
+        && tx.send(msg).await.is_err()
+    {
+        log::debug!("Message receiver channel closed, stopping background task");
+        return false;
     }
     true
 }
@@ -361,10 +361,10 @@ impl NostrSignaling {
                 }
                 Ok(Ok(RelayPoolNotification::Message { message, .. })) => {
                     // Handle Event messages that come through as Message notifications
-                    if let nostr_sdk::RelayMessage::Event { event, .. } = message {
-                        if let Some(msg) = self.validate_and_parse_event(&event) {
-                            return Ok(Some(msg));
-                        }
+                    if let nostr_sdk::RelayMessage::Event { event, .. } = message
+                        && let Some(msg) = self.validate_and_parse_event(&event)
+                    {
+                        return Ok(Some(msg));
                     }
                 }
                 Ok(Ok(_)) => continue,
@@ -399,10 +399,10 @@ impl NostrSignaling {
                     }
                     Ok(RelayPoolNotification::Message { message, .. }) => {
                         // Handle Event messages that come through as Message notifications
-                        if let nostr_sdk::RelayMessage::Event { event, .. } = message {
-                            if !process_event_for_receiver(&event, &transfer_id, &tx).await {
-                                break;
-                            }
+                        if let nostr_sdk::RelayMessage::Event { event, .. } = message
+                            && !process_event_for_receiver(&event, &transfer_id, &tx).await
+                        {
+                            break;
                         }
                     }
                     Ok(_) => continue,

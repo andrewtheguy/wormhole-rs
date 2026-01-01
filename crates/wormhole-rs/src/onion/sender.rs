@@ -55,7 +55,7 @@ async fn transfer_data_tor_internal(
     eprintln!("Tor client bootstrapped!");
 
     // Generate a random nickname for ephemeral service
-    let random_suffix: u64 = rand::thread_rng().gen();
+    let random_suffix: u64 = rand::thread_rng().r#gen();
     let nickname = format!("wh_{:016x}", random_suffix);
 
     // Configure onion service

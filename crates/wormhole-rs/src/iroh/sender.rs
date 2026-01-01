@@ -88,6 +88,7 @@ fn is_connection_error_network_related(e: &ConnectionError) -> bool {
 ///
 /// If `shutdown_rx` is provided and receives a signal, the transfer will be cancelled
 /// and the connection will be properly closed before returning `Interrupted`.
+#[allow(clippy::too_many_arguments)]
 async fn transfer_data_internal(
     mut file: File,
     filename: String,

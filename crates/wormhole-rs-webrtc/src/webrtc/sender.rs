@@ -276,6 +276,7 @@ async fn try_webrtc_transfer(
 }
 
 /// Internal helper for webrtc transfer logic.
+#[allow(clippy::too_many_arguments)]
 async fn transfer_data_webrtc_internal(
     mut file: File,
     filename: String,
