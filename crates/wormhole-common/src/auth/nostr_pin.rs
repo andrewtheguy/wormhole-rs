@@ -449,7 +449,7 @@ pub async fn fetch_wormhole_code_via_pin(pin: &str) -> Result<String> {
     let events_res = client.fetch_events(filter, Duration::from_secs(10)).await;
 
     // Disconnect (always, regardless of fetch result)
-    let _ = client.disconnect().await;
+    client.disconnect().await;
 
     // Handle fetch result
     let events = events_res.context("Failed to fetch events")?;

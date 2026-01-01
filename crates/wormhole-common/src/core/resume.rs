@@ -8,7 +8,7 @@ use anyhow::{Context, Result};
 use fs4::fs_std::FileExt;
 use serde::{Deserialize, Serialize};
 use std::fs::{File, OpenOptions};
-use std::io::{Read, Seek, SeekFrom, Write};
+use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use tokio::io::AsyncReadExt;
 use xxhash_rust::xxh64::Xxh64;
@@ -115,19 +115,26 @@ pub fn try_exclusive_lock(file: &File) -> Result<bool> {
 pub fn create_resume_file(temp_path: &Path, metadata: &ResumeMetadata) -> Result<File> {
     // If file exists, acquire lock and truncate while holding the lock
     // This prevents TOCTOU race where we truncate another process's in-progress file
-    if temp_path.exists()
-        && let Ok(file) = OpenOptions::new().read(true).write(true).open(temp_path)
-    {
-        if !try_exclusive_lock(&file)? {
-            anyhow::bail!("Another transfer is in progress for this file");
+    if temp_path.exists() {
+        match OpenOptions::new().read(true).write(true).open(temp_path) {
+            Ok(mut file) => {
+                if !try_exclusive_lock(&file)? {
+                    anyhow::bail!("Another transfer is in progress for this file");
+                }
+                // Lock acquired, truncate this handle (keeping the lock)
+                file.set_len(0).context("Failed to truncate temp file")?;
+                file.seek(SeekFrom::Start(0))
+                    .context("Failed to seek after truncate")?;
+                write_metadata_header(&mut file, metadata)?;
+                return Ok(file);
+            }
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                // File was removed between exists() check and open(), fall through to create
+            }
+            Err(e) => {
+                return Err(e).context("Failed to open existing temp file");
+            }
         }
-        // Lock acquired, truncate this handle (keeping the lock)
-        file.set_len(0).context("Failed to truncate temp file")?;
-        let mut file = file;
-        file.seek(SeekFrom::Start(0))
-            .context("Failed to seek after truncate")?;
-        write_metadata_header(&mut file, metadata)?;
-        return Ok(file);
     }
 
     // File doesn't exist, create it exclusively
