@@ -62,6 +62,81 @@ const PIN_EVENT_EXPIRATION_SECS: u64 = 3600;
 /// Timeout for waiting for relay connections
 const RELAY_CONNECTION_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// Connect to Nostr relays for PIN operations.
+///
+/// Creates a client, adds the default relays, connects, and waits for at least
+/// one successful connection. Returns the connected client or an error.
+///
+/// # Arguments
+/// * `keys` - Optional signing keys. If provided, client is created with these keys.
+///   If None, a default client is created.
+/// * `purpose` - Description for log messages (e.g., "PIN exchange", "PIN lookup")
+async fn connect_to_relays(keys: Option<&Keys>, purpose: &str) -> Result<Client> {
+    let client = match keys {
+        Some(k) => Client::new(k.clone()),
+        None => Client::default(),
+    };
+
+    let mut relays_added = 0;
+    for relay in DEFAULT_NOSTR_RELAYS {
+        match client.add_relay(relay.to_string()).await {
+            Ok(_) => {
+                relays_added += 1;
+                log::debug!("Added relay: {}", relay);
+            }
+            Err(e) => {
+                log::warn!("Failed to add relay {}: {}", relay, e);
+            }
+        }
+    }
+
+    if relays_added == 0 {
+        anyhow::bail!("Failed to add any relays for {}", purpose);
+    }
+
+    // Initiate connections to all added relays
+    client.connect().await;
+
+    // Wait for at least one relay to establish connection
+    client.wait_for_connection(RELAY_CONNECTION_TIMEOUT).await;
+
+    // Check connection status for each relay
+    let relay_statuses = client.relays().await;
+    let mut connected_relays = Vec::new();
+    let mut failed_relays = Vec::new();
+
+    for (url, relay) in &relay_statuses {
+        if relay.is_connected() {
+            connected_relays.push(url.to_string());
+        } else {
+            failed_relays.push(url.to_string());
+        }
+    }
+
+    if connected_relays.is_empty() {
+        client.disconnect().await;
+        anyhow::bail!(
+            "Failed to connect to any relays after {:?}. Tried: {}",
+            RELAY_CONNECTION_TIMEOUT,
+            failed_relays.join(", ")
+        );
+    }
+
+    log::debug!(
+        "Connected to {}/{} relays for {}: {}",
+        connected_relays.len(),
+        relays_added,
+        purpose,
+        connected_relays.join(", ")
+    );
+
+    if !failed_relays.is_empty() {
+        log::debug!("Failed to connect to: {}", failed_relays.join(", "));
+    }
+
+    Ok(client)
+}
+
 /// Timeout for verifying event was published
 const EVENT_VERIFICATION_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -289,61 +364,7 @@ pub async fn publish_wormhole_code_via_pin(
     eprintln!("Connecting to Nostr relays for PIN exchange...");
 
     // Connect to relays
-    let client = Client::new(keys.clone());
-    let mut relays_added = 0;
-    for relay in DEFAULT_NOSTR_RELAYS {
-        match client.add_relay(relay.to_string()).await {
-            Ok(_) => {
-                relays_added += 1;
-                log::debug!("Added relay: {}", relay);
-            }
-            Err(e) => {
-                log::warn!("Failed to add relay {}: {}", relay, e);
-            }
-        }
-    }
-    if relays_added == 0 {
-        anyhow::bail!("Failed to add any relays for PIN exchange");
-    }
-
-    // Initiate connections to all added relays
-    client.connect().await;
-
-    // Wait for at least one relay to establish connection
-    client.wait_for_connection(RELAY_CONNECTION_TIMEOUT).await;
-
-    // Check connection status for each relay
-    let relay_statuses = client.relays().await;
-    let mut connected_relays = Vec::new();
-    let mut failed_relays = Vec::new();
-
-    for (url, relay) in &relay_statuses {
-        if relay.is_connected() {
-            connected_relays.push(url.to_string());
-        } else {
-            failed_relays.push(url.to_string());
-        }
-    }
-
-    if connected_relays.is_empty() {
-        client.disconnect().await;
-        anyhow::bail!(
-            "Failed to connect to any relays after {:?}. Tried: {}",
-            RELAY_CONNECTION_TIMEOUT,
-            failed_relays.join(", ")
-        );
-    }
-
-    log::debug!(
-        "Connected to {}/{} relays for PIN exchange: {}",
-        connected_relays.len(),
-        relays_added,
-        connected_relays.join(", ")
-    );
-
-    if !failed_relays.is_empty() {
-        log::debug!("Failed to connect to: {}", failed_relays.join(", "));
-    }
+    let client = connect_to_relays(Some(keys), "PIN exchange").await?;
 
     // Publish event
     let send_result = client.send_event(&event).await;
@@ -414,62 +435,9 @@ pub async fn fetch_wormhole_code_via_pin(pin: &str) -> Result<String> {
     let pin_hint = compute_pin_hint(pin);
 
     eprintln!("Connecting to Nostr relays...");
-    let client = Client::default();
-    let mut relays_added = 0;
-    for relay in DEFAULT_NOSTR_RELAYS {
-        match client.add_relay(relay.to_string()).await {
-            Ok(_) => {
-                relays_added += 1;
-                log::debug!("Added relay: {}", relay);
-            }
-            Err(e) => {
-                log::warn!("Failed to add relay {}: {}", relay, e);
-            }
-        }
-    }
 
-    if relays_added == 0 {
-        anyhow::bail!("Failed to add any relays for PIN lookup");
-    }
-
-    // Initiate connections to all added relays
-    client.connect().await;
-
-    // Wait for at least one relay to establish connection
-    client.wait_for_connection(RELAY_CONNECTION_TIMEOUT).await;
-
-    // Check connection status for each relay
-    let relay_statuses = client.relays().await;
-    let mut connected_relays = Vec::new();
-    let mut failed_relays = Vec::new();
-
-    for (url, relay) in &relay_statuses {
-        if relay.is_connected() {
-            connected_relays.push(url.to_string());
-        } else {
-            failed_relays.push(url.to_string());
-        }
-    }
-
-    if connected_relays.is_empty() {
-        client.disconnect().await;
-        anyhow::bail!(
-            "Failed to connect to any relays after {:?}. Tried: {}",
-            RELAY_CONNECTION_TIMEOUT,
-            failed_relays.join(", ")
-        );
-    }
-
-    log::debug!(
-        "Connected to {}/{} relays for PIN lookup: {}",
-        connected_relays.len(),
-        relays_added,
-        connected_relays.join(", ")
-    );
-
-    if !failed_relays.is_empty() {
-        log::debug!("Failed to connect to: {}", failed_relays.join(", "));
-    }
+    // Connect to relays
+    let client = connect_to_relays(None, "PIN lookup").await?;
 
     // Query
     let filter = Filter::new()
