@@ -558,7 +558,7 @@ pub async fn discover_sender_relays(sender_pubkey: &PublicKey) -> Result<Vec<Str
     let relays = events
         .iter()
         .max_by_key(|e| e.created_at)
-        .map(|e| extract_relays_from_nip65(e))
+        .map(extract_relays_from_nip65)
         .unwrap_or_default();
 
     if relays.is_empty() {

@@ -183,7 +183,7 @@ pub fn create_pin_exchange_event(
 
     // Base64 encode encrypted data and salt
     let content = STANDARD.encode(&encrypted);
-    let salt_b64 = STANDARD.encode(&salt);
+    let salt_b64 = STANDARD.encode(salt);
 
     // Calculate expiration timestamp
     let expiration = Timestamp::now().as_secs() + PIN_EVENT_EXPIRATION_SECS;

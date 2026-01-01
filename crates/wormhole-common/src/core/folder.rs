@@ -223,10 +223,10 @@ impl<R: tokio::io::AsyncReadExt + Unpin + Send> Read for StreamingReader<R> {
                     self.buffer_pos = 0;
                 }
                 Err(e) => {
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        format!("Failed to receive chunk {}: {}", self.chunk_num, e),
-                    ));
+                    return Err(std::io::Error::other(format!(
+                        "Failed to receive chunk {}: {}",
+                        self.chunk_num, e
+                    )));
                 }
             }
         }

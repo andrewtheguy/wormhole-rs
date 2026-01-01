@@ -1,7 +1,7 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use std::io::{self, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tracing_subscriber::EnvFilter;
 
 use wormhole_common::core::transfer::is_interrupted;
@@ -112,7 +112,7 @@ enum Commands {
 }
 
 /// Validate path exists and matches folder flag
-fn validate_path(path: &PathBuf, folder: bool) -> Result<()> {
+fn validate_path(path: &Path, folder: bool) -> Result<()> {
     if !path.exists() {
         anyhow::bail!("Path not found: {}", path.display());
     }
