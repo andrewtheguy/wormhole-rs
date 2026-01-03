@@ -6,10 +6,10 @@ This document provides a detailed walkthrough of the wormhole-rs implementation.
 
 wormhole-rs supports two main categories of transport:
 
-1. **Internet Transfers** (using `wormhole-rs send`):
-    - **iroh Mode** (Recommended) - Direct P2P transfers using iroh's QUIC/TLS stack (automatic relay fallback)
-    - **Tor Mode**: For anonymity and relay when direct P2P fails (uses `arti` to create hidden services)
-    - **WebRTC Mode**: Direct P2P via WebRTC DataChannels with Nostr signaling
+1. **Internet Transfers** (wormhole code based):
+    - **iroh Mode** (Recommended) - Direct P2P transfers using iroh's QUIC/TLS stack (automatic relay fallback) via `wormhole-rs send`
+    - **Tor Mode**: Anonymous transfers via Tor hidden services (uses `arti`) via `wormhole-rs send-tor`
+    - **WebRTC Mode**: Direct P2P via WebRTC DataChannels with Nostr signaling via `wormhole-rs-webrtc send`
 2. **Local Transfers** (using `wormhole-rs send-local`):
     - **mDNS Mode**: LAN-only transfers using mDNS discovery + TCP with SPAKE2 key exchange driven by a 12-character PIN
 

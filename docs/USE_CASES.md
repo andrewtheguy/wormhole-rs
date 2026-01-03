@@ -43,7 +43,7 @@ This guide describes common scenarios where `wormhole-rs` shines and which mode 
   # Sender
   wormhole-rs send /path/to/file
 
-  # Receiver (unified command auto-detects mode from code)
+  # Receiver (auto-detects iroh vs Tor from code)
   wormhole-rs receive --code <WORMHOLE_CODE>
   ```
 - **Experience**: Share the wormhole code via any channel (chat, paper, verbal). iroh handles peer discovery and NAT traversal automatically without needing IP addresses.

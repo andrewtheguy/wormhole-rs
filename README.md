@@ -4,7 +4,7 @@ A secure peer-to-peer file transfer tool with two main transport categories:
 
 **1. Internet Transfers** (Wormhole Code)
 - **iroh mode** (Recommended) - Direct P2P transfers using [iroh](https://github.com/n0-computer/iroh) with QUIC/TLS (automatic relay fallback) - requires `iroh` feature
-- **Tor mode** - Anonymous transfers via Tor hidden services (.onion addresses), also serves as relay when P2P fails - requires `onion` feature
+- **Tor mode** - Anonymous transfers via Tor hidden services (.onion addresses); manual fallback when direct P2P fails - requires `onion` feature
 - **WebRTC mode** - Direct P2P via WebRTC DataChannels with Nostr signaling; also supports offline manual exchange for air-gapped networks - use the `wormhole-rs-webrtc` binary
 
 **2. Local / Offline Transfers** (PIN + SPAKE2 or WebRTC Manual)
@@ -13,7 +13,7 @@ A secure peer-to-peer file transfer tool with two main transport categories:
 
 ## Features
 
-- **End-to-end encryption** - All connections use strong encryption (AES-256-GCM / ChaCha20-Poly1305)
+- **End-to-end encryption** - All connections use strong encryption (AES-256-GCM)
 - **Resumable transfers** - Interrupted file transfers can be resumed from where they left off, even after network disconnections or restarts
 - **Two Transfer Categories**
     - **Internet**: Global P2P via Iroh, WebRTC, or Tor
@@ -180,7 +180,7 @@ Manual mode exchanges SDP offers/answers via copy-paste. The codes contain the e
 If WebRTC connection fails (e.g., both peers behind symmetric NAT), use Tor mode as a relay fallback.
 
 #### Receiving (Internet)
-The receiver auto-detects the protocol from the wormhole code.
+`wormhole-rs receive` auto-detects iroh vs Tor from the wormhole code. WebRTC codes are handled by `wormhole-rs-webrtc receive` (or `receive-manual`).
 
 ```bash
 wormhole-rs receive
