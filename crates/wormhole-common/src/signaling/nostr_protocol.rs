@@ -581,3 +581,30 @@ pub async fn discover_sender_relays(sender_pubkey: &PublicKey) -> Result<Vec<Str
 
     Ok(relays)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_relay_url;
+
+    #[test]
+    fn normalize_relay_url_trims_trailing_slash() {
+        assert_eq!(
+            normalize_relay_url("wss://relay.example.com/"),
+            "wss://relay.example.com"
+        );
+    }
+
+    #[test]
+    fn normalize_relay_url_trims_multiple_trailing_slashes() {
+        assert_eq!(
+            normalize_relay_url("ws://relay.example.com////"),
+            "ws://relay.example.com"
+        );
+    }
+
+    #[test]
+    fn normalize_relay_url_preserves_scheme_only() {
+        assert_eq!(normalize_relay_url("wss://"), "wss://");
+        assert_eq!(normalize_relay_url("wss:///"), "wss:///");
+    }
+}
