@@ -168,7 +168,7 @@ fn extract_relay_from_nip66(event: &Event) -> Option<String> {
         .iter()
         .find(|t| t.kind() == TagKind::d())
         .and_then(|t| t.content())
-        .map(|s| s.to_string())
+        .map(normalize_relay_url)
         .filter(|url| url.starts_with("wss://") || url.starts_with("ws://"))
 }
 
@@ -185,9 +185,23 @@ fn extract_relays_from_nip65(event: &Event) -> Vec<String> {
                 .unwrap_or(false)
         })
         .filter_map(|t| t.content())
-        .map(|s| s.to_string())
+        .map(normalize_relay_url)
         .filter(|url| url.starts_with("wss://") || url.starts_with("ws://"))
         .collect()
+}
+
+// Trim trailing slashes from relay URLs without breaking scheme-only inputs like "wss://".
+fn normalize_relay_url(url: &str) -> String {
+    if !url.ends_with('/') {
+        return url.to_string();
+    }
+
+    let trimmed = url.trim_end_matches('/');
+    if trimmed.ends_with("ws:") || trimmed.ends_with("wss:") {
+        url.to_string()
+    } else {
+        trimmed.to_string()
+    }
 }
 
 /// Discover relays by querying seed relays for NIP-66 and NIP-65 events
@@ -196,7 +210,7 @@ async fn discover_relays_from_seeds() -> HashSet<String> {
 
     // Add seed relays to discovered set
     for relay in DEFAULT_NOSTR_RELAYS {
-        discovered.insert(relay.to_string());
+        discovered.insert(normalize_relay_url(relay));
     }
 
     // Create a temporary client to query seed relays
