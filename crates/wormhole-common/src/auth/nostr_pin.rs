@@ -40,7 +40,14 @@ use crate::auth::pin::{generate_pin, PIN_LENGTH};
 /// Default public Nostr relays for PIN exchange
 /// These should match the relays used in signaling for consistency
 pub const DEFAULT_NOSTR_RELAYS: &[&str] =
-    &["wss://relay.damus.io", "wss://nos.lol", "wss://nostr.wine"];
+    &[
+    "wss://nos.lol",
+    //"wss://relay.damus.io", // acceptable for index queries; not recommended for high-volume operations due to rate limiting
+    //"wss://relay.nostr.band",
+    "wss://relay.nostr.net",
+    "wss://relay.primal.net",
+    "wss://relay.snort.social",
+];
 
 /// Nostr event kind for PIN exchange (24243)
 pub const PIN_EXCHANGE_KIND: u16 = 24243;
