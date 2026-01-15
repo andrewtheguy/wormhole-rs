@@ -240,12 +240,14 @@ All modes provide end-to-end encryption.
 - **Internet Modes (iroh, Tor, WebRTC)**: The **Wormhole Code** carries the key/address information.
 - **Local Mode**: Uses a 12-character PIN that feeds a SPAKE2 PAKE to derive the AES key (no wormhole code).
 
-| Mode | Type | Key Exchange | Transport Encryption |
-|------|------|--------------|---------------------|
-| iroh | Internet | Wormhole Code | QUIC/TLS 1.3 |
-| Tor | Internet | Wormhole Code | Tor circuits |
-| WebRTC | Internet | Wormhole Code | DTLS (WebRTC) |
-| Local | LAN | SPAKE2 (PIN + transfer_id) | AES-256-GCM over TCP |
+| Mode | Type | Key Exchange | Transport Encryption | Content Encryption |
+|------|------|--------------|---------------------|-------------------|
+| iroh | Internet | Wormhole Code | QUIC/TLS 1.3 | AES-256-GCM |
+| Tor | Internet | Wormhole Code | Tor circuits | AES-256-GCM |
+| WebRTC | Internet | Wormhole Code | DTLS (WebRTC) | AES-256-GCM |
+| Local | LAN | SPAKE2 (PIN + transfer_id) | None (raw TCP) | AES-256-GCM |
+
+Internet modes use dual-layer encryption (transport + content). Local mode uses single-layer AES-256-GCM over raw TCP, which is sufficient for trusted LANs.
 
 Relay servers (iroh, Tor) never see decrypted content or encryption keys.
 
