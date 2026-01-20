@@ -1,6 +1,6 @@
 # wormhole-rs
 
-A secure peer-to-peer file transfer tool with direct connectivity and AES-256-GCM end-to-end encryption.
+A secure, cross-platform, single-binary peer-to-peer file transfer tool with direct connectivity and AES-256-GCM end-to-end encryption.
 
 ## Features
 
