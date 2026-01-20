@@ -1,41 +1,16 @@
 # wormhole-rs
 
-A secure peer-to-peer file transfer tool with two main transport categories:
-
-**1. Internet Transfers** (Wormhole Code)
-- **iroh mode** (Recommended) - Direct P2P transfers using [iroh](https://github.com/n0-computer/iroh) with QUIC/TLS (automatic relay fallback) - requires `iroh` feature
-- **Tor mode** - Anonymous transfers via Tor hidden services (.onion addresses); manual fallback when direct P2P fails - requires `onion` feature
-- **WebRTC mode** - Direct P2P via WebRTC DataChannels with Nostr signaling; also supports offline manual exchange for air-gapped networks - use the `wormhole-rs-webrtc` binary
-
-**2. Local / Offline Transfers** (PIN + SPAKE2 or WebRTC Manual)
-- **Local mode** - LAN transfers using mDNS discovery, SPAKE2 key exchange from a 12-character PIN, and TCP transport (no internet required)
-- **WebRTC manual mode** - Copy/paste SDP for air‑gapped or relay‑blocked environments (uses `wormhole-rs-webrtc`)
+A secure peer-to-peer file transfer tool with direct connectivity and AES-256-GCM end-to-end encryption.
 
 ## Features
 
-- **End-to-end encryption** - All connections use strong encryption (AES-256-GCM)
-- **Resumable transfers** - Interrupted file transfers can be resumed from where they left off, even after network disconnections or restarts
-- **Two Transfer Categories**
-    - **Internet**: Global P2P via Iroh, WebRTC, or Tor
-    - **Local**: Private LAN transfers using mDNS
+- **End-to-end encryption** - All transfers use AES-256-GCM encryption
+- **Resumable transfers** - Interrupted transfers can resume from where they left off
 - **File and folder transfers** - Send individual files or entire directories (automatically archived)
-- **Local discovery** - mDNS for same-network transfers
-- **NAT traversal** - STUN for WebRTC mode; relay fallback for Iroh; use Tor mode as a manual fallback when direct P2P fails
-- **PIN-based Transfers** - Use short 12-character PINs (with checksum) instead of long wormhole codes for easier typing
-- **Cross-platform** - Single, standalone native binary for macOS, Linux, and Windows (zero-dependency install)
-
-## Common Use Cases
-
-See [USE_CASES.md](docs/USE_CASES.md) for detailed scenarios including:
-- **No Internet** (Air-gapped / Local LAN)
-- **No Clipboard** (PIN Mode for easy typing)
-- **Restricted Networks** (Firewall/NAT traversal)
-- **Anonymity** (Tor Mode)
-- **Self-Hosted Infrastructure** (Zero third-party dependency)
-
-For detailed protocol flows, wire formats, see [ARCHITECTURE.md](docs/ARCHITECTURE.md).
-
-
+- **Multiple transport modes** - iroh (recommended), Tor, WebRTC, and local LAN
+- **Local discovery** - mDNS for same-network transfers without internet
+- **NAT traversal** - Automatic relay fallback for iroh; STUN for WebRTC; Tor as manual fallback
+- **Cross-platform** - Standalone binary for macOS, Linux, and Windows
 
 ## Installation
 
@@ -233,6 +208,16 @@ wormhole-rs-webrtc receive-manual
 ```
 
 Manual mode exchanges SDP offers/answers via copy-paste. The codes contain the encryption key, so only share them through secure channels (SSH, remote desktop, encrypted chat).
+
+## Common Use Cases
+
+See [USE_CASES.md](docs/USE_CASES.md) for detailed scenarios including:
+- **No Internet** - Air-gapped / Local LAN transfers
+- **Restricted Networks** - Firewall/NAT traversal options
+- **Anonymity** - Tor mode for anonymous transfers
+- **Self-Hosted** - Zero third-party dependency setups
+
+For protocol details and wire formats, see [ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Security
 
