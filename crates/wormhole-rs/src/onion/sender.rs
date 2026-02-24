@@ -26,6 +26,10 @@ const PIN_PUBLISH_TIMEOUT: Duration = Duration::from_secs(10);
 /// Tor connections can be slow due to circuit building, so this is generous
 const TOR_CONNECTION_TIMEOUT: Duration = Duration::from_secs(600);
 
+/// Timeout for waiting for receiver's ACK after transfer completes.
+/// Tor streams may close abruptly, so a timeout here is treated as success.
+const ACK_TIMEOUT: Duration = Duration::from_secs(10);
+
 /// Internal helper for common Tor transfer logic.
 /// Handles Tor bootstrap, onion service, connection, data transfer, and acknowledgment.
 async fn transfer_data_tor_internal(
@@ -145,7 +149,7 @@ async fn transfer_data_tor_internal(
         &mut stream,
         &key,
         &header,
-        Some(std::time::Duration::from_secs(10)),
+        Some(ACK_TIMEOUT),
     )
     .await?;
 

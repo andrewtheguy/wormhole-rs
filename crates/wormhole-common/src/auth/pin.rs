@@ -17,13 +17,14 @@ pub const PIN_CHARSET: &[u8] = b"23456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpq
 
 /// Compute checksum character for a PIN prefix.
 ///
-/// The checksum is computed by summing the charset index of each character,
-/// then taking modulo charset length to get the checksum character index.
+/// The checksum is computed by summing each character's charset index multiplied
+/// by its 1-based position, then taking modulo charset length to get the checksum
+/// character index. The position weighting detects transpositions (e.g., "AB" vs "BA").
 pub fn compute_checksum(pin_prefix: &str) -> Option<char> {
     let mut sum: usize = 0;
-    for c in pin_prefix.chars() {
+    for (i, c) in pin_prefix.chars().enumerate() {
         let idx = PIN_CHARSET.iter().position(|&ch| ch == c as u8)?;
-        sum += idx;
+        sum += idx * (i + 1);
     }
     Some(PIN_CHARSET[sum % PIN_CHARSET.len()] as char)
 }
