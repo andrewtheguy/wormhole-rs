@@ -4,7 +4,14 @@
 //! for use across all transport modes (mDNS, Nostr PIN exchange, etc.).
 //!
 //! PIN format: 11 random characters + 1 checksum character (12 total).
-//! The checksum allows early detection of typos before attempting connection.
+//! The checksum detects most typos before attempting connection.
+//!
+//! The checksum is position-weighted (`sum of charset_index * position mod 60`),
+//! which detects both single-character substitutions and transpositions in most
+//! cases. However, a substitution at position `p` goes undetected when
+//! `(index_delta * p) % charset_len == 0` — roughly a 1-in-12 chance per
+//! position. This is acceptable for a user-facing typo check, not a
+//! cryptographic integrity guarantee.
 
 use rand::Rng;
 
@@ -18,8 +25,11 @@ pub const PIN_CHARSET: &[u8] = b"23456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpq
 /// Compute checksum character for a PIN prefix.
 ///
 /// The checksum is computed by summing each character's charset index multiplied
-/// by its 1-based position, then taking modulo charset length to get the checksum
-/// character index. The position weighting detects transpositions (e.g., "AB" vs "BA").
+/// by its 1-based position, then taking modulo charset length (60) to get the
+/// checksum character index. The position weighting detects transpositions
+/// (e.g., "AB" vs "BA"). A single-character substitution at position `p` is
+/// undetected when `(index_delta * p) % 60 == 0`, which occurs for ~1 in 12
+/// possible substitutions at each position.
 pub fn compute_checksum(pin_prefix: &str) -> Option<char> {
     let mut sum: usize = 0;
     for (i, c) in pin_prefix.chars().enumerate() {
@@ -187,11 +197,40 @@ mod tests {
 
     #[test]
     fn test_validate_pin_typo_detection() {
-        let pin = generate_pin();
-        // Corrupt a character in the middle
-        let mut chars: Vec<char> = pin.chars().collect();
-        chars[5] = if chars[5] == '2' { '3' } else { '2' };
-        let typo: String = chars.into_iter().collect();
-        assert!(!validate_pin(&typo), "PIN with typo should be invalid");
+        // Use fixed values to avoid flakiness. A typo can coincidentally produce
+        // the same checksum when (index_delta * position) % charset_len == 0.
+        // Each case changes a character at a different position to exercise
+        // the position-weighted checksum across the full PIN length.
+        let cases: &[(&str, &str)] = &[
+            // (valid prefix, typo prefix) — each typo changes one character
+            // pos 0: '2' (idx 0) -> 'A' (idx 8), delta*1 = 8, 8%60 != 0
+            ("23456789ABC", "A3456789ABC"),
+            // pos 2: '4' (idx 2) -> 'H' (idx 15), delta*3 = 39, 39%60 != 0
+            ("23456789ABC", "23H56789ABC"),
+            // pos 5: '7' (idx 5) -> 'Z' (idx 31), delta*6 = 156, 156%60 = 36 != 0
+            ("23456789ABC", "23456Z89ABC"),
+            // pos 10: 'C' (idx 10) -> 'e' (idx 36), delta*11 = 286, 286%60 = 46 != 0
+            ("23456789ABC", "23456789ABe"),
+            // different base prefix, pos 3: 'f' (idx 37) -> '5' (idx 3), delta*4 = -136, 136%60 = 16 != 0
+            ("RNcfWs$2qTb", "RNc5Ws$2qTb"),
+            // different base prefix, pos 8: '#' (idx 57) -> 'K' (idx 17), delta*9 = -360, 360%60 = 0
+            // — this would NOT change the checksum, so we use 'L' (idx 18) instead:
+            // delta*9 = -351, 351%60 = 51 != 0
+            ("ab3+@XYZ#Kp", "ab3+@XYZLKP"),
+        ];
+
+        for (valid_prefix, typo_prefix) in cases {
+            let checksum = compute_checksum(valid_prefix).unwrap();
+            let pin = format!("{}{}", valid_prefix, checksum);
+            assert!(validate_pin(&pin), "Base PIN should be valid: {}", pin);
+
+            let typo_pin = format!("{}{}", typo_prefix, checksum);
+            assert!(
+                !validate_pin(&typo_pin),
+                "PIN with typo should be invalid: {} (from {})",
+                typo_pin,
+                valid_prefix
+            );
+        }
     }
 }
