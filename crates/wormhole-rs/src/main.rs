@@ -325,7 +325,7 @@ async fn receive_with_code(
         }
         #[cfg(feature = "onion")]
         wormhole::PROTOCOL_TOR => {
-            onion_receiver::receive_tor(code, output).await?;
+            onion_receiver::receive_file_tor(code, output).await?;
         }
         proto => {
             #[cfg(not(feature = "iroh"))]

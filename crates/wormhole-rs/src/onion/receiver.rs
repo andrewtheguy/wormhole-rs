@@ -147,8 +147,3 @@ pub async fn receive_file_tor(code: &str, output_dir: Option<PathBuf>) -> Result
         }
     }
 }
-
-/// Receive a file or folder via Tor
-pub async fn receive_tor(code: &str, output_dir: Option<PathBuf>) -> Result<()> {
-    receive_file_tor(code, output_dir).await
-}
