@@ -1,11 +1,10 @@
 use anyhow::{Context, Result};
-use iroh::Watcher;
 use iroh::endpoint::{ConnectingError, ConnectionError};
 use std::path::Path;
 use tokio::fs::File;
 use tokio::sync::oneshot;
 
-use super::common::{IrohDuplex, create_sender_endpoint};
+use super::common::{IrohDuplex, create_sender_endpoint, print_connection_paths};
 use crate::cli::instructions::print_receiver_command;
 use wormhole_common::core::crypto::generate_key;
 use wormhole_common::core::transfer::{
@@ -178,9 +177,7 @@ async fn transfer_data_internal(
     eprintln!("Receiver connected!");
     eprintln!("   Remote ID: {}", remote_id);
 
-    // Get connection path info (Direct IP, Relay, etc.)
-    let paths = conn.paths().get();
-    eprintln!("   Connection paths: {:?}", paths);
+    print_connection_paths(&conn);
 
     // Open bi-directional stream
     let (mut send_stream, mut recv_stream) =

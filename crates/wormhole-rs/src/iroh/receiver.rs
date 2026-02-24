@@ -1,5 +1,4 @@
 use anyhow::{Context, Result};
-use iroh::Watcher;
 use iroh::endpoint::{
     AuthenticationError, ConnectError, ConnectWithOptsError, ConnectingError, ConnectionError,
 };
@@ -7,7 +6,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 use tokio::time::timeout;
 
-use super::common::{ALPN, OwnedIrohDuplex, create_receiver_endpoint};
+use super::common::{ALPN, OwnedIrohDuplex, create_receiver_endpoint, print_connection_paths};
 use wormhole_common::core::transfer::run_receiver_transfer;
 use wormhole_common::core::wormhole::parse_code;
 
@@ -68,9 +67,7 @@ pub async fn receive(
     eprintln!("Connected!");
     eprintln!("Remote ID: {}", remote_id);
 
-    // Get connection path info (Direct IP, Relay, etc.)
-    let paths = conn.paths().get();
-    eprintln!("Connection paths: {:?}", paths);
+    print_connection_paths(&conn);
 
     const ACCEPT_STREAM_TIMEOUT: Duration = Duration::from_secs(30);
 

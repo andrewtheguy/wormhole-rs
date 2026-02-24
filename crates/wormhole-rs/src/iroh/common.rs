@@ -2,9 +2,9 @@
 
 use anyhow::{Context, Result};
 use iroh::{
-    Endpoint, RelayMap, RelayUrl,
+    Endpoint, RelayMap, RelayUrl, TransportAddr, Watcher,
     address_lookup::{dns::DnsAddressLookup, mdns::MdnsAddressLookup, pkarr::PkarrPublisher},
-    endpoint::{RecvStream, RelayMode, SendStream},
+    endpoint::{Connection, RecvStream, RelayMode, SendStream},
 };
 use std::io;
 use std::pin::Pin;
@@ -114,6 +114,33 @@ impl AsyncWrite for OwnedIrohDuplex {
         Pin::new(&mut self.send)
             .poll_shutdown(cx)
             .map_err(io::Error::other)
+    }
+}
+
+/// Print connection path info in a user-friendly format.
+///
+/// Shows each path type (Direct or Relay) with its address and RTT,
+/// and marks the currently selected path.
+pub fn print_connection_paths(conn: &Connection) {
+    let paths = conn.paths().get();
+    if paths.is_empty() {
+        eprintln!("   Connection: establishing...");
+        return;
+    }
+    for path in paths.iter() {
+        let selected = if path.is_selected() { " *" } else { "" };
+        let rtt = path.rtt();
+        match path.remote_addr() {
+            TransportAddr::Ip(addr) => {
+                eprintln!("   Path: Direct {addr} (rtt {rtt:.0?}){selected}");
+            }
+            TransportAddr::Relay(url) => {
+                eprintln!("   Path: Relay {url} (rtt {rtt:.0?}){selected}");
+            }
+            other => {
+                eprintln!("   Path: {other:?} (rtt {rtt:.0?}){selected}");
+            }
+        }
     }
 }
 
