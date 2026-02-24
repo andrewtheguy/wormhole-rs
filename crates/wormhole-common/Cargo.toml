@@ -42,4 +42,4 @@ rustyline = "15"
 crc32fast = "1.4"
 
 # iroh transport (optional - for MinimalAddr)
-iroh = { version = "0.95.1", optional = true }
+iroh = { version = "0.96.1", optional = true }

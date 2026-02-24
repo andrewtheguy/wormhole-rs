@@ -178,11 +178,9 @@ async fn transfer_data_internal(
     eprintln!("Receiver connected!");
     eprintln!("   Remote ID: {}", remote_id);
 
-    // Get connection type (Direct, Relay, Mixed, None)
-    if let Some(mut conn_type_watcher) = endpoint.conn_type(remote_id) {
-        let conn_type = conn_type_watcher.get();
-        eprintln!("   Connection: {:?}", conn_type);
-    }
+    // Get connection path info (Direct IP, Relay, etc.)
+    let paths = conn.paths().get();
+    eprintln!("   Connection paths: {:?}", paths);
 
     // Open bi-directional stream
     let (mut send_stream, mut recv_stream) =

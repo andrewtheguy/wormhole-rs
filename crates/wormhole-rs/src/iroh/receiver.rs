@@ -68,11 +68,9 @@ pub async fn receive(
     eprintln!("Connected!");
     eprintln!("Remote ID: {}", remote_id);
 
-    // Get connection type (Direct, Relay, Mixed, None)
-    if let Some(mut conn_type_watcher) = endpoint.conn_type(remote_id) {
-        let conn_type = conn_type_watcher.get();
-        eprintln!("Connection type: {:?}", conn_type);
-    }
+    // Get connection path info (Direct IP, Relay, etc.)
+    let paths = conn.paths().get();
+    eprintln!("Connection paths: {:?}", paths);
 
     const ACCEPT_STREAM_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -200,10 +198,6 @@ fn is_authentication_error_relay_related(e: &AuthenticationError) -> bool {
         AuthenticationError::NoAlpn { .. } => true,
         // RemoteId errors are certificate/identity validation issues - not relay-related
         AuthenticationError::RemoteId { .. } => false,
-        // Connection errors during handshake - check if network-related
-        AuthenticationError::ConnectionError { source, .. } => {
-            is_connection_error_network_related(source)
-        }
         // Future variants: conservatively treat as not relay-related
         _ => false,
     }
