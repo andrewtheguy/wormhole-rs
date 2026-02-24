@@ -39,7 +39,7 @@
 //! PAKE requires. The key must therefore be transmitted directly.
 
 use anyhow::{Context, Result};
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use serde::{Deserialize, Serialize};
 use std::io::{BufRead, ErrorKind, Write};
 use std::time::{SystemTime, UNIX_EPOCH};

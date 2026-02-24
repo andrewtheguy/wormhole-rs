@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use arti_client::{config::TorClientConfigBuilder, TorClient};
+use arti_client::{TorClient, config::TorClientConfigBuilder};
 use futures::StreamExt;
 use rand::Rng;
 use safelog::DisplayRedacted;
@@ -13,8 +13,8 @@ use tor_hsservice::{config::OnionServiceConfigBuilder, handle_rend_requests};
 use crate::cli::instructions::print_receiver_command;
 use wormhole_common::core::crypto::generate_key;
 use wormhole_common::core::transfer::{
-    run_sender_transfer_with_timeout, send_file_with, send_folder_with, FileHeader, TransferResult,
-    TransferType,
+    FileHeader, TransferResult, TransferType, run_sender_transfer_with_timeout, send_file_with,
+    send_folder_with,
 };
 use wormhole_common::core::wormhole::generate_tor_code;
 use wormhole_common::signaling::nostr_protocol::generate_transfer_id;
@@ -25,6 +25,10 @@ const PIN_PUBLISH_TIMEOUT: Duration = Duration::from_secs(10);
 /// Timeout for waiting for receiver to connect via Tor (10 minutes)
 /// Tor connections can be slow due to circuit building, so this is generous
 const TOR_CONNECTION_TIMEOUT: Duration = Duration::from_secs(600);
+
+/// Timeout for waiting for receiver's ACK after transfer completes.
+/// Tor streams may close abruptly, so a timeout here is treated as success.
+const ACK_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Internal helper for common Tor transfer logic.
 /// Handles Tor bootstrap, onion service, connection, data transfer, and acknowledgment.
@@ -145,7 +149,7 @@ async fn transfer_data_tor_internal(
         &mut stream,
         &key,
         &header,
-        Some(std::time::Duration::from_secs(10)),
+        Some(ACK_TIMEOUT),
     )
     .await?;
 

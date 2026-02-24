@@ -4,20 +4,28 @@
 
 use anyhow::{Context, Result};
 use std::path::PathBuf;
-use std::sync::Arc;
-use tokio::time::{timeout, Duration};
+use tokio::time::{Duration, timeout};
 use webrtc::ice_transport::ice_candidate::RTCIceCandidateInit;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 
 use wormhole_common::core::transfer::run_receiver_transfer;
-use wormhole_common::core::wormhole::{decode_key, parse_code, PROTOCOL_WEBRTC};
+use wormhole_common::core::wormhole::{PROTOCOL_WEBRTC, decode_key, parse_code};
 
-use crate::signaling::nostr::{create_receiver_signaling, NostrSignaling, SignalingMessage};
+use crate::signaling::nostr::{NostrSignaling, SignalingMessage, create_receiver_signaling};
 use crate::signaling::offline::ice_candidates_to_payloads;
 use crate::webrtc::common::{DataChannelStream, WebRtcPeer};
 
 /// Connection timeout for WebRTC handshake
 const WEBRTC_CONNECTION_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Timeout for ICE candidate gathering
+const ICE_GATHERING_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Timeout for data channel to transition to open state
+const DATA_CHANNEL_OPEN_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Timeout for waiting for the sender to close the connection after transfer
+const CLOSE_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Result of WebRTC connection attempt
 enum WebRtcResult {
@@ -51,7 +59,7 @@ async fn try_webrtc_receive(
     // Gather ICE candidates
     eprintln!("Gathering ICE candidates...");
     let candidates = rtc_peer
-        .gather_ice_candidates(Duration::from_secs(10))
+        .gather_ice_candidates(ICE_GATHERING_TIMEOUT)
         .await?;
     let candidate_payloads = ice_candidates_to_payloads(candidates)?;
     eprintln!("Gathered {} ICE candidates", candidate_payloads.len());
@@ -131,7 +139,7 @@ async fn try_webrtc_receive(
     let stream = DataChannelStream::new(data_channel.clone(), Some(open_tx));
 
     // Wait for data channel to be confirmed open
-    match timeout(Duration::from_secs(10), open_rx).await {
+    match timeout(DATA_CHANNEL_OPEN_TIMEOUT, open_rx).await {
         Ok(Ok(())) => {
             eprintln!("Data channel opened successfully");
         }
@@ -157,19 +165,12 @@ async fn try_webrtc_receive(
         eprintln!("   Local: {} -> Remote: {}", local, remote);
     }
 
-    // Wrap peer in Arc for cleanup
-    let rtc_peer = Arc::new(rtc_peer);
-
     // Use common transfer protocol
     let (_, stream) = run_receiver_transfer(stream, *key, output_dir, no_resume).await?;
 
     // Wait for sender to close the connection (confirms ACK was received)
     // This ensures the ACK is delivered before we close our side
-    let close_timeout = Duration::from_secs(10);
-    let start = std::time::Instant::now();
-    while !stream.is_closed() && start.elapsed() < close_timeout {
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
+    let _ = tokio::time::timeout(CLOSE_TIMEOUT, stream.closed()).await;
 
     // Cleanup
     let _ = rtc_peer.close().await;

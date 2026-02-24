@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 #[cfg(feature = "iroh-addr")]
 use iroh::{EndpointAddr, RelayUrl};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -111,12 +111,12 @@ pub struct WormholeToken {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub addr: Option<MinimalAddr>,
 
-    // Version 2 fields (Tor-specific):
+    // Tor-specific fields:
     /// Onion address for Tor hidden service (e.g., "abc123...xyz.onion")
     #[serde(skip_serializing_if = "Option::is_none")]
     pub onion_address: Option<String>,
 
-    // Version 2 fields (WebRTC-specific):
+    // WebRTC-specific fields:
     /// Sender's ephemeral Nostr public key for signaling (hex)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub webrtc_sender_pubkey: Option<String>,
@@ -287,8 +287,9 @@ pub fn generate_webrtc_code(
     Ok(URL_SAFE_NO_PAD.encode(&serialized))
 }
 
-/// Validate wormhole code format without fully parsing it
-/// Returns Ok(()) if the format looks valid, Err with a helpful message otherwise
+/// Validate wormhole code format without fully parsing it.
+/// Performs lightweight checks (empty, invalid characters, minimum length)
+/// without decoding. Returns Ok(()) if the format looks valid.
 pub fn validate_code_format(code: &str) -> Result<()> {
     let code = code.trim();
 
@@ -313,16 +314,6 @@ pub fn validate_code_format(code: &str) -> Result<()> {
         anyhow::bail!("Invalid wormhole code: too short. Make sure you copied the entire code.");
     }
 
-    // Try to decode base64
-    let decoded = URL_SAFE_NO_PAD
-        .decode(code)
-        .context("Invalid wormhole code: not valid base64url encoding")?;
-
-    // Check minimum decoded length (some bytes for token)
-    if decoded.len() < 10 {
-        anyhow::bail!("Invalid wormhole code: decoded data too short");
-    }
-
     Ok(())
 }
 
@@ -334,7 +325,11 @@ pub fn parse_code(code: &str) -> Result<WormholeToken> {
 
     let serialized = URL_SAFE_NO_PAD
         .decode(code.trim())
-        .context("Failed to decode wormhole code")?;
+        .context("Invalid wormhole code: not valid base64url encoding")?;
+
+    if serialized.len() < 10 {
+        anyhow::bail!("Invalid wormhole code: decoded data too short");
+    }
 
     let token: WormholeToken = serde_json::from_slice(&serialized)
         .context("Invalid wormhole code: failed to parse token. Make sure the code is correct.")?;

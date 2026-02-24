@@ -24,23 +24,22 @@
 //! ~117 years on modern GPUs, making the hint size irrelevant to security.
 
 use aes_gcm::{
-    aead::{Aead, KeyInit},
     Aes256Gcm, Key, Nonce,
+    aead::{Aead, KeyInit},
 };
 use anyhow::{Context, Result};
 use argon2::{Argon2, Params, Version};
-use base64::{engine::general_purpose::STANDARD, Engine};
+use base64::{Engine, engine::general_purpose::STANDARD};
 use nostr_sdk::prelude::*;
 use rand::RngCore;
 use sha2::{Digest, Sha256};
 use tokio::time::Duration;
 
-use crate::auth::pin::{generate_pin, PIN_LENGTH};
+use crate::auth::pin::{PIN_LENGTH, generate_pin};
 
 /// Default public Nostr relays for PIN exchange
 /// These should match the relays used in signaling for consistency
-pub const DEFAULT_NOSTR_RELAYS: &[&str] =
-    &[
+pub const DEFAULT_NOSTR_RELAYS: &[&str] = &[
     "wss://nos.lol",
     //"wss://relay.damus.io", // acceptable for index queries; not recommended for high-volume operations due to rate limiting
     //"wss://relay.nostr.band",

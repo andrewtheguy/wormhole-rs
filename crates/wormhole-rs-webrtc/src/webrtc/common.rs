@@ -9,29 +9,36 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::sync::watch;
+use webrtc::api::APIBuilder;
 use webrtc::api::interceptor_registry::register_default_interceptors;
 use webrtc::api::media_engine::MediaEngine;
-use webrtc::api::APIBuilder;
-use webrtc::data_channel::data_channel_message::DataChannelMessage;
 use webrtc::data_channel::RTCDataChannel;
+use webrtc::data_channel::data_channel_message::DataChannelMessage;
 use webrtc::ice::candidate::CandidateType;
 use webrtc::ice_transport::ice_candidate::RTCIceCandidate;
 use webrtc::ice_transport::ice_connection_state::RTCIceConnectionState;
 use webrtc::ice_transport::ice_gatherer_state::RTCIceGathererState;
 use webrtc::ice_transport::ice_server::RTCIceServer;
 use webrtc::interceptor::registry::Registry;
+use webrtc::peer_connection::RTCPeerConnection;
 use webrtc::peer_connection::configuration::RTCConfiguration;
 use webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
-use webrtc::peer_connection::RTCPeerConnection;
 use webrtc::stats::StatsReportType;
 
 // ============================================================================
 // Constants
 // ============================================================================
 
-/// Google STUN server for NAT traversal
-const STUN_SERVER: &str = "stun:stun.l.google.com:19302";
+/// Mainstream public STUN servers for NAT traversal discovery.
+const STUN_SERVERS: &[&str] = &[
+    "stun:stun.l.google.com:19302",
+    "stun:stun1.l.google.com:19302",
+    "stun:stun2.l.google.com:19302",
+    "stun:stun3.l.google.com:19302",
+    "stun:stun4.l.google.com:19302",
+    "stun:stun.cloudflare.com:3478",
+];
 
 // ============================================================================
 // Helper Functions
@@ -63,13 +70,11 @@ pub struct WebRtcPeer {
 impl WebRtcPeer {
     /// Create a new WebRTC peer connection with STUN server for NAT traversal
     pub async fn new() -> Result<Self> {
-        let ice_servers = vec![
-            // STUN server for NAT traversal discovery
-            RTCIceServer {
-                urls: vec![STUN_SERVER.to_owned()],
-                ..Default::default()
-            },
-        ];
+        let ice_servers = vec![RTCIceServer {
+            // Multiple public STUN endpoints improve NAT traversal resilience.
+            urls: STUN_SERVERS.iter().map(|url| (*url).to_owned()).collect(),
+            ..Default::default()
+        }];
         Self::new_with_config(ice_servers).await
     }
 
@@ -464,6 +469,7 @@ pub struct DataChannelStream {
     message_rx: mpsc::Receiver<Vec<u8>>,
     read_buffer: VecDeque<u8>,
     closed: Arc<std::sync::atomic::AtomicBool>,
+    close_notify: Arc<tokio::sync::Notify>,
     /// Tracks if any messages were dropped due to buffer overflow.
     /// If true, the stream will return an error on the next read to prevent
     /// silent data corruption in file transfers.
@@ -483,6 +489,7 @@ impl DataChannelStream {
     ) -> Self {
         let (message_tx, message_rx) = mpsc::channel::<Vec<u8>>(1000);
         let closed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let close_notify = Arc::new(tokio::sync::Notify::new());
         let messages_dropped = Arc::new(std::sync::atomic::AtomicBool::new(false));
 
         let dc_label = data_channel.label().to_string();
@@ -532,10 +539,12 @@ impl DataChannelStream {
             Box::pin(async {})
         }));
 
-        // On close - mark as closed
+        // On close - mark as closed and notify waiters
         let closed_flag = closed.clone();
+        let close_notify_flag = close_notify.clone();
         data_channel.on_close(Box::new(move || {
             closed_flag.store(true, std::sync::atomic::Ordering::SeqCst);
+            close_notify_flag.notify_waiters();
             eprintln!("Data channel '{}' closed", dc_label);
             Box::pin(async {})
         }));
@@ -545,6 +554,7 @@ impl DataChannelStream {
             message_rx,
             read_buffer: VecDeque::new(),
             closed,
+            close_notify,
             messages_dropped,
             write_pending: None,
         }
@@ -553,6 +563,14 @@ impl DataChannelStream {
     /// Check if the data channel is closed
     pub fn is_closed(&self) -> bool {
         self.closed.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// Wait until the data channel is closed.
+    pub async fn closed(&self) {
+        if self.is_closed() {
+            return;
+        }
+        self.close_notify.notified().await;
     }
 
     /// Check if any messages were dropped due to buffer overflow.

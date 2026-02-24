@@ -1,16 +1,16 @@
 use anyhow::{Context, Result};
-use iroh::endpoint::{ConnectingError, ConnectionError};
 use iroh::Watcher;
+use iroh::endpoint::{ConnectingError, ConnectionError};
 use std::path::Path;
 use tokio::fs::File;
 use tokio::sync::oneshot;
 
-use super::common::{create_sender_endpoint, IrohDuplex};
+use super::common::{IrohDuplex, create_sender_endpoint};
 use crate::cli::instructions::print_receiver_command;
 use wormhole_common::core::crypto::generate_key;
 use wormhole_common::core::transfer::{
-    run_sender_transfer, send_file_with, send_folder_with, FileHeader, Interrupted, TransferResult,
-    TransferType,
+    FileHeader, Interrupted, TransferResult, TransferType, run_sender_transfer, send_file_with,
+    send_folder_with,
 };
 use wormhole_common::core::wormhole::generate_code;
 use wormhole_common::signaling::nostr_protocol::generate_transfer_id;
@@ -230,8 +230,12 @@ async fn transfer_data_internal(
     // Finish the send stream to signal we're done sending (QUIC-specific)
     let finish_result = send_stream.finish().context("Failed to finish stream");
 
-    // Always close connection and endpoint, even if finish failed
-    conn.close(close_codes::OK, b"done");
+    // Close connection with appropriate code based on finish result
+    if finish_result.is_ok() {
+        conn.close(close_codes::OK, b"done");
+    } else {
+        conn.close(close_codes::ERROR, b"finish failed");
+    }
     endpoint.close().await;
 
     // Propagate finish error after cleanup

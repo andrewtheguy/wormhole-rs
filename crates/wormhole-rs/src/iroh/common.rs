@@ -2,9 +2,9 @@
 
 use anyhow::{Context, Result};
 use iroh::{
+    Endpoint, RelayMap, RelayUrl,
     discovery::{dns::DnsDiscovery, mdns::MdnsDiscovery, pkarr::PkarrPublisher},
     endpoint::{RecvStream, RelayMode, SendStream},
-    Endpoint, RelayMap, RelayUrl,
 };
 use std::io;
 use std::pin::Pin;
@@ -131,7 +131,7 @@ pub fn parse_relay_mode(relay_urls: Vec<String>) -> Result<RelayMode> {
     } else {
         let parsed_urls: Vec<RelayUrl> = relay_urls
             .iter()
-            .map(|url| url.parse().context(format!("Invalid relay URL: {}", url)))
+            .map(|url| url.parse().with_context(|| format!("Invalid relay URL: {}", url)))
             .collect::<Result<Vec<_>>>()?;
         let relay_map = RelayMap::from_iter(parsed_urls);
         Ok(RelayMode::Custom(relay_map))
@@ -159,10 +159,8 @@ fn print_relay_info(relay_urls: &[String]) {
 /// The endpoint is configured with ALPN for wormhole transfers.
 /// Multiple relay URLs provide automatic failover based on latency.
 pub async fn create_sender_endpoint(relay_urls: Vec<String>) -> Result<Endpoint> {
-    let relay_mode = parse_relay_mode(relay_urls.clone())?;
-    if !matches!(relay_mode, RelayMode::Default) {
-        print_relay_info(&relay_urls);
-    }
+    print_relay_info(&relay_urls);
+    let relay_mode = parse_relay_mode(relay_urls)?;
 
     let endpoint = Endpoint::empty_builder(relay_mode)
         .alpns(vec![ALPN.to_vec()])
@@ -185,10 +183,8 @@ pub async fn create_sender_endpoint(relay_urls: Vec<String>) -> Result<Endpoint>
 /// Does not set ALPN as the receiver specifies it when connecting.
 /// Multiple relay URLs provide automatic failover based on latency.
 pub async fn create_receiver_endpoint(relay_urls: Vec<String>) -> Result<Endpoint> {
-    let relay_mode = parse_relay_mode(relay_urls.clone())?;
-    if !matches!(relay_mode, RelayMode::Default) {
-        print_relay_info(&relay_urls);
-    }
+    print_relay_info(&relay_urls);
+    let relay_mode = parse_relay_mode(relay_urls)?;
 
     let endpoint = Endpoint::empty_builder(relay_mode)
         .discovery(PkarrPublisher::n0_dns())

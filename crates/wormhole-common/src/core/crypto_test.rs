@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use crate::core::crypto::{decrypt, encrypt, generate_key, NONCE_SIZE};
+    use crate::core::crypto::{NONCE_SIZE, decrypt, encrypt, generate_key};
 
     #[test]
     fn test_encrypt_decrypt_roundtrip() {
@@ -32,6 +32,9 @@ mod tests {
             "Ciphertext must contain nonce prefix"
         );
 
+        // Random nonces must produce distinct ciphertexts for the same plaintext
+        assert_ne!(enc1, enc2, "Two encryptions of the same data must differ");
+
         // Both must decrypt correctly (validates encryption correctness)
         assert_eq!(decrypt(&key, &enc1).unwrap(), plaintext.as_slice());
         assert_eq!(decrypt(&key, &enc2).unwrap(), plaintext.as_slice());
@@ -48,6 +51,23 @@ mod tests {
         // Decrypting with wrong key should fail (GCM authentication failure)
         let result = decrypt(&key2, &encrypted);
         assert!(result.is_err(), "Decryption with wrong key should fail");
+    }
+
+    #[test]
+    fn test_tampered_ciphertext_fails_decryption() {
+        let key = generate_key();
+        let plaintext = b"Integrity-protected message";
+
+        let mut encrypted = encrypt(&key, plaintext).unwrap();
+
+        // Flip a bit in the first ciphertext byte (right after the nonce)
+        encrypted[NONCE_SIZE] ^= 0x01;
+
+        let result = decrypt(&key, &encrypted);
+        assert!(
+            result.is_err(),
+            "Decryption of tampered ciphertext should fail"
+        );
     }
 
     #[test]
