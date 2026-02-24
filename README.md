@@ -1,5 +1,8 @@
 # wormhole-rs
 
+> [!NOTE]
+> This project is still work in progress (0.0.x). No backward compatibility is guaranteed between versions.
+
 A secure, cross-platform, single-binary peer-to-peer file transfer tool with direct connectivity and AES-256-GCM end-to-end encryption.
 
 ## Features
