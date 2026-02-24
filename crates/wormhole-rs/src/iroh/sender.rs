@@ -230,8 +230,12 @@ async fn transfer_data_internal(
     // Finish the send stream to signal we're done sending (QUIC-specific)
     let finish_result = send_stream.finish().context("Failed to finish stream");
 
-    // Always close connection and endpoint, even if finish failed
-    conn.close(close_codes::OK, b"done");
+    // Close connection with appropriate code based on finish result
+    if finish_result.is_ok() {
+        conn.close(close_codes::OK, b"done");
+    } else {
+        conn.close(close_codes::ERROR, b"finish failed");
+    }
     endpoint.close().await;
 
     // Propagate finish error after cleanup
