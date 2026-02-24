@@ -1237,6 +1237,59 @@ pub struct CleanupHandler {
     pub shutdown_rx: tokio::sync::oneshot::Receiver<()>,
 }
 
+/// Describes what cleanup action to take on Ctrl+C interrupt.
+enum CleanupAction {
+    /// Remove a file unconditionally.
+    RemoveFile,
+    /// Remove a directory recursively.
+    RemoveDir,
+    /// Remove a file only if the transfer is not resumable;
+    /// otherwise preserve it for resume.
+    ResumableFile { is_resumable: bool },
+}
+
+/// Shared helper that wires up Ctrl+C → cleanup → shutdown signal.
+fn spawn_cleanup_handler(path: PathBuf, action: CleanupAction) -> CleanupHandler {
+    let cleanup_path: CleanupPath = std::sync::Arc::new(tokio::sync::Mutex::new(Some(path)));
+    let cleanup_clone = cleanup_path.clone();
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
+
+    tokio::spawn(async move {
+        if tokio::signal::ctrl_c().await.is_ok() {
+            match action {
+                CleanupAction::RemoveFile => {
+                    if let Some(path) = cleanup_clone.lock().await.take() {
+                        let _ = tokio::fs::remove_file(&path).await;
+                        eprintln!("\nInterrupted. Cleaned up temp file.");
+                    }
+                }
+                CleanupAction::RemoveDir => {
+                    if let Some(path) = cleanup_clone.lock().await.take() {
+                        let _ = tokio::fs::remove_dir_all(&path).await;
+                        eprintln!("\nInterrupted. Cleaned up extraction directory.");
+                    }
+                }
+                CleanupAction::ResumableFile { is_resumable } => {
+                    if !is_resumable {
+                        if let Some(path) = cleanup_clone.lock().await.take() {
+                            let _ = tokio::fs::remove_file(&path).await;
+                            eprintln!("\nInterrupted. Cleaned up temp file.");
+                        }
+                    } else {
+                        eprintln!("\nInterrupted. Partial download saved for resume.");
+                    }
+                }
+            }
+            let _ = shutdown_tx.send(());
+        }
+    });
+
+    CleanupHandler {
+        cleanup_path,
+        shutdown_rx,
+    }
+}
+
 /// Set up Ctrl+C handler for resumable transfers.
 /// For resumable transfers, preserves temp file and logs resume message.
 /// For non-resumable transfers, removes temp file on interrupt.
@@ -1247,30 +1300,7 @@ pub struct CleanupHandler {
 ///
 /// The caller should handle the shutdown signal and exit with code 130.
 pub fn setup_resumable_cleanup_handler(temp_path: PathBuf, is_resumable: bool) -> CleanupHandler {
-    let cleanup_path: CleanupPath = std::sync::Arc::new(tokio::sync::Mutex::new(Some(temp_path)));
-    let cleanup_clone = cleanup_path.clone();
-    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
-
-    tokio::spawn(async move {
-        if tokio::signal::ctrl_c().await.is_ok() {
-            if !is_resumable {
-                // Only delete if not resumable
-                if let Some(path) = cleanup_clone.lock().await.take() {
-                    let _ = tokio::fs::remove_file(&path).await;
-                    eprintln!("\nInterrupted. Cleaned up temp file.");
-                }
-            } else {
-                eprintln!("\nInterrupted. Partial download saved for resume.");
-            }
-            // Signal shutdown instead of calling exit()
-            let _ = shutdown_tx.send(());
-        }
-    });
-
-    CleanupHandler {
-        cleanup_path,
-        shutdown_rx,
-    }
+    spawn_cleanup_handler(temp_path, CleanupAction::ResumableFile { is_resumable })
 }
 
 /// Set up Ctrl+C handler to always clean up a temp file on interrupt.
@@ -1282,25 +1312,7 @@ pub fn setup_resumable_cleanup_handler(temp_path: PathBuf, is_resumable: bool) -
 ///
 /// The caller should handle the shutdown signal and exit with code 130.
 pub fn setup_temp_file_cleanup_handler(temp_path: PathBuf) -> CleanupHandler {
-    let cleanup_path: CleanupPath = std::sync::Arc::new(tokio::sync::Mutex::new(Some(temp_path)));
-    let cleanup_clone = cleanup_path.clone();
-    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
-
-    tokio::spawn(async move {
-        if tokio::signal::ctrl_c().await.is_ok() {
-            if let Some(path) = cleanup_clone.lock().await.take() {
-                let _ = tokio::fs::remove_file(&path).await;
-                eprintln!("\nInterrupted. Cleaned up temp file.");
-            }
-            // Signal shutdown instead of calling exit()
-            let _ = shutdown_tx.send(());
-        }
-    });
-
-    CleanupHandler {
-        cleanup_path,
-        shutdown_rx,
-    }
+    spawn_cleanup_handler(temp_path, CleanupAction::RemoveFile)
 }
 
 /// Set up Ctrl+C handler to clean up extraction directory on interrupt.
@@ -1312,25 +1324,7 @@ pub fn setup_temp_file_cleanup_handler(temp_path: PathBuf) -> CleanupHandler {
 ///
 /// The caller should handle the shutdown signal and exit with code 130.
 pub fn setup_dir_cleanup_handler(extract_dir: PathBuf) -> CleanupHandler {
-    let cleanup_path: CleanupPath = std::sync::Arc::new(tokio::sync::Mutex::new(Some(extract_dir)));
-    let cleanup_clone = cleanup_path.clone();
-    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
-
-    tokio::spawn(async move {
-        if tokio::signal::ctrl_c().await.is_ok() {
-            if let Some(path) = cleanup_clone.lock().await.take() {
-                let _ = tokio::fs::remove_dir_all(&path).await;
-                eprintln!("\nInterrupted. Cleaned up extraction directory.");
-            }
-            // Signal shutdown instead of calling exit()
-            let _ = shutdown_tx.send(());
-        }
-    });
-
-    CleanupHandler {
-        cleanup_path,
-        shutdown_rx,
-    }
+    spawn_cleanup_handler(extract_dir, CleanupAction::RemoveDir)
 }
 
 // ============================================================================
