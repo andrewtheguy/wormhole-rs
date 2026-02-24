@@ -32,7 +32,8 @@ if ! docker buildx version &> /dev/null; then
     exit 1
 fi
 
-# Create build directory
+# Clean and create build directory to prevent stale binaries
+rm -rf "$BUILD_DIR"
 mkdir -p "$BUILD_DIR"
 
 # Create or use existing buildx builder
