@@ -1,5 +1,4 @@
 use anyhow::{Context, Result};
-use iroh::Watcher;
 use iroh::endpoint::{
     AuthenticationError, ConnectError, ConnectWithOptsError, ConnectingError, ConnectionError,
 };
@@ -7,7 +6,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 use tokio::time::timeout;
 
-use super::common::{ALPN, OwnedIrohDuplex, create_receiver_endpoint};
+use super::common::{ALPN, OwnedIrohDuplex, create_receiver_endpoint, watch_connection_paths};
 use wormhole_common::core::transfer::run_receiver_transfer;
 use wormhole_common::core::wormhole::parse_code;
 
@@ -68,11 +67,7 @@ pub async fn receive(
     eprintln!("Connected!");
     eprintln!("Remote ID: {}", remote_id);
 
-    // Get connection type (Direct, Relay, Mixed, None)
-    if let Some(mut conn_type_watcher) = endpoint.conn_type(remote_id) {
-        let conn_type = conn_type_watcher.get();
-        eprintln!("Connection type: {:?}", conn_type);
-    }
+    let path_watcher = watch_connection_paths(&conn);
 
     const ACCEPT_STREAM_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -87,6 +82,9 @@ pub async fn receive(
 
     // Run unified receiver transfer
     let (_path, duplex) = run_receiver_transfer(duplex, key, output_dir, no_resume).await?;
+
+    // Stop path watcher before cleanup
+    drop(path_watcher);
 
     // Finish send stream and wait for acknowledgment (QUIC-specific)
     // This ensures the ACK message is fully delivered before closing the connection.
@@ -200,10 +198,6 @@ fn is_authentication_error_relay_related(e: &AuthenticationError) -> bool {
         AuthenticationError::NoAlpn { .. } => true,
         // RemoteId errors are certificate/identity validation issues - not relay-related
         AuthenticationError::RemoteId { .. } => false,
-        // Connection errors during handshake - check if network-related
-        AuthenticationError::ConnectionError { source, .. } => {
-            is_connection_error_network_related(source)
-        }
         // Future variants: conservatively treat as not relay-related
         _ => false,
     }

@@ -2,10 +2,11 @@
 
 use anyhow::{Context, Result};
 use iroh::{
-    Endpoint, RelayMap, RelayUrl,
-    discovery::{dns::DnsDiscovery, mdns::MdnsDiscovery, pkarr::PkarrPublisher},
-    endpoint::{RecvStream, RelayMode, SendStream},
+    Endpoint, RelayMap, RelayUrl, TransportAddr, Watcher,
+    address_lookup::{dns::DnsAddressLookup, mdns::MdnsAddressLookup, pkarr::PkarrPublisher},
+    endpoint::{Connection, PathInfoList, RecvStream, RelayMode, SendStream},
 };
+use tokio::task::JoinHandle;
 use std::io;
 use std::pin::Pin;
 use std::task::{Context as TaskContext, Poll};
@@ -117,6 +118,62 @@ impl AsyncWrite for OwnedIrohDuplex {
     }
 }
 
+/// Format connection path info for display.
+fn format_paths(paths: &PathInfoList) -> String {
+    if paths.is_empty() {
+        return "establishing...".to_string();
+    }
+    let parts: Vec<String> = paths
+        .iter()
+        .filter(|p| p.is_selected())
+        .map(|path| {
+            let rtt = path.rtt();
+            match path.remote_addr() {
+                TransportAddr::Ip(addr) => format!("Direct {addr} (rtt {rtt:.0?})"),
+                TransportAddr::Relay(url) => format!("Relay {url} (rtt {rtt:.0?})"),
+                other => format!("{other:?} (rtt {rtt:.0?})"),
+            }
+        })
+        .collect();
+    if parts.is_empty() {
+        "no selected path".to_string()
+    } else {
+        parts.join(", ")
+    }
+}
+
+/// RAII guard that aborts the background path watcher task on drop.
+pub struct PathWatcherGuard(JoinHandle<()>);
+
+impl Drop for PathWatcherGuard {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+/// Print the current connection paths and spawn a background task that
+/// prints updates whenever the active path changes (e.g. relay -> direct).
+///
+/// The returned guard aborts the background task when dropped.
+pub fn watch_connection_paths(conn: &Connection) -> PathWatcherGuard {
+    let mut watcher = conn.paths();
+
+    // Print initial snapshot
+    let initial = watcher.get();
+    eprintln!("   Connection: {}", format_paths(&initial));
+
+    // Spawn background task that prints on changes
+    let mut last = initial;
+    PathWatcherGuard(tokio::spawn(async move {
+        while let Ok(paths) = watcher.updated().await {
+            if paths != last {
+                eprintln!("   Connection: {}", format_paths(&paths));
+                last = paths;
+            }
+        }
+    }))
+}
+
 /// Application-Layer Protocol Negotiation identifier for wormhole transfers.
 pub const ALPN: &[u8] = b"wormhole-transfer/1";
 
@@ -164,9 +221,9 @@ pub async fn create_sender_endpoint(relay_urls: Vec<String>) -> Result<Endpoint>
 
     let endpoint = Endpoint::empty_builder(relay_mode)
         .alpns(vec![ALPN.to_vec()])
-        .discovery(PkarrPublisher::n0_dns())
-        .discovery(DnsDiscovery::n0_dns())
-        .discovery(MdnsDiscovery::builder())
+        .address_lookup(PkarrPublisher::n0_dns())
+        .address_lookup(DnsAddressLookup::n0_dns())
+        .address_lookup(MdnsAddressLookup::builder())
         .bind()
         .await
         .context("Failed to create endpoint")?;
@@ -187,9 +244,9 @@ pub async fn create_receiver_endpoint(relay_urls: Vec<String>) -> Result<Endpoin
     let relay_mode = parse_relay_mode(relay_urls)?;
 
     let endpoint = Endpoint::empty_builder(relay_mode)
-        .discovery(PkarrPublisher::n0_dns())
-        .discovery(DnsDiscovery::n0_dns())
-        .discovery(MdnsDiscovery::builder())
+        .address_lookup(PkarrPublisher::n0_dns())
+        .address_lookup(DnsAddressLookup::n0_dns())
+        .address_lookup(MdnsAddressLookup::builder())
         .bind()
         .await
         .context("Failed to create endpoint")?;
