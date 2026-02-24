@@ -13,7 +13,7 @@ use base64::{Engine, engine::general_purpose::STANDARD};
 use nostr_sdk::prelude::*;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
-use tokio::time::{Duration, timeout};
+use tokio::time::Duration;
 
 /// Timeout for relay connections
 const RELAY_CONNECTION_TIMEOUT: Duration = Duration::from_secs(10);
@@ -327,50 +327,6 @@ impl NostrSignaling {
             }
             _ => None,
         }
-    }
-
-    /// Validate that an event belongs to our transfer and parse it into a SignalingMessage.
-    ///
-    /// Returns Some(SignalingMessage) if the event has the correct transfer tag and
-    /// can be parsed as a valid signaling message, None otherwise.
-    fn validate_and_parse_event(&self, event: &Event) -> Option<SignalingMessage> {
-        validate_and_parse_event_with_id(event, &self.transfer_id)
-    }
-
-    /// Wait for a specific signaling message type with timeout
-    #[allow(dead_code)]
-    pub async fn wait_for_message(&self, timeout_secs: u64) -> Result<Option<SignalingMessage>> {
-        let mut notifications = self.client.notifications();
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(timeout_secs);
-
-        loop {
-            // Compute remaining time to deadline, exit if past deadline
-            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-            if remaining.is_zero() {
-                break;
-            }
-
-            match timeout(remaining, notifications.recv()).await {
-                Ok(Ok(RelayPoolNotification::Event { event, .. })) => {
-                    if let Some(msg) = self.validate_and_parse_event(&event) {
-                        return Ok(Some(msg));
-                    }
-                }
-                Ok(Ok(RelayPoolNotification::Message { message, .. })) => {
-                    // Handle Event messages that come through as Message notifications
-                    if let nostr_sdk::RelayMessage::Event { event, .. } = message
-                        && let Some(msg) = self.validate_and_parse_event(&event)
-                    {
-                        return Ok(Some(msg));
-                    }
-                }
-                Ok(Ok(_)) => continue,
-                Ok(Err(_)) => break,
-                Err(_) => continue, // Timeout, loop will check deadline
-            }
-        }
-
-        Ok(None)
     }
 
     /// Start a message receiver task that sends messages to a channel
