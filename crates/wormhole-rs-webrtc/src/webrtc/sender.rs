@@ -311,12 +311,10 @@ async fn transfer_data_webrtc_internal(
         },
     )?;
 
-    let code_str = code.clone();
-
     display_transfer_code(
         use_pin,
         signaling.signing_keys(),
-        &code_str,
+        &code,
         signaling.transfer_id(),
     )
     .await?;
