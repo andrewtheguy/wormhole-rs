@@ -21,4 +21,4 @@ hex = { workspace = true }
 
 # Crate-specific dependencies
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-mdns-sd = "0.15"
+mdns-sd = "0.18"
