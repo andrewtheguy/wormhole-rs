@@ -185,10 +185,8 @@ fn print_relay_info(relay_urls: &[String]) {
 pub async fn create_sender_endpoint(relay_urls: Vec<String>) -> Result<Endpoint> {
     print_relay_info(&relay_urls);
     let relay_mode = parse_relay_mode(relay_urls)?;
-    let transport_config = build_transport_config()?;
 
     let endpoint = Endpoint::empty_builder(relay_mode)
-        .transport_config(transport_config)
         .alpns(vec![ALPN.to_vec()])
         .address_lookup(PkarrPublisher::n0_dns())
         .address_lookup(DnsAddressLookup::n0_dns())
