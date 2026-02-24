@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 use tokio::time::timeout;
 
-use super::common::{ALPN, OwnedIrohDuplex, create_receiver_endpoint, print_connection_paths};
+use super::common::{ALPN, OwnedIrohDuplex, create_receiver_endpoint, watch_connection_paths};
 use wormhole_common::core::transfer::run_receiver_transfer;
 use wormhole_common::core::wormhole::parse_code;
 
@@ -67,7 +67,7 @@ pub async fn receive(
     eprintln!("Connected!");
     eprintln!("Remote ID: {}", remote_id);
 
-    print_connection_paths(&conn);
+    let path_watcher = watch_connection_paths(&conn);
 
     const ACCEPT_STREAM_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -82,6 +82,9 @@ pub async fn receive(
 
     // Run unified receiver transfer
     let (_path, duplex) = run_receiver_transfer(duplex, key, output_dir, no_resume).await?;
+
+    // Stop path watcher before cleanup
+    path_watcher.abort();
 
     // Finish send stream and wait for acknowledgment (QUIC-specific)
     // This ensures the ACK message is fully delivered before closing the connection.

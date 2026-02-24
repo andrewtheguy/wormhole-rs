@@ -4,8 +4,9 @@ use anyhow::{Context, Result};
 use iroh::{
     Endpoint, RelayMap, RelayUrl, TransportAddr, Watcher,
     address_lookup::{dns::DnsAddressLookup, mdns::MdnsAddressLookup, pkarr::PkarrPublisher},
-    endpoint::{Connection, RecvStream, RelayMode, SendStream},
+    endpoint::{Connection, PathInfoList, RecvStream, RelayMode, SendStream},
 };
+use tokio::task::JoinHandle;
 use std::io;
 use std::pin::Pin;
 use std::task::{Context as TaskContext, Poll};
@@ -117,31 +118,51 @@ impl AsyncWrite for OwnedIrohDuplex {
     }
 }
 
-/// Print connection path info in a user-friendly format.
-///
-/// Shows each path type (Direct or Relay) with its address and RTT,
-/// and marks the currently selected path.
-pub fn print_connection_paths(conn: &Connection) {
-    let paths = conn.paths().get();
+/// Format connection path info for display.
+fn format_paths(paths: &PathInfoList) -> String {
     if paths.is_empty() {
-        eprintln!("   Connection: establishing...");
-        return;
+        return "establishing...".to_string();
     }
-    for path in paths.iter() {
-        let selected = if path.is_selected() { " *" } else { "" };
-        let rtt = path.rtt();
-        match path.remote_addr() {
-            TransportAddr::Ip(addr) => {
-                eprintln!("   Path: Direct {addr} (rtt {rtt:.0?}){selected}");
+    let parts: Vec<String> = paths
+        .iter()
+        .filter(|p| p.is_selected())
+        .map(|path| {
+            let rtt = path.rtt();
+            match path.remote_addr() {
+                TransportAddr::Ip(addr) => format!("Direct {addr} (rtt {rtt:.0?})"),
+                TransportAddr::Relay(url) => format!("Relay {url} (rtt {rtt:.0?})"),
+                other => format!("{other:?} (rtt {rtt:.0?})"),
             }
-            TransportAddr::Relay(url) => {
-                eprintln!("   Path: Relay {url} (rtt {rtt:.0?}){selected}");
-            }
-            other => {
-                eprintln!("   Path: {other:?} (rtt {rtt:.0?}){selected}");
+        })
+        .collect();
+    if parts.is_empty() {
+        "no selected path".to_string()
+    } else {
+        parts.join(", ")
+    }
+}
+
+/// Print the current connection paths and spawn a background task that
+/// prints updates whenever the active path changes (e.g. relay -> direct).
+///
+/// Returns a `JoinHandle` that should be aborted when the transfer is done.
+pub fn watch_connection_paths(conn: &Connection) -> JoinHandle<()> {
+    let mut watcher = conn.paths();
+
+    // Print initial snapshot
+    let initial = watcher.get();
+    eprintln!("   Connection: {}", format_paths(&initial));
+
+    // Spawn background task that prints on changes
+    let mut last = initial;
+    tokio::spawn(async move {
+        while let Ok(paths) = watcher.updated().await {
+            if paths != last {
+                eprintln!("   Connection: {}", format_paths(&paths));
+                last = paths;
             }
         }
-    }
+    })
 }
 
 /// Application-Layer Protocol Negotiation identifier for wormhole transfers.
