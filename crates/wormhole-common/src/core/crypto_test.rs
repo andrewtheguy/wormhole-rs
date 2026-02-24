@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use crate::core::crypto::{decrypt, encrypt, generate_key, NONCE_SIZE};
+    use crate::core::crypto::{NONCE_SIZE, decrypt, encrypt, generate_key};
 
     #[test]
     fn test_encrypt_decrypt_roundtrip() {

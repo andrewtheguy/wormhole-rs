@@ -45,8 +45,8 @@
 //! <https://csrc.nist.gov/publications/detail/sp/800-38d/final>
 
 use aes_gcm::{
-    aead::{Aead, KeyInit},
     Aes256Gcm, Key, Nonce,
+    aead::{Aead, KeyInit},
 };
 use anyhow::{Context, Result};
 use rand::RngCore;

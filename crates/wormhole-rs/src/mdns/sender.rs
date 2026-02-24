@@ -12,14 +12,14 @@ use tokio::fs::File;
 use tokio::net::TcpStream;
 
 use super::common::{
-    generate_pin, generate_transfer_id, PORT_RANGE_END, PORT_RANGE_START, SERVICE_TYPE,
-    TXT_FILENAME, TXT_FILE_SIZE, TXT_TRANSFER_ID, TXT_TRANSFER_TYPE,
+    PORT_RANGE_END, PORT_RANGE_START, SERVICE_TYPE, TXT_FILE_SIZE, TXT_FILENAME, TXT_TRANSFER_ID,
+    TXT_TRANSFER_TYPE, generate_pin, generate_transfer_id,
 };
 use crate::cli::instructions::print_receiver_command;
 use wormhole_common::auth::spake2::handshake_as_responder;
 use wormhole_common::core::transfer::{
-    format_bytes, run_sender_transfer, send_file_with, send_folder_with, FileHeader,
-    TransferResult, TransferType,
+    FileHeader, TransferResult, TransferType, format_bytes, run_sender_transfer, send_file_with,
+    send_folder_with,
 };
 
 /// Timeout for SPAKE2 handshake with receiver (seconds).

@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use arti_client::{config::TorClientConfigBuilder, TorClient};
+use arti_client::{TorClient, config::TorClientConfigBuilder};
 use futures::StreamExt;
 use rand::Rng;
 use safelog::DisplayRedacted;
@@ -13,8 +13,8 @@ use tor_hsservice::{config::OnionServiceConfigBuilder, handle_rend_requests};
 use crate::cli::instructions::print_receiver_command;
 use wormhole_common::core::crypto::generate_key;
 use wormhole_common::core::transfer::{
-    run_sender_transfer_with_timeout, send_file_with, send_folder_with, FileHeader, TransferResult,
-    TransferType,
+    FileHeader, TransferResult, TransferType, run_sender_transfer_with_timeout, send_file_with,
+    send_folder_with,
 };
 use wormhole_common::core::wormhole::generate_tor_code;
 use wormhole_common::signaling::nostr_protocol::generate_transfer_id;

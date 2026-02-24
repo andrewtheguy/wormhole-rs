@@ -15,7 +15,7 @@ use tokio::net::TcpStream;
 use tokio::time::timeout;
 
 use super::common::{
-    MdnsServiceInfo, SERVICE_TYPE, TXT_FILENAME, TXT_FILE_SIZE, TXT_TRANSFER_ID, TXT_TRANSFER_TYPE,
+    MdnsServiceInfo, SERVICE_TYPE, TXT_FILE_SIZE, TXT_FILENAME, TXT_TRANSFER_ID, TXT_TRANSFER_TYPE,
 };
 use wormhole_common::auth::spake2::handshake_as_initiator;
 use wormhole_common::core::transfer::{format_bytes, run_receiver_transfer};

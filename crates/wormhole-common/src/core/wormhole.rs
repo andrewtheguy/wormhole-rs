@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 #[cfg(feature = "iroh-addr")]
 use iroh::{EndpointAddr, RelayUrl};
 use std::time::{SystemTime, UNIX_EPOCH};

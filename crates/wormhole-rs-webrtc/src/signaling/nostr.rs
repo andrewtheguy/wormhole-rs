@@ -9,17 +9,17 @@
 //! - type="webrtc-answer": SDP answer from receiver
 
 use anyhow::{Context, Result};
-use base64::{engine::general_purpose::STANDARD, Engine};
+use base64::{Engine, engine::general_purpose::STANDARD};
 use nostr_sdk::prelude::*;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
-use tokio::time::{timeout, Duration};
+use tokio::time::{Duration, timeout};
 
 /// Timeout for relay connections
 const RELAY_CONNECTION_TIMEOUT: Duration = Duration::from_secs(10);
 
 use wormhole_common::signaling::nostr_protocol::{
-    generate_transfer_id, get_best_relays, nostr_file_transfer_kind, DEFAULT_NOSTR_RELAYS,
+    DEFAULT_NOSTR_RELAYS, generate_transfer_id, get_best_relays, nostr_file_transfer_kind,
 };
 
 // Signaling event types

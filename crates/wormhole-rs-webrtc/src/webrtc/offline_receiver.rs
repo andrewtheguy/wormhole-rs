@@ -13,7 +13,7 @@ use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 use wormhole_common::core::transfer::{format_bytes, run_receiver_transfer};
 
 use crate::signaling::offline::{
-    display_answer_json, ice_candidates_to_payloads, read_offer_json, OfflineAnswer,
+    OfflineAnswer, display_answer_json, ice_candidates_to_payloads, read_offer_json,
 };
 use crate::webrtc::common::{DataChannelStream, WebRtcPeer};
 

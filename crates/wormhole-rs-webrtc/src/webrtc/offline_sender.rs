@@ -11,12 +11,12 @@ use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 
 use wormhole_common::core::crypto::generate_key;
 use wormhole_common::core::transfer::{
-    prepare_file_for_send, prepare_folder_for_send, run_sender_transfer,
-    setup_temp_file_cleanup_handler, FileHeader, Interrupted, TransferType,
+    FileHeader, Interrupted, TransferType, prepare_file_for_send, prepare_folder_for_send,
+    run_sender_transfer, setup_temp_file_cleanup_handler,
 };
 
 use crate::signaling::offline::{
-    display_offer_json, ice_candidates_to_payloads, read_answer_json, OfflineOffer, TransferInfo,
+    OfflineOffer, TransferInfo, display_offer_json, ice_candidates_to_payloads, read_answer_json,
 };
 use crate::webrtc::common::{DataChannelStream, WebRtcPeer};
 

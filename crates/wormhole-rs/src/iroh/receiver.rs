@@ -1,13 +1,13 @@
 use anyhow::{Context, Result};
+use iroh::Watcher;
 use iroh::endpoint::{
     AuthenticationError, ConnectError, ConnectWithOptsError, ConnectingError, ConnectionError,
 };
-use iroh::Watcher;
 use std::path::PathBuf;
 use std::time::Duration;
 use tokio::time::timeout;
 
-use super::common::{create_receiver_endpoint, OwnedIrohDuplex, ALPN};
+use super::common::{ALPN, OwnedIrohDuplex, create_receiver_endpoint};
 use wormhole_common::core::transfer::run_receiver_transfer;
 use wormhole_common::core::wormhole::parse_code;
 

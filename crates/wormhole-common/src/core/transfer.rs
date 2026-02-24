@@ -6,7 +6,7 @@ use tempfile::NamedTempFile;
 use tokio::fs::File;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-use crate::core::crypto::{decrypt, encrypt, CHUNK_SIZE};
+use crate::core::crypto::{CHUNK_SIZE, decrypt, encrypt};
 use crate::core::folder::{create_tar_archive, print_tar_creation_info};
 use crate::core::resume::calculate_file_checksum;
 
@@ -949,8 +949,8 @@ pub fn prompt_file_exists(path: &Path) -> Result<FileExistsChoice> {
 // ============================================================================
 
 use crate::core::resume::{
-    check_resume, create_resume_file, finalize_resume_file as resume_finalize, get_data_offset,
-    temp_file_path, update_resume_metadata, ResumeMetadata,
+    ResumeMetadata, check_resume, create_resume_file, finalize_resume_file as resume_finalize,
+    get_data_offset, temp_file_path, update_resume_metadata,
 };
 use std::io::{Seek, SeekFrom};
 
@@ -1471,8 +1471,8 @@ where
 }
 
 use crate::core::folder::{
-    extract_tar_archive_returning_reader, get_extraction_dir, print_skipped_entries,
-    print_tar_extraction_info, StreamingReader,
+    StreamingReader, extract_tar_archive_returning_reader, get_extraction_dir,
+    print_skipped_entries, print_tar_extraction_info,
 };
 
 /// Unified receiver transfer logic for all transports.

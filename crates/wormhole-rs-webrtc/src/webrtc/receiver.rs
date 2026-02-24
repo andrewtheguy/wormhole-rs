@@ -5,14 +5,14 @@
 use anyhow::{Context, Result};
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::time::{timeout, Duration};
+use tokio::time::{Duration, timeout};
 use webrtc::ice_transport::ice_candidate::RTCIceCandidateInit;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 
 use wormhole_common::core::transfer::run_receiver_transfer;
-use wormhole_common::core::wormhole::{decode_key, parse_code, PROTOCOL_WEBRTC};
+use wormhole_common::core::wormhole::{PROTOCOL_WEBRTC, decode_key, parse_code};
 
-use crate::signaling::nostr::{create_receiver_signaling, NostrSignaling, SignalingMessage};
+use crate::signaling::nostr::{NostrSignaling, SignalingMessage, create_receiver_signaling};
 use crate::signaling::offline::ice_candidates_to_payloads;
 use crate::webrtc::common::{DataChannelStream, WebRtcPeer};
 

@@ -9,29 +9,36 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::sync::watch;
+use webrtc::api::APIBuilder;
 use webrtc::api::interceptor_registry::register_default_interceptors;
 use webrtc::api::media_engine::MediaEngine;
-use webrtc::api::APIBuilder;
-use webrtc::data_channel::data_channel_message::DataChannelMessage;
 use webrtc::data_channel::RTCDataChannel;
+use webrtc::data_channel::data_channel_message::DataChannelMessage;
 use webrtc::ice::candidate::CandidateType;
 use webrtc::ice_transport::ice_candidate::RTCIceCandidate;
 use webrtc::ice_transport::ice_connection_state::RTCIceConnectionState;
 use webrtc::ice_transport::ice_gatherer_state::RTCIceGathererState;
 use webrtc::ice_transport::ice_server::RTCIceServer;
 use webrtc::interceptor::registry::Registry;
+use webrtc::peer_connection::RTCPeerConnection;
 use webrtc::peer_connection::configuration::RTCConfiguration;
 use webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
-use webrtc::peer_connection::RTCPeerConnection;
 use webrtc::stats::StatsReportType;
 
 // ============================================================================
 // Constants
 // ============================================================================
 
-/// Google STUN server for NAT traversal
-const STUN_SERVER: &str = "stun:stun.l.google.com:19302";
+/// Mainstream public STUN servers for NAT traversal discovery.
+const STUN_SERVERS: &[&str] = &[
+    "stun:stun.l.google.com:19302",
+    "stun:stun1.l.google.com:19302",
+    "stun:stun2.l.google.com:19302",
+    "stun:stun3.l.google.com:19302",
+    "stun:stun4.l.google.com:19302",
+    "stun:stun.cloudflare.com:3478",
+];
 
 // ============================================================================
 // Helper Functions
@@ -63,13 +70,11 @@ pub struct WebRtcPeer {
 impl WebRtcPeer {
     /// Create a new WebRTC peer connection with STUN server for NAT traversal
     pub async fn new() -> Result<Self> {
-        let ice_servers = vec![
-            // STUN server for NAT traversal discovery
-            RTCIceServer {
-                urls: vec![STUN_SERVER.to_owned()],
-                ..Default::default()
-            },
-        ];
+        let ice_servers = vec![RTCIceServer {
+            // Multiple public STUN endpoints improve NAT traversal resilience.
+            urls: STUN_SERVERS.iter().map(|url| (*url).to_owned()).collect(),
+            ..Default::default()
+        }];
         Self::new_with_config(ice_servers).await
     }
 

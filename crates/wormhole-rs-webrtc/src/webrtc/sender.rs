@@ -7,17 +7,17 @@ use std::path::Path;
 use std::sync::Arc;
 use tokio::fs::File;
 use tokio::io::AsyncBufReadExt;
-use tokio::time::{timeout, Duration};
+use tokio::time::{Duration, timeout};
 use webrtc::ice_transport::ice_candidate::RTCIceCandidateInit;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 
 use wormhole_common::core::crypto::generate_key;
 use wormhole_common::core::transfer::{
-    format_bytes, run_sender_transfer, send_file_with, send_folder_with, FileHeader, TransferType,
+    FileHeader, TransferType, format_bytes, run_sender_transfer, send_file_with, send_folder_with,
 };
 use wormhole_common::core::wormhole::generate_webrtc_code;
 
-use crate::signaling::nostr::{create_sender_signaling, NostrSignaling, SignalingMessage};
+use crate::signaling::nostr::{NostrSignaling, SignalingMessage, create_sender_signaling};
 use crate::signaling::offline::ice_candidates_to_payloads;
 use crate::webrtc::common::{DataChannelStream, WebRtcPeer};
 

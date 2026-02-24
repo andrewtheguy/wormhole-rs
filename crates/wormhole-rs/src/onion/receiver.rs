@@ -1,11 +1,11 @@
 use anyhow::{Context, Result};
-use arti_client::{config::TorClientConfigBuilder, ErrorKind, HasKind, TorClient};
+use arti_client::{ErrorKind, HasKind, TorClient, config::TorClientConfigBuilder};
 use std::path::PathBuf;
 use std::time::Duration;
 use tokio::time::timeout;
 
 use wormhole_common::core::transfer::run_receiver_transfer;
-use wormhole_common::core::wormhole::{decode_key, parse_code, PROTOCOL_TOR};
+use wormhole_common::core::wormhole::{PROTOCOL_TOR, decode_key, parse_code};
 
 const MAX_RETRIES: u32 = 5;
 const RETRY_DELAY_SECS: u64 = 5;

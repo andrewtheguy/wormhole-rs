@@ -2,9 +2,9 @@
 
 use anyhow::{Context, Result};
 use iroh::{
+    Endpoint, RelayMap, RelayUrl,
     discovery::{dns::DnsDiscovery, mdns::MdnsDiscovery, pkarr::PkarrPublisher},
     endpoint::{RecvStream, RelayMode, SendStream},
-    Endpoint, RelayMap, RelayUrl,
 };
 use std::io;
 use std::pin::Pin;
