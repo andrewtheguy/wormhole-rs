@@ -66,17 +66,17 @@ $env:WORMHOLE_INSTALL_ARGS='20251210172710'; irm https://andrewtheguy.github.io/
 ### From Source
 
 ```bash
-# Default build (iroh + Tor + local; default features)
+# Default build (iroh + Tor; default features)
 cargo build --release
-
-# Local-only (no iroh/tor)
-cargo build --release --no-default-features
 
 # iroh only
 cargo build --release --no-default-features --features iroh
 
 # Tor only
 cargo build --release --no-default-features --features onion
+
+# Local LAN binary (separate crate, mDNS discovery)
+cargo build --release -p wormhole-rs-local
 
 # WebRTC binary (separate crate)
 cargo build --release -p wormhole-rs-webrtc
@@ -185,19 +185,21 @@ There are **two** ways to transfer without relying on the public internet:
 
 > **Note**: Tor mode requires internet access. iroh mode can be air‑gapped **only if** you self‑host both the relay **and** discovery services on the same network; the default public relay/discovery endpoints require internet access.
 
-#### LAN discovery (`wormhole-rs send-local`)
+#### LAN discovery (`wormhole-rs-local`)
 
 Use this mode for transfers on the same network (no internet required). A **PIN** is shown and fed into a SPAKE2 PAKE to derive the AES key (not a wormhole code).
 
+> Built as a separate binary in this workspace: `cargo build -p wormhole-rs-local`.
+
 ```bash
 # Send locally
-wormhole-rs send-local /path/to/file
+wormhole-rs-local send /path/to/file
 
 # Send folder locally
-wormhole-rs send-local /path/to/folder --folder
+wormhole-rs-local send /path/to/folder --folder
 
 # Receive locally
-wormhole-rs receive-local
+wormhole-rs-local receive
 ```
 
 #### Manual WebRTC (`wormhole-rs-webrtc send-manual`)
@@ -226,7 +228,7 @@ For protocol details and wire formats, see [ARCHITECTURE.md](docs/ARCHITECTURE.m
 
 All modes provide end-to-end encryption.
 - **Internet Modes (iroh, Tor, WebRTC)**: The **Wormhole Code** carries the key/address information.
-- **Local Mode**: Uses a 12-character PIN that feeds a SPAKE2 PAKE to derive the AES key (no wormhole code).
+- **Local Mode** (`wormhole-rs-local`): Uses a 12-character PIN that feeds a SPAKE2 PAKE to derive the AES key (no wormhole code).
 
 | Mode | Type | Key Exchange | Transport Encryption | Content Encryption |
 |------|------|--------------|---------------------|-------------------|

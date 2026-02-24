@@ -8958,7 +8958,6 @@ dependencies = [
  "hex",
  "iroh",
  "log",
- "mdns-sd",
  "nostr-sdk",
  "rand 0.8.5",
  "rusqlite",
@@ -8968,6 +8967,20 @@ dependencies = [
  "tokio-util",
  "tor-cell",
  "tor-hsservice",
+ "tracing-subscriber",
+ "wormhole-common",
+]
+
+[[package]]
+name = "wormhole-rs-local"
+version = "0.0.1-alpha1"
+dependencies = [
+ "anyhow",
+ "clap",
+ "hex",
+ "mdns-sd",
+ "rand 0.8.5",
+ "tokio",
  "tracing-subscriber",
  "wormhole-common",
 ]

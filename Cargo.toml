@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/wormhole-common",
     "crates/wormhole-rs",
+    "crates/wormhole-rs-local",
     "crates/wormhole-rs-webrtc",
 ]
 

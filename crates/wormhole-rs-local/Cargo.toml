@@ -1,0 +1,24 @@
+[package]
+name = "wormhole-rs-local"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[[bin]]
+name = "wormhole-rs-local"
+path = "src/main.rs"
+
+[dependencies]
+# Common library
+wormhole-common = { path = "../wormhole-common" }
+
+# Core dependencies (workspace)
+tokio = { workspace = true }
+anyhow = { workspace = true }
+clap = { workspace = true }
+rand = { workspace = true }
+hex = { workspace = true }
+
+# Crate-specific dependencies
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+mdns-sd = "0.15"

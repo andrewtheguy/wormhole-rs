@@ -5,15 +5,15 @@ This guide describes common scenarios where `wormhole-rs` shines and which mode 
 ## 1. No Internet Access (LAN / Air-gapped)
 **Scenario**: You need to transfer files without using the public internet: either both machines are on the same LAN, or you are fully air‑gapped and can only copy/paste text.
 
-**Solution A**: **Local Mode** (`send-local` / `receive-local`)  
+**Solution A**: **Local Mode** (`wormhole-rs-local`)
 - **Why**: Uses mDNS discovery and direct TCP. No data leaves your local network. Relies on a short 12‑character PIN instead of a long code.
 - **Command**:
   ```bash
   # Sender
-  wormhole-rs send-local /path/to/file
+  wormhole-rs-local send /path/to/file
 
   # Receiver
-  wormhole-rs receive-local
+  wormhole-rs-local receive
   ```
 - **Experience**: The sender is shown a random 12‑character PIN. The receiver finds the sender automatically and is prompted for that PIN.
 
@@ -58,14 +58,14 @@ This guide describes common scenarios where `wormhole-rs` shines and which mode 
 - **Command**:
   ```bash
   # Sender
-  wormhole-rs send-local /path/to/file
+  wormhole-rs-local send /path/to/file
 
   # Receiver
-  wormhole-rs receive-local
+  wormhole-rs-local receive
   ```
 - **Experience**:
   1. Sender sees: `PIN: A1b2C3d4E5f6` (example)
-  2. Receiver runs `receive-local` and types `A1b2C3d4E5f6`.
+  2. Receiver runs `wormhole-rs-local receive` and types `A1b2C3d4E5f6`.
 
 **Solution B**: **PIN Mode** (For internet transfers)
 - **Why**: Uses a short 12-character PIN instead of a long code. The PIN is exchanged via Nostr relays, while the actual file transfer uses either iroh or Tor transport.
@@ -131,7 +131,7 @@ This guide describes common scenarios where `wormhole-rs` shines and which mode 
 **Solution A**: **iroh Mode + Custom DERP Relays** (Recommended)
 - **Why**: iroh allows you to run your own lightweight relay (DERP). By pointing `wormhole-rs` to your own infrastructure, you achieve a true peer-to-peer connection where no third-party relays are involved.
 - **Current Status**: Custom relays are supported today via `--relay-url`, but peer discovery still uses iroh's public DNS/pkarr services. See [ROADMAP.md](ROADMAP.md) for updates on custom DNS/discovery support. For a fully zero-third-party option today, use:
-  - **Local Mode** (`send-local` / `receive-local`) when both peers share a LAN and can rely on mDNS.
+  - **Local Mode** (`wormhole-rs-local`) when both peers share a LAN and can rely on mDNS.
 - **Resources**: Implementation for the relay server is available in the [iroh repository](https://github.com/n0-computer/iroh).
 - **Command**:
   ```bash
@@ -142,7 +142,7 @@ This guide describes common scenarios where `wormhole-rs` shines and which mode 
 - **Why**: Uses mDNS discovery with no external dependencies. Works completely offline.
 - **Command**:
   ```bash
-  wormhole-rs send-local /path/to/file
+  wormhole-rs-local send /path/to/file
   ```
 
 ---

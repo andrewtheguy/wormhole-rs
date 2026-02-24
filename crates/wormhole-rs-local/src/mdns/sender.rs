@@ -16,7 +16,6 @@ use super::common::{
     PORT_RANGE_END, PORT_RANGE_START, SERVICE_TYPE, TXT_FILE_SIZE, TXT_FILENAME, TXT_TRANSFER_ID,
     TXT_TRANSFER_TYPE, generate_pin, generate_transfer_id,
 };
-use crate::cli::instructions::print_receiver_command;
 use wormhole_common::auth::spake2::handshake_as_responder;
 use wormhole_common::core::transfer::{
     FileHeader, TransferResult, TransferType, format_bytes, run_sender_transfer, send_file_with,
@@ -63,7 +62,8 @@ impl Drop for MdnsGuard {
 
 /// Display receiver instructions and PIN to the user.
 fn display_receiver_instructions(pin: &str) {
-    print_receiver_command("wormhole-rs receive-local");
+    eprintln!("On the receiving end, run:");
+    eprintln!("  wormhole-rs-local receive\n");
     eprintln!("PIN: {}", pin);
     eprintln!("Then enter the PIN above when prompted.");
 }
