@@ -250,19 +250,46 @@ pub async fn receive_mdns(output_dir: Option<PathBuf>) -> Result<()> {
     // Prompt for PIN
     let pin = prompt_pin()?;
 
-    // Connect to sender - use first routable address
-    let addr = selected
+    // Sort addresses: IPv4 first (more reliably reachable on LANs), then IPv6
+    let mut addrs: Vec<IpAddr> = selected
         .addresses
         .iter()
-        .find(|a| is_routable(a))
-        .ok_or_else(|| anyhow::anyhow!("No routable addresses available for selected sender"))?;
-    let socket_addr = std::net::SocketAddr::new(*addr, selected.port);
+        .filter(|a| is_routable(a))
+        .copied()
+        .collect();
+    addrs.sort_by_key(|a| match a {
+        IpAddr::V4(_) => 0,
+        IpAddr::V6(_) => 1,
+    });
 
-    println!("Connecting to {}...", socket_addr);
-    let mut stream = timeout(CONNECT_TIMEOUT, TcpStream::connect(socket_addr))
-        .await
-        .map_err(|_| anyhow::anyhow!("Timed out connecting to sender"))?
-        .context("Failed to connect to sender")?;
+    if addrs.is_empty() {
+        anyhow::bail!("No routable addresses available for selected sender");
+    }
+
+    // Try each address in order until one connects
+    let mut stream = None;
+    for addr in &addrs {
+        let socket_addr = std::net::SocketAddr::new(*addr, selected.port);
+        println!("Connecting to {}...", socket_addr);
+        match timeout(CONNECT_TIMEOUT, TcpStream::connect(socket_addr)).await {
+            Ok(Ok(s)) => {
+                stream = Some(s);
+                break;
+            }
+            Ok(Err(e)) => {
+                println!("Failed to connect to {}: {}", socket_addr, e);
+            }
+            Err(_) => {
+                println!("Timed out connecting to {}", socket_addr);
+            }
+        }
+    }
+    let mut stream = stream.ok_or_else(|| {
+        anyhow::anyhow!(
+            "Failed to connect to sender on any address (tried {})",
+            addrs.len()
+        )
+    })?;
 
     println!("Connected! Performing SPAKE2 key exchange...");
 

@@ -63,47 +63,35 @@ echo "----------------------"
 
 # The output structure will have platform-specific subdirectories
 # Move and rename binaries
-if [ -d "$BUILD_DIR/linux_amd64" ]; then
-    if [ -f "$BUILD_DIR/linux_amd64/wormhole-rs" ]; then
-        mv "$BUILD_DIR/linux_amd64/wormhole-rs" "$BUILD_DIR/wormhole-rs-linux-amd64"
-        echo "✓ AMD64 binary saved to: $BUILD_DIR/wormhole-rs-linux-amd64"
+for arch in amd64 arm64; do
+    archdir="$BUILD_DIR/linux_${arch}"
+    if [ -d "$archdir" ]; then
+        for bin in wormhole-rs wormhole-rs-webrtc wormhole-rs-local; do
+            if [ -f "$archdir/$bin" ]; then
+                mv "$archdir/$bin" "$BUILD_DIR/${bin}-linux-${arch}"
+                echo "✓ $(echo "$arch" | tr '[:lower:]' '[:upper:]') $bin saved to: $BUILD_DIR/${bin}-linux-${arch}"
+            fi
+        done
+        rm -rf "$archdir"
     fi
-    rm -rf "$BUILD_DIR/linux_amd64"
-fi
-
-if [ -d "$BUILD_DIR/linux_arm64" ]; then
-    if [ -f "$BUILD_DIR/linux_arm64/wormhole-rs" ]; then
-        mv "$BUILD_DIR/linux_arm64/wormhole-rs" "$BUILD_DIR/wormhole-rs-linux-arm64"
-        echo "✓ ARM64 binary saved to: $BUILD_DIR/wormhole-rs-linux-arm64"
-    fi
-    rm -rf "$BUILD_DIR/linux_arm64"
-fi
+done
 
 # Show results
 echo ""
 echo "Build complete!"
 echo "==============="
 echo ""
-ls -lh "$BUILD_DIR"/wormhole-rs-*
+ls -lh "$BUILD_DIR"/*-linux-*
 echo ""
 
 # Verify binaries
 echo "Verifying binaries..."
 echo "---------------------"
 if command -v file &> /dev/null; then
-    file "$BUILD_DIR"/wormhole-rs-*
+    file "$BUILD_DIR"/*-linux-*
 else
     echo "Note: 'file' command not available, skipping binary verification"
 fi
 
 echo ""
 echo "Binaries are ready in: $BUILD_DIR/"
-echo ""
-echo "To test on Linux:"
-echo "  # AMD64:"
-echo "  scp $BUILD_DIR/wormhole-rs-linux-amd64 user@host:/tmp/wormhole-rs"
-echo "  ssh user@host '/tmp/wormhole-rs --help'"
-echo ""
-echo "  # ARM64:"
-echo "  scp $BUILD_DIR/wormhole-rs-linux-arm64 user@host:/tmp/wormhole-rs"
-echo "  ssh user@host '/tmp/wormhole-rs --help'"
