@@ -287,8 +287,9 @@ pub fn generate_webrtc_code(
     Ok(URL_SAFE_NO_PAD.encode(&serialized))
 }
 
-/// Validate wormhole code format without fully parsing it
-/// Returns Ok(()) if the format looks valid, Err with a helpful message otherwise
+/// Validate wormhole code format without fully parsing it.
+/// Performs lightweight checks (empty, invalid characters, minimum length)
+/// without decoding. Returns Ok(()) if the format looks valid.
 pub fn validate_code_format(code: &str) -> Result<()> {
     let code = code.trim();
 
@@ -313,16 +314,6 @@ pub fn validate_code_format(code: &str) -> Result<()> {
         anyhow::bail!("Invalid wormhole code: too short. Make sure you copied the entire code.");
     }
 
-    // Try to decode base64
-    let decoded = URL_SAFE_NO_PAD
-        .decode(code)
-        .context("Invalid wormhole code: not valid base64url encoding")?;
-
-    // Check minimum decoded length (some bytes for token)
-    if decoded.len() < 10 {
-        anyhow::bail!("Invalid wormhole code: decoded data too short");
-    }
-
     Ok(())
 }
 
@@ -334,7 +325,11 @@ pub fn parse_code(code: &str) -> Result<WormholeToken> {
 
     let serialized = URL_SAFE_NO_PAD
         .decode(code.trim())
-        .context("Failed to decode wormhole code")?;
+        .context("Invalid wormhole code: not valid base64url encoding")?;
+
+    if serialized.len() < 10 {
+        anyhow::bail!("Invalid wormhole code: decoded data too short");
+    }
 
     let token: WormholeToken = serde_json::from_slice(&serialized)
         .context("Invalid wormhole code: failed to parse token. Make sure the code is correct.")?;
