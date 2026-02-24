@@ -3,7 +3,7 @@
 use anyhow::{Context, Result};
 use iroh::{
     Endpoint, RelayMap, RelayUrl,
-    discovery::{dns::DnsDiscovery, mdns::MdnsDiscovery, pkarr::PkarrPublisher},
+    address_lookup::{DnsAddressLookup, MdnsAddressLookup, PkarrPublisher},
     endpoint::{RecvStream, RelayMode, SendStream},
 };
 use std::io;
@@ -164,9 +164,9 @@ pub async fn create_sender_endpoint(relay_urls: Vec<String>) -> Result<Endpoint>
 
     let endpoint = Endpoint::empty_builder(relay_mode)
         .alpns(vec![ALPN.to_vec()])
-        .discovery(PkarrPublisher::n0_dns())
-        .discovery(DnsDiscovery::n0_dns())
-        .discovery(MdnsDiscovery::builder())
+        .address_lookup(PkarrPublisher::n0_dns())
+        .address_lookup(DnsAddressLookup::n0_dns())
+        .address_lookup(MdnsAddressLookup::builder())
         .bind()
         .await
         .context("Failed to create endpoint")?;
@@ -187,9 +187,9 @@ pub async fn create_receiver_endpoint(relay_urls: Vec<String>) -> Result<Endpoin
     let relay_mode = parse_relay_mode(relay_urls)?;
 
     let endpoint = Endpoint::empty_builder(relay_mode)
-        .discovery(PkarrPublisher::n0_dns())
-        .discovery(DnsDiscovery::n0_dns())
-        .discovery(MdnsDiscovery::builder())
+        .address_lookup(PkarrPublisher::n0_dns())
+        .address_lookup(DnsAddressLookup::n0_dns())
+        .address_lookup(MdnsAddressLookup::builder())
         .bind()
         .await
         .context("Failed to create endpoint")?;

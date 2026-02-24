@@ -16,7 +16,10 @@
       "Bash(ls:*)",
       "Bash({} ;)",
       "Bash(cargo doc:*)",
-      "Bash(git ls-tree:*)"
+      "Bash(git ls-tree:*)",
+      "WebFetch(domain:github.com)",
+      "Bash(head:*)",
+      "Bash(grep:*)"
     ]
   }
 }

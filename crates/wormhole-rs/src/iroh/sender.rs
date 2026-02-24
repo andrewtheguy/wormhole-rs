@@ -178,10 +178,15 @@ async fn transfer_data_internal(
     eprintln!("Receiver connected!");
     eprintln!("   Remote ID: {}", remote_id);
 
-    // Get connection type (Direct, Relay, Mixed, None)
-    if let Some(mut conn_type_watcher) = endpoint.conn_type(remote_id) {
-        let conn_type = conn_type_watcher.get();
-        eprintln!("   Connection: {:?}", conn_type);
+    // Print connection paths
+    let paths = conn.paths().get();
+    for path in paths.iter() {
+        let selected = if path.is_selected() { " (selected)" } else { "" };
+        match path.remote_addr() {
+            iroh::TransportAddr::Ip(addr) => eprintln!("   Path: direct {}{}", addr, selected),
+            iroh::TransportAddr::Relay(url) => eprintln!("   Path: relay {}{}", url, selected),
+            _ => eprintln!("   Path: other{}", selected),
+        }
     }
 
     // Open bi-directional stream
