@@ -4,12 +4,11 @@ use anyhow::{Context, Result};
 use iroh::{
     Endpoint, RelayMap, RelayUrl,
     address_lookup::{DnsAddressLookup, MdnsAddressLookup, PkarrPublisher},
-    endpoint::{QuicTransportConfig, RecvStream, RelayMode, SendStream},
+    endpoint::{RecvStream, RelayMode, SendStream},
 };
 use std::io;
 use std::pin::Pin;
 use std::task::{Context as TaskContext, Poll};
-use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
 /// A duplex wrapper that combines separate send/recv streams into a single bidirectional stream.
@@ -121,26 +120,6 @@ impl AsyncWrite for OwnedIrohDuplex {
 /// Application-Layer Protocol Negotiation identifier for wormhole transfers.
 pub const ALPN: &[u8] = b"wormhole-transfer/1";
 
-/// Mirror the proven tunnel-rs defaults to avoid flow-control stalls on larger transfers.
-const QUIC_KEEP_ALIVE_INTERVAL: Duration = Duration::from_secs(15);
-const QUIC_IDLE_TIMEOUT: Duration = Duration::from_secs(300);
-const QUIC_RECEIVE_WINDOW: u32 = 8 * 1024 * 1024;
-const QUIC_SEND_WINDOW: u32 = 8 * 1024 * 1024;
-
-fn build_transport_config() -> Result<QuicTransportConfig> {
-    let idle_timeout = QUIC_IDLE_TIMEOUT
-        .try_into()
-        .context("Failed to convert QUIC idle timeout")?;
-
-    Ok(QuicTransportConfig::builder()
-        .max_idle_timeout(Some(idle_timeout))
-        .keep_alive_interval(QUIC_KEEP_ALIVE_INTERVAL)
-        .receive_window(QUIC_RECEIVE_WINDOW.into())
-        .stream_receive_window(QUIC_RECEIVE_WINDOW.into())
-        .send_window(QUIC_SEND_WINDOW.into())
-        .build())
-}
-
 /// Parse relay URL strings into a RelayMode.
 ///
 /// If URLs are provided, returns `RelayMode::Custom` with a RelayMap containing all URLs.
@@ -209,10 +188,8 @@ pub async fn create_sender_endpoint(relay_urls: Vec<String>) -> Result<Endpoint>
 pub async fn create_receiver_endpoint(relay_urls: Vec<String>) -> Result<Endpoint> {
     print_relay_info(&relay_urls);
     let relay_mode = parse_relay_mode(relay_urls)?;
-    let transport_config = build_transport_config()?;
 
     let endpoint = Endpoint::empty_builder(relay_mode)
-        .transport_config(transport_config)
         .address_lookup(PkarrPublisher::n0_dns())
         .address_lookup(DnsAddressLookup::n0_dns())
         .address_lookup(MdnsAddressLookup::builder())
