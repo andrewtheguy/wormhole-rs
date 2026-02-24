@@ -432,7 +432,7 @@ pub async fn confirm_large_folder_transfer(file_size: u64, filename: &str) -> Re
         println!("\n⚠️  Warning: {} is large ({}).", filename, size_str);
         println!("Folder transfers are NOT resumable. If interrupted, you must start over.");
         println!(
-            "Large folders are recommended for local connections only (wormhole-rs send-local)."
+            "Large folders are recommended for local connections only (wormhole-rs-local send)."
         );
         print!("Continue anyway? [y/N]: ");
         std::io::stdout().flush()?;

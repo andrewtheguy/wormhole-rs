@@ -33,7 +33,6 @@ iroh = { version = "0.95.1", features = ["discovery-local-network"], optional = 
 
 # Crate-specific dependencies
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-mdns-sd = "0.15"
 
 # Tor/Onion transport (optional, crate-specific)
 arti-client = { version = "0.37", features = ["onion-service-service", "onion-service-client", "tokio"], optional = true }

@@ -69,6 +69,15 @@ jobs:
           name: release-webrtc-${{ matrix.suffix }}
           path: target/release/wormhole-rs-webrtc-${{ matrix.suffix }}
 
+      - name: Rename Local Binary
+        run: mv target/${{ matrix.target }}/release/wormhole-rs-local target/release/wormhole-rs-local-${{ matrix.suffix }}
+
+      - name: Upload Local release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-local-${{ matrix.suffix }}
+          path: target/release/wormhole-rs-local-${{ matrix.suffix }}
+
   build-other:
     needs: setup
     strategy:
@@ -137,6 +146,28 @@ jobs:
         with:
           name: release-webrtc-${{ matrix.suffix }}
           path: target/release/wormhole-rs-webrtc-${{ matrix.suffix }}.exe
+
+      - name: Rename Local Binary (Unix)
+        if: runner.os != 'Windows'
+        run: mv target/${{ matrix.target }}/release/wormhole-rs-local target/release/wormhole-rs-local-${{ matrix.suffix }}
+
+      - name: Rename Local Binary (Windows)
+        if: runner.os == 'Windows'
+        run: move target\${{ matrix.target }}\release\wormhole-rs-local.exe target\release\wormhole-rs-local-${{ matrix.suffix }}.exe
+
+      - name: Upload Local release artifact (Unix)
+        if: runner.os != 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-local-${{ matrix.suffix }}
+          path: target/release/wormhole-rs-local-${{ matrix.suffix }}
+
+      - name: Upload Local release artifact (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-local-${{ matrix.suffix }}
+          path: target/release/wormhole-rs-local-${{ matrix.suffix }}.exe
 
   create-release:
     needs: [setup, build-linux, build-other]

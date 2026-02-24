@@ -3,11 +3,12 @@ resolver = "2"
 members = [
     "crates/wormhole-common",
     "crates/wormhole-rs",
+    "crates/wormhole-rs-local",
     "crates/wormhole-rs-webrtc",
 ]
 
 [workspace.package]
-version = "0.0.1-alpha1"
+version = "0.0.1-alpha2"
 edition = "2024"
 
 [workspace.dependencies]

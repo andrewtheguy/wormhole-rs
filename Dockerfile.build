@@ -15,9 +15,13 @@ COPY crates ./crates
 RUN --mount=type=cache,target=/usr/local/cargo/registry,id=cargo-registry-${TARGETPLATFORM} \
     --mount=type=cache,target=/usr/local/cargo/git,id=cargo-git-${TARGETPLATFORM} \
     --mount=type=cache,target=/build/target,id=cargo-target-${TARGETPLATFORM} \
-    cargo build --release --all-features -p wormhole-rs && \
-    cp target/release/wormhole-rs /wormhole-rs
+    cargo build --release --all-features -p wormhole-rs -p wormhole-rs-webrtc -p wormhole-rs-local && \
+    cp target/release/wormhole-rs /wormhole-rs && \
+    cp target/release/wormhole-rs-webrtc /wormhole-rs-webrtc && \
+    cp target/release/wormhole-rs-local /wormhole-rs-local
 
-# Export stage - only contains the binary
+# Export stage - only contains the binaries
 FROM scratch AS export
 COPY --from=builder /wormhole-rs /wormhole-rs
+COPY --from=builder /wormhole-rs-webrtc /wormhole-rs-webrtc
+COPY --from=builder /wormhole-rs-local /wormhole-rs-local

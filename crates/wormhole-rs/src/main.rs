@@ -17,9 +17,6 @@ mod onion;
 #[cfg(feature = "onion")]
 use onion::{receiver as onion_receiver, sender as onion_sender};
 
-mod mdns;
-use mdns::{receiver as mdns_receiver, sender as mdns_sender};
-
 mod cli;
 
 #[derive(Parser)]
@@ -68,17 +65,6 @@ enum Commands {
         pin: bool,
     },
 
-    /// Send via local network (mDNS discovery)
-    #[command(name = "send-local")]
-    SendLocal {
-        /// Path to file or folder
-        path: PathBuf,
-
-        /// Send a folder (creates tar archive)
-        #[arg(long)]
-        folder: bool,
-    },
-
     /// Receive a file or folder using a code
     Receive {
         /// Wormhole code from sender (will prompt if not provided)
@@ -102,13 +88,6 @@ enum Commands {
         no_resume: bool,
     },
 
-    /// Receive via local network (mDNS discovery)
-    #[command(name = "receive-local")]
-    ReceiveLocal {
-        /// Output directory (default: current directory)
-        #[arg(short, long)]
-        output: Option<PathBuf>,
-    },
 }
 
 /// Validate path exists and matches folder flag
@@ -229,20 +208,6 @@ async fn async_main() -> Result<()> {
             } else {
                 onion_sender::send_file_tor(&path, pin).await?;
             }
-        }
-
-        Commands::SendLocal { path, folder } => {
-            validate_path(&path, folder)?;
-            if folder {
-                mdns_sender::send_folder_mdns(&path).await?;
-            } else {
-                mdns_sender::send_file_mdns(&path).await?;
-            }
-        }
-
-        Commands::ReceiveLocal { output } => {
-            validate_output_dir(&output)?;
-            mdns_receiver::receive_mdns(output).await?;
         }
 
         Commands::Receive {
