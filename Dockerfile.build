@@ -5,18 +5,17 @@ ARG TARGETPLATFORM
 
 WORKDIR /build
 
-# Copy manifests
+# Copy workspace manifests and lockfile
 COPY Cargo.toml Cargo.lock ./
 
-# Copy source code
-COPY src ./src
+# Copy all workspace crates
+COPY crates ./crates
 
 # Build for the target platform with per-platform cargo cache mounts
-# Includes --features onion to enable Tor hidden service support
 RUN --mount=type=cache,target=/usr/local/cargo/registry,id=cargo-registry-${TARGETPLATFORM} \
     --mount=type=cache,target=/usr/local/cargo/git,id=cargo-git-${TARGETPLATFORM} \
     --mount=type=cache,target=/build/target,id=cargo-target-${TARGETPLATFORM} \
-    cargo build --release --all-features && \
+    cargo build --release --all-features -p wormhole-rs && \
     cp target/release/wormhole-rs /wormhole-rs
 
 # Export stage - only contains the binary
