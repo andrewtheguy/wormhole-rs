@@ -350,10 +350,7 @@ impl NostrSignaling {
                 break;
             }
 
-            // Use remaining time capped at 1 second for the poll timeout
-            let poll_timeout = remaining.min(Duration::from_secs(1));
-
-            match timeout(poll_timeout, notifications.recv()).await {
+            match timeout(remaining, notifications.recv()).await {
                 Ok(Ok(RelayPoolNotification::Event { event, .. })) => {
                     if let Some(msg) = self.validate_and_parse_event(&event) {
                         return Ok(Some(msg));
