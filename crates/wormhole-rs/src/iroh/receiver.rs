@@ -2,14 +2,63 @@ use anyhow::{Context, Result};
 use iroh::Watcher;
 use iroh::endpoint::{
     AuthenticationError, ConnectError, ConnectWithOptsError, ConnectingError, ConnectionError,
+    PathInfoList,
 };
 use std::path::PathBuf;
 use std::time::Duration;
-use tokio::time::timeout;
+use tokio::time::{Instant, timeout};
 
 use super::common::{ALPN, OwnedIrohDuplex, create_receiver_endpoint};
 use wormhole_common::core::transfer::run_receiver_transfer;
 use wormhole_common::core::wormhole::parse_code;
+
+/// Give iroh extra time to switch from relay to a direct path before transfer starts.
+const DIRECT_PATH_GRACE_PERIOD: Duration = Duration::from_secs(20);
+
+fn has_selected_direct_path(paths: &PathInfoList) -> bool {
+    paths
+        .iter()
+        .any(|path| path.is_selected() && matches!(path.remote_addr(), iroh::TransportAddr::Ip(_)))
+}
+
+fn print_connection_paths(paths: &PathInfoList) {
+    for path in paths.iter() {
+        let selected = if path.is_selected() {
+            " (selected)"
+        } else {
+            ""
+        };
+        match path.remote_addr() {
+            iroh::TransportAddr::Ip(addr) => eprintln!("   Path: direct {}{}", addr, selected),
+            iroh::TransportAddr::Relay(url) => eprintln!("   Path: relay {}{}", url, selected),
+            _ => eprintln!("   Path: other{}", selected),
+        }
+    }
+}
+
+async fn wait_for_selected_direct_path<W>(paths_watcher: &mut W, max_wait: Duration) -> bool
+where
+    W: Watcher<Value = PathInfoList> + Unpin,
+{
+    let deadline = Instant::now() + max_wait;
+    loop {
+        if has_selected_direct_path(&paths_watcher.get()) {
+            return true;
+        }
+
+        let now = Instant::now();
+        if now >= deadline {
+            return false;
+        }
+        let remaining = deadline.saturating_duration_since(now);
+
+        match timeout(remaining, paths_watcher.updated()).await {
+            Ok(Ok(_)) => {}
+            Ok(Err(_)) => return false,
+            Err(_) => return has_selected_direct_path(&paths_watcher.get()),
+        }
+    }
+}
 
 /// Receive a file or folder using a wormhole code.
 /// Auto-detects whether it's a file or folder transfer based on the header.
@@ -68,15 +117,25 @@ pub async fn receive(
     eprintln!("Connected!");
     eprintln!("Remote ID: {}", remote_id);
 
-    // Print connection paths
-    let paths = conn.paths().get();
-    for path in paths.iter() {
-        let selected = if path.is_selected() { " (selected)" } else { "" };
-        match path.remote_addr() {
-            iroh::TransportAddr::Ip(addr) => eprintln!("   Path: direct {}{}", addr, selected),
-            iroh::TransportAddr::Relay(url) => eprintln!("   Path: relay {}{}", url, selected),
-            _ => eprintln!("   Path: other{}", selected),
+    // Prefer a direct path if one becomes available shortly after initial connect.
+    let mut paths_watcher = conn.paths();
+    let mut paths = paths_watcher.get();
+    print_connection_paths(&paths);
+
+    if !has_selected_direct_path(&paths) {
+        eprintln!(
+            "   Waiting up to {}s for direct path...",
+            DIRECT_PATH_GRACE_PERIOD.as_secs()
+        );
+        let got_direct =
+            wait_for_selected_direct_path(&mut paths_watcher, DIRECT_PATH_GRACE_PERIOD).await;
+        paths = paths_watcher.get();
+        if got_direct {
+            eprintln!("   Direct path selected.");
+        } else {
+            eprintln!("   Continuing on current path.");
         }
+        print_connection_paths(&paths);
     }
 
     const ACCEPT_STREAM_TIMEOUT: Duration = Duration::from_secs(30);
