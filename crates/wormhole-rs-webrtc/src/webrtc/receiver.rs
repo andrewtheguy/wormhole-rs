@@ -165,11 +165,7 @@ async fn try_webrtc_receive(
 
     // Wait for sender to close the connection (confirms ACK was received)
     // This ensures the ACK is delivered before we close our side
-    let close_timeout = Duration::from_secs(10);
-    let start = std::time::Instant::now();
-    while !stream.is_closed() && start.elapsed() < close_timeout {
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
+    let _ = tokio::time::timeout(Duration::from_secs(10), stream.closed()).await;
 
     // Cleanup
     let _ = rtc_peer.close().await;

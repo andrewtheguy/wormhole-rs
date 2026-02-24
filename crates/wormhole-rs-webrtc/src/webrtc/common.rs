@@ -469,6 +469,7 @@ pub struct DataChannelStream {
     message_rx: mpsc::Receiver<Vec<u8>>,
     read_buffer: VecDeque<u8>,
     closed: Arc<std::sync::atomic::AtomicBool>,
+    close_notify: Arc<tokio::sync::Notify>,
     /// Tracks if any messages were dropped due to buffer overflow.
     /// If true, the stream will return an error on the next read to prevent
     /// silent data corruption in file transfers.
@@ -488,6 +489,7 @@ impl DataChannelStream {
     ) -> Self {
         let (message_tx, message_rx) = mpsc::channel::<Vec<u8>>(1000);
         let closed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let close_notify = Arc::new(tokio::sync::Notify::new());
         let messages_dropped = Arc::new(std::sync::atomic::AtomicBool::new(false));
 
         let dc_label = data_channel.label().to_string();
@@ -537,10 +539,12 @@ impl DataChannelStream {
             Box::pin(async {})
         }));
 
-        // On close - mark as closed
+        // On close - mark as closed and notify waiters
         let closed_flag = closed.clone();
+        let close_notify_flag = close_notify.clone();
         data_channel.on_close(Box::new(move || {
             closed_flag.store(true, std::sync::atomic::Ordering::SeqCst);
+            close_notify_flag.notify_waiters();
             eprintln!("Data channel '{}' closed", dc_label);
             Box::pin(async {})
         }));
@@ -550,6 +554,7 @@ impl DataChannelStream {
             message_rx,
             read_buffer: VecDeque::new(),
             closed,
+            close_notify,
             messages_dropped,
             write_pending: None,
         }
@@ -558,6 +563,14 @@ impl DataChannelStream {
     /// Check if the data channel is closed
     pub fn is_closed(&self) -> bool {
         self.closed.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// Wait until the data channel is closed.
+    pub async fn closed(&self) {
+        if self.is_closed() {
+            return;
+        }
+        self.close_notify.notified().await;
     }
 
     /// Check if any messages were dropped due to buffer overflow.
