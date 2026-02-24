@@ -111,12 +111,12 @@ pub struct WormholeToken {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub addr: Option<MinimalAddr>,
 
-    // Version 2 fields (Tor-specific):
+    // Tor-specific fields:
     /// Onion address for Tor hidden service (e.g., "abc123...xyz.onion")
     #[serde(skip_serializing_if = "Option::is_none")]
     pub onion_address: Option<String>,
 
-    // Version 2 fields (WebRTC-specific):
+    // WebRTC-specific fields:
     /// Sender's ephemeral Nostr public key for signaling (hex)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub webrtc_sender_pubkey: Option<String>,

@@ -10,6 +10,7 @@ use std::net::TcpListener;
 use std::path::Path;
 use tokio::fs::File;
 use tokio::net::TcpStream;
+use tokio::time::timeout;
 
 use super::common::{
     PORT_RANGE_END, PORT_RANGE_START, SERVICE_TYPE, TXT_FILE_SIZE, TXT_FILENAME, TXT_TRANSFER_ID,
@@ -207,7 +208,7 @@ async fn transfer_data_internal(
 
     // Helper to handle failed connection attempts (handshake failure or timeout)
     let handle_failed_attempt =
-        |stream: TcpStream, failed_attempts: &mut u32, reason: &str| -> Result<()> {
+        |failed_attempts: &mut u32, reason: &str| -> Result<()> {
             eprintln!("{}", reason);
             *failed_attempts += 1;
             if *failed_attempts >= MAX_FAILED_ATTEMPTS {
@@ -217,7 +218,6 @@ async fn transfer_data_internal(
                     MAX_FAILED_ATTEMPTS
                 );
             }
-            drop(stream);
             Ok(())
         };
 
@@ -229,8 +229,6 @@ async fn transfer_data_internal(
             .context("Failed to accept connection")?;
 
         eprintln!("Connection from: {}", peer_addr);
-
-        use tokio::time::timeout;
 
         // Perform SPAKE2 handshake (includes transfer ID validation)
         let handshake_result = timeout(
@@ -257,12 +255,12 @@ async fn transfer_data_internal(
             }
             Ok(Err(e)) => {
                 let reason = format!("SPAKE2 handshake failed from {}: {}", peer_addr, e);
-                handle_failed_attempt(stream, &mut failed_attempts, &reason)?;
+                handle_failed_attempt(&mut failed_attempts, &reason)?;
                 continue;
             }
             Err(_) => {
                 let reason = format!("Handshake timeout from {}, closing connection", peer_addr);
-                handle_failed_attempt(stream, &mut failed_attempts, &reason)?;
+                handle_failed_attempt(&mut failed_attempts, &reason)?;
                 continue;
             }
         }
