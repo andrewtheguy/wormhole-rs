@@ -84,7 +84,7 @@ pub async fn receive(
     let (_path, duplex) = run_receiver_transfer(duplex, key, output_dir, no_resume).await?;
 
     // Stop path watcher before cleanup
-    path_watcher.abort();
+    drop(path_watcher);
 
     // Finish send stream and wait for acknowledgment (QUIC-specific)
     // This ensures the ACK message is fully delivered before closing the connection.

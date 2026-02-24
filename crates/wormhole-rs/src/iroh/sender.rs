@@ -195,7 +195,7 @@ async fn transfer_data_internal(
             _ = shutdown_rx => {
                 // Graceful shutdown requested - notify receiver and close connection
                 eprintln!("\nShutdown requested, cancelling transfer...");
-                path_watcher.abort();
+                drop(path_watcher);
                 conn.close(close_codes::CANCELLED, b"cancelled");
                 endpoint.close().await;
                 return Err(Interrupted.into());
@@ -206,7 +206,7 @@ async fn transfer_data_internal(
     };
 
     // Stop path watcher before cleanup
-    path_watcher.abort();
+    drop(path_watcher);
 
     // Handle transfer result - ensure cleanup on all paths
     match transfer_result {

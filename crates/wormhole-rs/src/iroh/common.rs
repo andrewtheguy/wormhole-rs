@@ -142,11 +142,20 @@ fn format_paths(paths: &PathInfoList) -> String {
     }
 }
 
+/// RAII guard that aborts the background path watcher task on drop.
+pub struct PathWatcherGuard(JoinHandle<()>);
+
+impl Drop for PathWatcherGuard {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
 /// Print the current connection paths and spawn a background task that
 /// prints updates whenever the active path changes (e.g. relay -> direct).
 ///
-/// Returns a `JoinHandle` that should be aborted when the transfer is done.
-pub fn watch_connection_paths(conn: &Connection) -> JoinHandle<()> {
+/// The returned guard aborts the background task when dropped.
+pub fn watch_connection_paths(conn: &Connection) -> PathWatcherGuard {
     let mut watcher = conn.paths();
 
     // Print initial snapshot
@@ -155,14 +164,14 @@ pub fn watch_connection_paths(conn: &Connection) -> JoinHandle<()> {
 
     // Spawn background task that prints on changes
     let mut last = initial;
-    tokio::spawn(async move {
+    PathWatcherGuard(tokio::spawn(async move {
         while let Ok(paths) = watcher.updated().await {
             if paths != last {
                 eprintln!("   Connection: {}", format_paths(&paths));
                 last = paths;
             }
         }
-    })
+    }))
 }
 
 /// Application-Layer Protocol Negotiation identifier for wormhole transfers.
