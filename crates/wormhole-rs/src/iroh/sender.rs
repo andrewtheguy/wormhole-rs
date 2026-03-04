@@ -35,7 +35,7 @@ mod close_codes {
 ///
 /// This function inspects the structured error types from iroh/quinn to identify
 /// errors that suggest relay failures, network unreachability, or similar issues
-/// where Tor mode might be a better alternative.
+/// that warrant specific error messaging.
 fn is_relay_or_network_error(e: &ConnectingError) -> bool {
     // First, try to match on structured error variants
     match e {
@@ -146,8 +146,7 @@ async fn transfer_data_internal(
                 "No incoming connection.\n\n\
                  Troubleshooting:\n  \
                  - Ensure the receiver has the correct wormhole code\n  \
-                 - Check network connectivity on both ends\n  \
-                 - Try Tor mode for better NAT traversal: wormhole-rs-tor send <file>"
+                 - Check network connectivity on both ends"
             )
         })?
         .await
@@ -156,8 +155,7 @@ async fn transfer_data_internal(
             if is_relay_or_network_error(&e) {
                 anyhow::anyhow!(
                     "Failed to accept connection: {}\n\n\
-                     Relay connection failed. Try Tor mode instead:\n  \
-                     wormhole-rs-tor send <file>",
+                     Relay connection failed. Check network connectivity and firewall settings.",
                     e
                 )
             } else {
@@ -165,8 +163,7 @@ async fn transfer_data_internal(
                     "Failed to accept connection: {}\n\n\
                      Troubleshooting:\n  \
                      - Ensure the receiver has the correct wormhole code\n  \
-                     - Check network connectivity and firewall settings\n  \
-                     - If issues persist, try Tor mode: wormhole-rs-tor send <file>",
+                     - Check network connectivity and firewall settings",
                     e
                 )
             }

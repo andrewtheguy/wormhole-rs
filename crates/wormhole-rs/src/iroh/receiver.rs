@@ -47,9 +47,7 @@ pub async fn receive(
         if is_relay_or_network_error {
             anyhow::anyhow!(
                 "Failed to connect to sender: {}\n\n\
-                 Relay connection failed. Try Tor mode instead:\n  \
-                 Sender:   wormhole-rs-tor send <file>\n  \
-                 Receiver: wormhole-rs receive <code>",
+                 Relay connection failed. Check network connectivity and firewall settings.",
                 e
             )
         } else {
@@ -58,8 +56,7 @@ pub async fn receive(
                  Troubleshooting:\n  \
                  - Verify the wormhole code is correct\n  \
                  - Ensure the sender is still running\n  \
-                 - Check network connectivity and firewall settings\n  \
-                 - If issues persist, try Tor mode: wormhole-rs-tor send <file>",
+                 - Check network connectivity and firewall settings",
                 e
             )
         }
@@ -146,7 +143,7 @@ pub async fn receive(
 ///
 /// This function inspects the structured error types from iroh/quinn to identify
 /// errors that suggest relay failures, network unreachability, or similar issues
-/// where Tor mode might be a better alternative.
+/// that warrant specific error messaging.
 fn is_relay_or_network_error(e: &ConnectError) -> bool {
     // First, try to match on structured error variants
     match e {
