@@ -1,4 +1,5 @@
+#[cfg(feature = "nostr")]
 pub mod nostr_protocol;
 
-#[cfg(test)]
+#[cfg(all(test, feature = "nostr"))]
 mod nostr_protocol_test;

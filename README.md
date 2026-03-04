@@ -113,9 +113,6 @@ wormhole-rs send /path/to/folder --folder
 
 ```bash
 wormhole-rs-tor send /path/to/file
-
-# Send using PIN
-wormhole-rs-tor send --pin /path/to/file
 ```
 
 #### 3. WebRTC Mode - `wormhole-rs-webrtc send`

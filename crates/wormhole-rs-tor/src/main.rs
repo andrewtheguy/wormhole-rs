@@ -29,10 +29,6 @@ enum Commands {
         /// Send a folder (creates tar archive)
         #[arg(long)]
         folder: bool,
-
-        /// Use PIN-based code exchange for Nostr (prompts for PIN input)
-        #[arg(long)]
-        pin: bool,
     },
 
     /// Receive a file or folder using a code
@@ -44,10 +40,6 @@ enum Commands {
         /// Output directory (default: current directory)
         #[arg(short, long)]
         output: Option<PathBuf>,
-
-        /// Use PIN-based code exchange for Nostr (prompts for PIN input)
-        #[arg(long)]
-        pin: bool,
     },
 }
 
@@ -130,40 +122,17 @@ async fn async_main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Send { path, folder, pin } => {
+        Commands::Send { path, folder } => {
             validate_path(&path, folder)?;
             if folder {
-                onion_sender::send_folder_tor(&path, pin).await?;
+                onion_sender::send_folder_tor(&path).await?;
             } else {
-                onion_sender::send_file_tor(&path, pin).await?;
+                onion_sender::send_file_tor(&path).await?;
             }
         }
 
-        Commands::Receive {
-            mut code,
-            output,
-            pin,
-        } => {
+        Commands::Receive { code, output } => {
             validate_output_dir(&output)?;
-
-            if pin {
-                let pin_str = wormhole_common::auth::pin::prompt_pin()?;
-
-                eprintln!("Searching for wormhole token via Nostr...");
-
-                let token_str = tokio::time::timeout(
-                    std::time::Duration::from_secs(30),
-                    wormhole_common::auth::nostr_pin::fetch_wormhole_code_via_pin(&pin_str),
-                )
-                .await
-                .map_err(|_| {
-                    anyhow::anyhow!(
-                        "Timeout: Failed to retrieve wormhole code from Nostr after 30 seconds"
-                    )
-                })??;
-                eprintln!("Token found and decrypted!");
-                code = Some(token_str);
-            }
 
             let code = match code {
                 Some(c) => c,

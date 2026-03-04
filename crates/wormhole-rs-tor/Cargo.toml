@@ -21,7 +21,6 @@ rand = { workspace = true }
 hex = { workspace = true }
 futures = { workspace = true }
 log = { workspace = true }
-nostr-sdk = { workspace = true }
 tempfile = { workspace = true }
 
 # Crate-specific dependencies

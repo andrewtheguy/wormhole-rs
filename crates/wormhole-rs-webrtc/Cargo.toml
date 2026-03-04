@@ -10,7 +10,7 @@ path = "src/main.rs"
 
 [dependencies]
 # Common library
-wormhole-common = { path = "../wormhole-common" }
+wormhole-common = { path = "../wormhole-common", features = ["nostr"] }
 
 # Core dependencies
 tokio = { workspace = true }

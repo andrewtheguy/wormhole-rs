@@ -3,6 +3,9 @@ name = "wormhole-common"
 version.workspace = true
 edition.workspace = true
 
+[features]
+nostr = ["dep:nostr-sdk"]
+
 [dependencies]
 # Core (workspace)
 tokio = { workspace = true }
@@ -14,7 +17,7 @@ hex = { workspace = true }
 rand = { workspace = true }
 futures = { workspace = true }
 log = { workspace = true }
-nostr-sdk = { workspace = true }
+nostr-sdk = { workspace = true, optional = true }
 
 # Cryptography
 aes-gcm = "0.10"

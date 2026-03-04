@@ -8970,7 +8970,6 @@ dependencies = [
  "futures",
  "hex",
  "log",
- "nostr-sdk",
  "rand 0.8.5",
  "rusqlite",
  "safelog",

@@ -68,14 +68,11 @@ This guide describes common scenarios where `wormhole-rs` shines and which mode 
   2. Receiver runs `wormhole-rs-local receive` and types `A1b2C3d4E5f6`.
 
 **Solution B**: **PIN Mode** (For internet transfers)
-- **Why**: Uses a short 12-character PIN instead of a long code. The PIN is exchanged via Nostr relays, while the actual file transfer uses either iroh or Tor transport.
+- **Why**: Uses a short 12-character PIN instead of a long code. The PIN is exchanged via Nostr relays, while the actual file transfer uses iroh transport.
 - **Command**:
   ```bash
   # Sender (iroh transport with PIN exchange)
   wormhole-rs send --pin /path/to/file
-
-  # Or sender (Tor transport with PIN exchange, for anonymity)
-  wormhole-rs-tor send --pin /path/to/file
 
   # Receiver (unified command, prompts for PIN)
   wormhole-rs receive --pin
@@ -109,7 +106,7 @@ This guide describes common scenarios where `wormhole-rs` shines and which mode 
 - **Why**: Creates a Tor Hidden Service for the transfer. Traffic is routed through the Tor network, masking locations of both parties.
 - **Command**:
   ```bash
-  wormhole-rs-tor send --pin /path/to/file
+  wormhole-rs-tor send /path/to/file
   ```
 
 ---
