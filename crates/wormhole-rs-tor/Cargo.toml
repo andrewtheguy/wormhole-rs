@@ -1,10 +1,11 @@
 [package]
-name = "wormhole-rs"
+name = "wormhole-rs-tor"
 version.workspace = true
 edition.workspace = true
+publish = false
 
 [[bin]]
-name = "wormhole-rs"
+name = "wormhole-rs-tor"
 path = "src/main.rs"
 
 [dependencies]
@@ -18,15 +19,17 @@ anyhow = { workspace = true }
 clap = { workspace = true }
 rand = { workspace = true }
 hex = { workspace = true }
-base64 = { workspace = true }
-serde_json = { workspace = true }
 futures = { workspace = true }
 log = { workspace = true }
 nostr-sdk = { workspace = true }
 tempfile = { workspace = true }
 
-# iroh transport
-iroh = { version = "0.96.1", features = ["address-lookup-mdns"] }
-
 # Crate-specific dependencies
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Tor/Onion transport
+arti-client = { version = "0.37", features = ["onion-service-service", "onion-service-client", "tokio"] }
+tor-hsservice = "0.37"
+tor-cell = "0.37"
+safelog = "0.7.1"
+rusqlite = { version = "0.37", features = ["bundled"] }

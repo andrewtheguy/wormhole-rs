@@ -4,14 +4,13 @@ use std::path::Path;
 use tokio::fs::File;
 use tokio::sync::oneshot;
 
-use super::common::{IrohDuplex, create_sender_endpoint, watch_connection_paths};
+use super::common::{IrohDuplex, create_sender_endpoint, generate_code, watch_connection_paths};
 use crate::cli::instructions::print_receiver_command;
 use wormhole_common::core::crypto::generate_key;
 use wormhole_common::core::transfer::{
     FileHeader, Interrupted, TransferResult, TransferType, run_sender_transfer, send_file_with,
     send_folder_with,
 };
-use wormhole_common::core::wormhole::generate_code;
 use wormhole_common::signaling::nostr_protocol::generate_transfer_id;
 
 /// QUIC application close codes for connection termination.
@@ -148,7 +147,7 @@ async fn transfer_data_internal(
                  Troubleshooting:\n  \
                  - Ensure the receiver has the correct wormhole code\n  \
                  - Check network connectivity on both ends\n  \
-                 - Try Tor mode for better NAT traversal: wormhole-rs send-tor <file>"
+                 - Try Tor mode for better NAT traversal: wormhole-rs-tor send <file>"
             )
         })?
         .await
@@ -158,7 +157,7 @@ async fn transfer_data_internal(
                 anyhow::anyhow!(
                     "Failed to accept connection: {}\n\n\
                      Relay connection failed. Try Tor mode instead:\n  \
-                     wormhole-rs send-tor <file>",
+                     wormhole-rs-tor send <file>",
                     e
                 )
             } else {
@@ -167,7 +166,7 @@ async fn transfer_data_internal(
                      Troubleshooting:\n  \
                      - Ensure the receiver has the correct wormhole code\n  \
                      - Check network connectivity and firewall settings\n  \
-                     - If issues persist, try Tor mode: wormhole-rs send-tor <file>",
+                     - If issues persist, try Tor mode: wormhole-rs-tor send <file>",
                     e
                 )
             }

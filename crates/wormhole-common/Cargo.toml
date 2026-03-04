@@ -3,10 +3,6 @@ name = "wormhole-common"
 version.workspace = true
 edition.workspace = true
 
-[features]
-default = []
-iroh-addr = ["dep:iroh"]  # For MinimalAddr in wormhole.rs
-
 [dependencies]
 # Core (workspace)
 tokio = { workspace = true }
@@ -40,6 +36,3 @@ reqwest = { version = "0.12", features = ["json", "multipart", "stream"] }
 # CLI (for PIN input)
 rustyline = "15"
 crc32fast = "1.4"
-
-# iroh transport (optional - for MinimalAddr)
-iroh = { version = "0.96.1", optional = true }

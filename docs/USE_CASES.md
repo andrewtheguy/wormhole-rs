@@ -75,7 +75,7 @@ This guide describes common scenarios where `wormhole-rs` shines and which mode 
   wormhole-rs send --pin /path/to/file
 
   # Or sender (Tor transport with PIN exchange, for anonymity)
-  wormhole-rs send-tor --pin /path/to/file
+  wormhole-rs-tor send --pin /path/to/file
 
   # Receiver (unified command, prompts for PIN)
   wormhole-rs receive --pin
@@ -93,11 +93,11 @@ This guide describes common scenarios where `wormhole-rs` shines and which mode 
   wormhole-rs send /path/to/file
   ```
 
-**Solution B**: **Tor Mode** (if iroh fails)
-- **Why**: If direct P2P connection fails completely, Tor mode provides a reliable relay path through the Tor network with better privacy than any third-party relay.
+**Solution B**: **Tor Mode** (for anonymity)
+- **Why**: When you need anonymous transfers where neither party's IP is revealed. Uses Tor hidden services.
 - **Command**:
   ```bash
-  wormhole-rs send-tor /path/to/file
+  wormhole-rs-tor send /path/to/file
   ```
 
 ---
@@ -105,11 +105,11 @@ This guide describes common scenarios where `wormhole-rs` shines and which mode 
 ## 5. Maximum Anonymity
 **Scenario**: You want to transfer a file without revealing your IP address to the peer or any relay servers.
 
-**Solution**: **Tor Mode** (`send-tor`)
+**Solution**: **Tor Mode** (`wormhole-rs-tor send`)
 - **Why**: Creates a Tor Hidden Service for the transfer. Traffic is routed through the Tor network, masking locations of both parties.
 - **Command**:
   ```bash
-  wormhole-rs send-tor --pin /path/to/file
+  wormhole-rs-tor send --pin /path/to/file
   ```
 
 ---

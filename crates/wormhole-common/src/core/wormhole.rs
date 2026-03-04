@@ -1,7 +1,5 @@
 use anyhow::{Context, Result};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
-#[cfg(feature = "iroh-addr")]
-use iroh::{EndpointAddr, RelayUrl};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Current token format version
@@ -65,34 +63,6 @@ pub struct MinimalAddr {
     pub relay: Option<String>,
 }
 
-impl MinimalAddr {
-    #[cfg(feature = "iroh-addr")]
-    /// Create from a full EndpointAddr, stripping IP addresses
-    pub fn from_endpoint_addr(addr: &EndpointAddr) -> Self {
-        let relay = addr.relay_urls().next().map(|r| r.to_string());
-        Self {
-            id: addr.id.to_string(),
-            relay,
-        }
-    }
-
-    #[cfg(feature = "iroh-addr")]
-    /// Convert back to EndpointAddr
-    pub fn to_endpoint_addr(&self) -> Result<EndpointAddr> {
-        let id = self
-            .id
-            .parse()
-            .context("Failed to parse endpoint ID from wormhole code")?;
-        let mut addr = EndpointAddr::new(id);
-        if let Some(ref relay_str) = self.relay {
-            let relay_url: RelayUrl = relay_str
-                .parse()
-                .context("Failed to parse relay URL from wormhole code")?;
-            addr = addr.with_relay_url(relay_url);
-        }
-        Ok(addr)
-    }
-}
 
 /// Wormhole token containing all transfer metadata
 /// This is a self-describing format that includes version, protocol, and encryption info
@@ -135,41 +105,11 @@ pub struct WormholeToken {
 }
 
 /// Get current Unix timestamp in seconds
-fn current_timestamp() -> u64 {
+pub fn current_timestamp() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("System clock is set before Unix epoch")
         .as_secs()
-}
-
-/// Generate a wormhole code from endpoint address
-/// Format: base64url(json(WormholeToken))
-///
-/// # Arguments
-/// * `addr` - The endpoint address to connect to
-/// * `key` - The encryption key (required)
-#[cfg(feature = "iroh-addr")]
-pub fn generate_code(addr: &EndpointAddr, key: &[u8; 32]) -> Result<String> {
-    // Use MinimalAddr to strip IP addresses - they're auto-discovered by iroh
-    let minimal_addr = MinimalAddr::from_endpoint_addr(addr);
-
-    let token = WormholeToken {
-        version: CURRENT_VERSION,
-        protocol: PROTOCOL_IROH.to_string(),
-        created_at: current_timestamp(),
-        key: URL_SAFE_NO_PAD.encode(key),
-        addr: Some(minimal_addr),
-        onion_address: None,
-        webrtc_sender_pubkey: None,
-        webrtc_transfer_id: None,
-        webrtc_relays: None,
-        webrtc_transfer_type: None,
-        webrtc_filename: None,
-    };
-
-    let serialized = serde_json::to_vec(&token).context("Failed to serialize wormhole token")?;
-
-    Ok(URL_SAFE_NO_PAD.encode(&serialized))
 }
 
 /// Generate a wormhole code for Tor transfer

@@ -12,7 +12,8 @@ A secure, cross-platform, single-binary peer-to-peer file transfer tool with dir
 - **File and folder transfers** - Send individual files or entire directories (automatically archived)
 - **Multiple transport modes** - iroh (recommended), Tor, WebRTC, and local LAN
 - **Local discovery** - mDNS for same-network transfers without internet
-- **NAT traversal** - Automatic relay fallback for iroh; STUN for WebRTC; Tor as manual fallback
+- **NAT traversal** - Automatic relay fallback for iroh; STUN for WebRTC
+- **Anonymous transfers** - Tor hidden services via `wormhole-rs-tor` for anonymity
 - **Cross-platform** - Standalone binary for macOS, Linux, and Windows
 
 ## Installation
@@ -66,23 +67,17 @@ $env:WORMHOLE_INSTALL_ARGS='20251210172710'; irm https://andrewtheguy.github.io/
 ### From Source
 
 ```bash
-# Default build (iroh + Tor; default features)
+# Main binary (iroh transport)
 cargo build --release
 
-# iroh only
-cargo build --release --no-default-features --features iroh
-
-# Tor only
-cargo build --release --no-default-features --features onion
+# Tor binary (separate crate, anonymous transfers)
+cargo build --release -p wormhole-rs-tor
 
 # Local LAN binary (separate crate, mDNS discovery)
 cargo build --release -p wormhole-rs-local
 
 # WebRTC binary (separate crate)
 cargo build --release -p wormhole-rs-webrtc
-
-# Full feature set
-cargo build --release --all-features
 ```
 
 ## Usage
@@ -93,7 +88,6 @@ Use these modes for transfers over the internet. They all use a **Wormhole Code*
 
 #### 1. iroh Mode (Recommended) - `send`
 *Direct P2P transport using QUIC/TLS with automatic relay fallback. Most reliable for both small and large files.*
-> Requires building with `--features iroh`.
 
 ```bash
 # Send file
@@ -113,15 +107,15 @@ wormhole-rs send /path/to/folder --folder
 - Multiple `--relay-url` flags are supported for failover.
 - Discovery still relies on iroh's public DNS/pkarr services today; full zero-third-party operation will land with the planned custom DNS server support (see ROADMAP).
 
-#### 2. Tor Mode - `send-tor`
-*Anonymous transfers via Tor hidden services.*
-> Requires building with `--features onion`.
+#### 2. Tor Mode - `wormhole-rs-tor send`
+*Anonymous transfers via Tor hidden services. Use when anonymity is required.*
+> Built as a separate binary: `cargo build -p wormhole-rs-tor`.
 
 ```bash
-wormhole-rs send-tor /path/to/file
+wormhole-rs-tor send /path/to/file
 
 # Send using PIN
-wormhole-rs send-tor --pin /path/to/file
+wormhole-rs-tor send --pin /path/to/file
 ```
 
 #### 3. WebRTC Mode - `wormhole-rs-webrtc send`
@@ -155,10 +149,10 @@ wormhole-rs-webrtc receive-manual
 
 Manual mode exchanges SDP offers/answers via copy-paste. The codes contain the encryption key, so only share them through secure channels (SSH, remote desktop, encrypted chat).
 
-If WebRTC connection fails (e.g., both peers behind symmetric NAT), use Tor mode as a relay fallback.
+If WebRTC connection fails (e.g., both peers behind symmetric NAT), try iroh mode which has automatic relay fallback.
 
 #### Receiving (Internet)
-`wormhole-rs receive` auto-detects iroh vs Tor from the wormhole code. WebRTC codes are handled by `wormhole-rs-webrtc receive` (or `receive-manual`).
+`wormhole-rs receive` handles iroh codes. Tor codes require `wormhole-rs-tor receive`. WebRTC codes are handled by `wormhole-rs-webrtc receive` (or `receive-manual`).
 
 ```bash
 wormhole-rs receive
@@ -233,7 +227,7 @@ All modes provide end-to-end encryption.
 | Mode | Type | Key Exchange | Transport Encryption | Content Encryption |
 |------|------|--------------|---------------------|-------------------|
 | iroh | Internet | Wormhole Code | QUIC/TLS 1.3 | AES-256-GCM |
-| Tor | Internet | Wormhole Code | Tor circuits | AES-256-GCM |
+| Tor (`wormhole-rs-tor`) | Internet | Wormhole Code | Tor circuits | AES-256-GCM |
 | WebRTC | Internet | Wormhole Code | DTLS (WebRTC) | AES-256-GCM |
 | Local | LAN | SPAKE2 (PIN + transfer_id) | None (raw TCP) | AES-256-GCM |
 

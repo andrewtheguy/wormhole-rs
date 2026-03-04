@@ -4,11 +4,12 @@ members = [
     "crates/wormhole-common",
     "crates/wormhole-rs",
     "crates/wormhole-rs-local",
+    "crates/wormhole-rs-tor",
     "crates/wormhole-rs-webrtc",
 ]
 
 [workspace.package]
-version = "0.0.1-alpha3"
+version = "0.0.1-alpha4"
 edition = "2024"
 
 [workspace.dependencies]

@@ -8,7 +8,7 @@ wormhole-rs supports two main categories of transport:
 
 1. **Internet Transfers** (wormhole code based):
     - **iroh Mode** (Recommended) - Direct P2P transfers using iroh's QUIC/TLS stack (automatic relay fallback) via `wormhole-rs send`
-    - **Tor Mode**: Anonymous transfers via Tor hidden services (uses `arti`) via `wormhole-rs send-tor`
+    - **Tor Mode**: Anonymous transfers via Tor hidden services (uses `arti`) via `wormhole-rs-tor send`
     - **WebRTC Mode**: Direct P2P via WebRTC DataChannels with Nostr signaling via `wormhole-rs-webrtc send`
 2. **Local Transfers** (using `wormhole-rs-local send`):
     - **mDNS Mode**: LAN-only transfers using mDNS discovery + TCP with SPAKE2 key exchange driven by a 12-character PIN
@@ -212,7 +212,7 @@ sequenceDiagram
 - **Encryption**: Mandatory AES-256-GCM using SPAKE2-derived key
 - **Port**: Random ephemeral port
 
-### Tor Mode (`wormhole-rs send-tor`)
+### Tor Mode (`wormhole-rs-tor send`)
 - **Transport**: Tor Onion Services
 - **Discovery**: Onion Address
 - **Encryption**: Tor circuit encryption plus mandatory AES-256-GCM at the application layer.
@@ -222,7 +222,7 @@ sequenceDiagram
 - **Discovery**: Nostr relays for SDP/ICE signaling (or manual copy-paste)
 - **NAT Traversal**: ICE with STUN server (`stun:stun.l.google.com:19302`)
 - **Encryption**: DTLS (WebRTC built-in) + AES-256-GCM at application layer
-- **Fallback**: Use Tor mode if both peers are behind symmetric NAT
+- **Fallback**: Try iroh mode (with automatic relay) if direct P2P fails. Use `wormhole-rs-tor` for anonymity
 
 ## Security Model
 

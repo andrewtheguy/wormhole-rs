@@ -7,14 +7,12 @@ use tracing_subscriber::EnvFilter;
 use wormhole_common::core::transfer::is_interrupted;
 use wormhole_common::core::wormhole;
 
-mod iroh;
-use iroh::{receiver as iroh_receiver, sender as iroh_sender};
-
-mod cli;
+mod onion;
+use onion::{receiver as onion_receiver, sender as onion_sender};
 
 #[derive(Parser)]
-#[command(name = "wormhole-rs")]
-#[command(about = "Secure peer-to-peer file transfer")]
+#[command(name = "wormhole-rs-tor")]
+#[command(about = "Secure anonymous file transfer via Tor hidden services")]
 #[command(version)]
 struct Cli {
     #[command(subcommand)]
@@ -23,7 +21,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Send a file or folder via iroh (default, recommended)
+    /// Send a file or folder via Tor hidden service (anonymous)
     Send {
         /// Path to file or folder
         path: PathBuf,
@@ -35,10 +33,6 @@ enum Commands {
         /// Use PIN-based code exchange for Nostr (prompts for PIN input)
         #[arg(long)]
         pin: bool,
-
-        /// Custom relay server URLs (for iroh transport)
-        #[arg(long)]
-        relay_url: Vec<String>,
     },
 
     /// Receive a file or folder using a code
@@ -51,17 +45,9 @@ enum Commands {
         #[arg(short, long)]
         output: Option<PathBuf>,
 
-        /// Custom relay server URLs (for iroh transport)
-        #[arg(long)]
-        relay_url: Vec<String>,
-
         /// Use PIN-based code exchange for Nostr (prompts for PIN input)
         #[arg(long)]
         pin: bool,
-
-        /// Disable resumable transfers (don't save partial downloads)
-        #[arg(long)]
-        no_resume: bool,
     },
 }
 
@@ -102,7 +88,6 @@ fn validate_output_dir(output: &Option<PathBuf>) -> Result<()> {
 }
 
 fn main() {
-    // Run the async main and handle errors
     let result = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
@@ -110,32 +95,30 @@ fn main() {
         .block_on(async_main());
 
     if let Err(e) = result {
-        // Check if this was an interrupt (Ctrl+C)
         if is_interrupted(&e) {
-            // Exit with 128 + SIGINT (2) = 130, standard Unix convention
             std::process::exit(130);
         }
-        // Print error and exit with failure code
         eprintln!("Error: {:?}", e);
         std::process::exit(1);
     }
 }
 
 async fn async_main() -> Result<()> {
-    // Set up tracing subscriber with filters for noisy iroh internals
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
         EnvFilter::new("info")
-            // Suppress noisy iroh internal logs
-            .add_directive("iroh=warn".parse().unwrap())
-            .add_directive("iroh_net=warn".parse().unwrap())
-            .add_directive("iroh_relay=warn".parse().unwrap())
-            .add_directive("iroh_quinn=warn".parse().unwrap())
-            .add_directive("netwatch=warn".parse().unwrap())
-            .add_directive("portmapper=warn".parse().unwrap())
-            .add_directive("swarm_discovery=warn".parse().unwrap())
-            .add_directive("pkarr=warn".parse().unwrap())
-            .add_directive("quinn=warn".parse().unwrap())
-            .add_directive("quinn_proto=warn".parse().unwrap())
+            // Suppress noisy arti/tor internal logs
+            .add_directive("arti=warn".parse().unwrap())
+            .add_directive("arti_client=warn".parse().unwrap())
+            .add_directive("tor_proto=warn".parse().unwrap())
+            .add_directive("tor_chanmgr=warn".parse().unwrap())
+            .add_directive("tor_circmgr=off".parse().unwrap())
+            .add_directive("tor_guardmgr=warn".parse().unwrap())
+            .add_directive("tor_netdir=warn".parse().unwrap())
+            .add_directive("tor_dirmgr=warn".parse().unwrap())
+            .add_directive("tor_hsservice=warn".parse().unwrap())
+            .add_directive("tor_hsclient=warn".parse().unwrap())
+            .add_directive("tor_rtcompat=warn".parse().unwrap())
+            .add_directive("tor_persist=off".parse().unwrap())
     });
 
     tracing_subscriber::fmt()
@@ -147,37 +130,27 @@ async fn async_main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Send {
-            path,
-            folder,
-            pin,
-            relay_url,
-        } => {
+        Commands::Send { path, folder, pin } => {
             validate_path(&path, folder)?;
             if folder {
-                iroh_sender::send_folder(&path, relay_url, pin).await?;
+                onion_sender::send_folder_tor(&path, pin).await?;
             } else {
-                iroh_sender::send_file(&path, relay_url, pin).await?;
+                onion_sender::send_file_tor(&path, pin).await?;
             }
         }
 
         Commands::Receive {
             mut code,
             output,
-            relay_url,
             pin,
-            no_resume,
         } => {
-            // Validate output directory if provided
             validate_output_dir(&output)?;
 
-            // Handle PIN mode if requested
             if pin {
                 let pin_str = wormhole_common::auth::pin::prompt_pin()?;
 
                 eprintln!("Searching for wormhole token via Nostr...");
 
-                // Fetch encrypted token from Nostr
                 let token_str = tokio::time::timeout(
                     std::time::Duration::from_secs(30),
                     wormhole_common::auth::nostr_pin::fetch_wormhole_code_via_pin(&pin_str),
@@ -192,7 +165,6 @@ async fn async_main() -> Result<()> {
                 code = Some(token_str);
             }
 
-            // Get code from argument or prompt
             let code = match code {
                 Some(c) => c,
                 None => {
@@ -204,38 +176,8 @@ async fn async_main() -> Result<()> {
                 }
             };
 
-            receive_with_code(&code, output, relay_url, no_resume).await?;
-        }
-    }
-
-    Ok(())
-}
-
-/// Receive using a wormhole code (auto-detects transport)
-async fn receive_with_code(
-    code: &str,
-    output: Option<PathBuf>,
-    relay_url: Vec<String>,
-    no_resume: bool,
-) -> Result<()> {
-    // Validate code format
-    wormhole::validate_code_format(code)?;
-
-    // Parse code to determine transport
-    let token = wormhole::parse_code(code)?;
-
-    match token.protocol.as_str() {
-        wormhole::PROTOCOL_IROH => {
-            iroh_receiver::receive(code, output, relay_url, no_resume).await?;
-        }
-        wormhole::PROTOCOL_TOR => {
-            anyhow::bail!(
-                "This wormhole code uses Tor transport.\n\
-                 To receive via Tor, use: wormhole-rs-tor receive --code <CODE>"
-            );
-        }
-        proto => {
-            anyhow::bail!("Unknown protocol in wormhole code: {}", proto);
+            wormhole::validate_code_format(&code)?;
+            onion_receiver::receive_file_tor(&code, output).await?;
         }
     }
 

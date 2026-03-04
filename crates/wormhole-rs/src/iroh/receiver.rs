@@ -6,7 +6,10 @@ use std::path::PathBuf;
 use std::time::Duration;
 use tokio::time::timeout;
 
-use super::common::{ALPN, OwnedIrohDuplex, create_receiver_endpoint, watch_connection_paths};
+use super::common::{
+    ALPN, OwnedIrohDuplex, create_receiver_endpoint, minimal_addr_to_endpoint,
+    watch_connection_paths,
+};
 use wormhole_common::core::transfer::run_receiver_transfer;
 use wormhole_common::core::wormhole::parse_code;
 
@@ -24,10 +27,10 @@ pub async fn receive(
     let token = parse_code(code).context("Failed to parse wormhole code")?;
     let key = wormhole_common::core::wormhole::decode_key(&token.key)
         .context("Failed to decode encryption key")?;
-    let addr = token
+    let minimal_addr = token
         .addr
-        .context("No iroh endpoint address in wormhole code")?
-        .to_endpoint_addr()
+        .context("No iroh endpoint address in wormhole code")?;
+    let addr = minimal_addr_to_endpoint(&minimal_addr)
         .context("Failed to parse endpoint address")?;
 
     eprintln!("Code valid. Connecting to sender...");
@@ -45,7 +48,7 @@ pub async fn receive(
             anyhow::anyhow!(
                 "Failed to connect to sender: {}\n\n\
                  Relay connection failed. Try Tor mode instead:\n  \
-                 Sender:   wormhole-rs send-tor <file>\n  \
+                 Sender:   wormhole-rs-tor send <file>\n  \
                  Receiver: wormhole-rs receive <code>",
                 e
             )
@@ -56,7 +59,7 @@ pub async fn receive(
                  - Verify the wormhole code is correct\n  \
                  - Ensure the sender is still running\n  \
                  - Check network connectivity and firewall settings\n  \
-                 - If issues persist, try Tor mode: wormhole-rs send-tor <file>",
+                 - If issues persist, try Tor mode: wormhole-rs-tor send <file>",
                 e
             )
         }

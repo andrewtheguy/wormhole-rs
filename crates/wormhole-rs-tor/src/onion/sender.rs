@@ -10,7 +10,6 @@ use tokio::time::timeout;
 use tor_cell::relaycell::msg::Connected;
 use tor_hsservice::{config::OnionServiceConfigBuilder, handle_rend_requests};
 
-use crate::cli::instructions::print_receiver_command;
 use wormhole_common::core::crypto::generate_key;
 use wormhole_common::core::transfer::{
     FileHeader, TransferResult, TransferType, run_sender_transfer_with_timeout, send_file_with,
@@ -29,6 +28,11 @@ const TOR_CONNECTION_TIMEOUT: Duration = Duration::from_secs(600);
 /// Timeout for waiting for receiver's ACK after transfer completes.
 /// Tor streams may close abruptly, so a timeout here is treated as success.
 const ACK_TIMEOUT: Duration = Duration::from_secs(10);
+
+fn print_receiver_command(command: &str) {
+    println!("On the receiving end, run:");
+    println!("  {}\n", command);
+}
 
 /// Internal helper for common Tor transfer logic.
 /// Handles Tor bootstrap, onion service, connection, data transfer, and acknowledgment.
@@ -83,9 +87,9 @@ async fn transfer_data_tor_internal(
     let code = generate_tor_code(onion_addr_str.clone(), &key)?;
 
     if use_pin {
-        print_receiver_command("wormhole-rs receive --pin");
+        print_receiver_command("wormhole-rs-tor receive --pin");
     } else {
-        print_receiver_command("wormhole-rs receive");
+        print_receiver_command("wormhole-rs-tor receive");
     }
 
     println!("\nWormhole code:\n{}\n", code);
@@ -107,7 +111,7 @@ async fn transfer_data_tor_internal(
         .map_err(|_| anyhow::anyhow!("Timed out publishing PIN to Nostr relay"))?
         .context("Failed to publish wormhole code via PIN")?;
 
-        println!("🔢 PIN: {}\n", pin);
+        println!("PIN: {}\n", pin);
         println!("Then enter the PIN above when prompted.\n");
     } else {
         println!("Then enter the code above when prompted.\n");
