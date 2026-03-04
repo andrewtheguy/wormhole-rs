@@ -258,7 +258,9 @@ pub async fn create_receiver_endpoint(relay_urls: Vec<String>) -> Result<Endpoin
     Ok(endpoint)
 }
 
-/// Create a MinimalAddr from a full EndpointAddr, stripping IP addresses
+/// Create a MinimalAddr from a full EndpointAddr, stripping IP addresses.
+/// Only the first (currently-selected) relay URL is kept to minimize token size.
+/// The receiver discovers additional relays independently via DNS/pkarr.
 pub fn minimal_addr_from_endpoint(addr: &EndpointAddr) -> MinimalAddr {
     let relay = addr.relay_urls().next().map(|r| r.to_string());
     MinimalAddr {

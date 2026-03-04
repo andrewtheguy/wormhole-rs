@@ -52,13 +52,17 @@ fn validate_onion_address(addr: &str) -> Result<()> {
     Ok(())
 }
 
-/// Minimal address for serialization - only contains node ID and relay URL
-/// IP addresses are auto-discovered by iroh, so we don't need them in the wormhole code
+/// Minimal address for serialization - only contains node ID and relay URL.
+/// IP addresses are auto-discovered by iroh, so we don't need them in the wormhole code.
+/// Only one relay URL is kept (the endpoint's currently-selected best relay) to keep
+/// tokens compact for copy/paste. The receiver's iroh endpoint independently discovers
+/// additional relays via DNS/pkarr.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct MinimalAddr {
     /// Node ID (hex-encoded public key)
     pub id: String,
-    /// Optional relay URL
+    /// Best relay URL at token creation time (only the first/selected relay is kept
+    /// to minimize token size for copy/paste usability)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub relay: Option<String>,
 }
