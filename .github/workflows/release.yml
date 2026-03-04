@@ -78,6 +78,15 @@ jobs:
           name: release-local-${{ matrix.suffix }}
           path: target/release/wormhole-rs-local-${{ matrix.suffix }}
 
+      - name: Rename Tor Binary
+        run: mv target/${{ matrix.target }}/release/wormhole-rs-tor target/release/wormhole-rs-tor-${{ matrix.suffix }}
+
+      - name: Upload Tor release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-tor-${{ matrix.suffix }}
+          path: target/release/wormhole-rs-tor-${{ matrix.suffix }}
+
   build-other:
     needs: setup
     strategy:
@@ -168,6 +177,28 @@ jobs:
         with:
           name: release-local-${{ matrix.suffix }}
           path: target/release/wormhole-rs-local-${{ matrix.suffix }}.exe
+
+      - name: Rename Tor Binary (Unix)
+        if: runner.os != 'Windows'
+        run: mv target/${{ matrix.target }}/release/wormhole-rs-tor target/release/wormhole-rs-tor-${{ matrix.suffix }}
+
+      - name: Rename Tor Binary (Windows)
+        if: runner.os == 'Windows'
+        run: move target\${{ matrix.target }}\release\wormhole-rs-tor.exe target\release\wormhole-rs-tor-${{ matrix.suffix }}.exe
+
+      - name: Upload Tor release artifact (Unix)
+        if: runner.os != 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-tor-${{ matrix.suffix }}
+          path: target/release/wormhole-rs-tor-${{ matrix.suffix }}
+
+      - name: Upload Tor release artifact (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-tor-${{ matrix.suffix }}
+          path: target/release/wormhole-rs-tor-${{ matrix.suffix }}.exe
 
   create-release:
     needs: [setup, build-linux, build-other]
