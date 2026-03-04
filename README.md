@@ -149,7 +149,7 @@ Manual mode exchanges SDP offers/answers via copy-paste. The codes contain the e
 If WebRTC connection fails (e.g., both peers behind symmetric NAT), try iroh mode which has automatic relay fallback.
 
 #### Receiving (Internet)
-`wormhole-rs receive` handles iroh codes. Tor codes require `wormhole-rs-tor receive`. WebRTC codes are handled by `wormhole-rs-webrtc receive` (or `receive-manual`).
+`wormhole-rs receive` receives iroh codes, `wormhole-rs-tor receive` receives Tor codes, and `wormhole-rs-webrtc receive` (or `receive-manual`) receives WebRTC codes.
 
 ```bash
 wormhole-rs receive

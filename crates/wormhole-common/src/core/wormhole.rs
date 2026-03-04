@@ -17,6 +17,10 @@ pub const PROTOCOL_TOR: &str = "tor";
 /// Protocol identifier for webrtc transport (WebRTC + Nostr signaling)
 pub const PROTOCOL_WEBRTC: &str = "webrtc";
 
+/// Minimum base64url-encoded wormhole code length.
+/// A minimal token payload is ~20+ bytes, which base64 encodes to ~30+ characters.
+const MIN_CODE_LENGTH: usize = 30;
+
 /// Validate a Tor v3 onion address format.
 ///
 /// A valid v3 onion address:
@@ -179,9 +183,12 @@ pub fn generate_webrtc_code(
         );
     }
 
-    // Validate sender_pubkey format (hex string)
-    if sender_pubkey.is_empty() || !sender_pubkey.chars().all(|c| c.is_ascii_hexdigit()) {
-        anyhow::bail!("Invalid sender_pubkey: must be non-empty hex string");
+    // Validate sender_pubkey format (Nostr x-only Schnorr pubkey: 32 bytes = 64 hex chars)
+    if sender_pubkey.len() != 64 || !sender_pubkey.chars().all(|c| c.is_ascii_hexdigit()) {
+        anyhow::bail!(
+            "Invalid sender_pubkey: expected 64-character hex string (32-byte Nostr pubkey), got {} chars",
+            sender_pubkey.len()
+        );
     }
 
     // Validate transfer_id is non-empty
@@ -253,8 +260,7 @@ pub fn validate_code_format(code: &str) -> Result<()> {
     }
 
     // Minimum length check: minimal token data
-    // Base64 encodes 3 bytes into 4 chars, so minimum ~20+ bytes payload = ~30+ chars
-    if code.len() < 30 {
+    if code.len() < MIN_CODE_LENGTH {
         anyhow::bail!("Invalid wormhole code: too short. Make sure you copied the entire code.");
     }
 
