@@ -17,11 +17,19 @@ const DEFAULT_TRANSFER_TIMEOUT_SECS: u64 = 30 * 60;
 
 /// Get the transfer timeout from environment or use the default.
 fn get_transfer_timeout() -> Duration {
-    std::env::var("WORMHOLE_TRANSFER_TIMEOUT_SECS")
-        .ok()
-        .and_then(|s| s.parse::<u64>().ok())
-        .map(Duration::from_secs)
-        .unwrap_or(Duration::from_secs(DEFAULT_TRANSFER_TIMEOUT_SECS))
+    match std::env::var("WORMHOLE_TRANSFER_TIMEOUT_SECS") {
+        Ok(val) => match val.parse::<u64>() {
+            Ok(secs) => Duration::from_secs(secs),
+            Err(_) => {
+                eprintln!(
+                    "Warning: invalid WORMHOLE_TRANSFER_TIMEOUT_SECS='{}', using default {}s",
+                    val, DEFAULT_TRANSFER_TIMEOUT_SECS
+                );
+                Duration::from_secs(DEFAULT_TRANSFER_TIMEOUT_SECS)
+            }
+        },
+        Err(_) => Duration::from_secs(DEFAULT_TRANSFER_TIMEOUT_SECS),
+    }
 }
 
 /// Check if error is retryable (timeout, temporary network issues)

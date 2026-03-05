@@ -4,14 +4,13 @@ use std::path::Path;
 use tokio::fs::File;
 use tokio::sync::oneshot;
 
-use super::common::{IrohDuplex, create_sender_endpoint, watch_connection_paths};
+use super::common::{IrohDuplex, create_sender_endpoint, generate_code, watch_connection_paths};
 use crate::cli::instructions::print_receiver_command;
 use wormhole_common::core::crypto::generate_key;
 use wormhole_common::core::transfer::{
     FileHeader, Interrupted, TransferResult, TransferType, run_sender_transfer, send_file_with,
     send_folder_with,
 };
-use wormhole_common::core::wormhole::generate_code;
 use wormhole_common::signaling::nostr_protocol::generate_transfer_id;
 
 /// QUIC application close codes for connection termination.
@@ -36,7 +35,7 @@ mod close_codes {
 ///
 /// This function inspects the structured error types from iroh/quinn to identify
 /// errors that suggest relay failures, network unreachability, or similar issues
-/// where Tor mode might be a better alternative.
+/// that warrant specific error messaging.
 fn is_relay_or_network_error(e: &ConnectingError) -> bool {
     // First, try to match on structured error variants
     match e {
@@ -147,8 +146,7 @@ async fn transfer_data_internal(
                 "No incoming connection.\n\n\
                  Troubleshooting:\n  \
                  - Ensure the receiver has the correct wormhole code\n  \
-                 - Check network connectivity on both ends\n  \
-                 - Try Tor mode for better NAT traversal: wormhole-rs send-tor <file>"
+                 - Check network connectivity on both ends"
             )
         })?
         .await
@@ -157,8 +155,7 @@ async fn transfer_data_internal(
             if is_relay_or_network_error(&e) {
                 anyhow::anyhow!(
                     "Failed to accept connection: {}\n\n\
-                     Relay connection failed. Try Tor mode instead:\n  \
-                     wormhole-rs send-tor <file>",
+                     Relay connection failed. Check network connectivity and firewall settings.",
                     e
                 )
             } else {
@@ -166,8 +163,7 @@ async fn transfer_data_internal(
                     "Failed to accept connection: {}\n\n\
                      Troubleshooting:\n  \
                      - Ensure the receiver has the correct wormhole code\n  \
-                     - Check network connectivity and firewall settings\n  \
-                     - If issues persist, try Tor mode: wormhole-rs send-tor <file>",
+                     - Check network connectivity and firewall settings",
                     e
                 )
             }

@@ -67,7 +67,7 @@ echo "----------------------"
 for arch in amd64 arm64; do
     archdir="$BUILD_DIR/linux_${arch}"
     if [ -d "$archdir" ]; then
-        for bin in wormhole-rs wormhole-rs-webrtc wormhole-rs-local; do
+        for bin in wormhole-rs wormhole-rs-webrtc wormhole-rs-local wormhole-rs-tor; do
             if [ -f "$archdir/$bin" ]; then
                 mv "$archdir/$bin" "$BUILD_DIR/${bin}-linux-${arch}"
                 echo "✓ $(echo "$arch" | tr '[:lower:]' '[:upper:]') $bin saved to: $BUILD_DIR/${bin}-linux-${arch}"

@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use arti_client::{TorClient, config::TorClientConfigBuilder};
 use futures::StreamExt;
 use rand::Rng;
@@ -10,17 +10,12 @@ use tokio::time::timeout;
 use tor_cell::relaycell::msg::Connected;
 use tor_hsservice::{config::OnionServiceConfigBuilder, handle_rend_requests};
 
-use crate::cli::instructions::print_receiver_command;
 use wormhole_common::core::crypto::generate_key;
 use wormhole_common::core::transfer::{
     FileHeader, TransferResult, TransferType, run_sender_transfer_with_timeout, send_file_with,
     send_folder_with,
 };
 use wormhole_common::core::wormhole::generate_tor_code;
-use wormhole_common::signaling::nostr_protocol::generate_transfer_id;
-
-/// Timeout for publishing wormhole code via PIN (Nostr relay)
-const PIN_PUBLISH_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Timeout for waiting for receiver to connect via Tor (10 minutes)
 /// Tor connections can be slow due to circuit building, so this is generous
@@ -30,6 +25,11 @@ const TOR_CONNECTION_TIMEOUT: Duration = Duration::from_secs(600);
 /// Tor streams may close abruptly, so a timeout here is treated as success.
 const ACK_TIMEOUT: Duration = Duration::from_secs(10);
 
+fn print_receiver_command(command: &str) {
+    println!("On the receiving end, run:");
+    println!("  {}\n", command);
+}
+
 /// Internal helper for common Tor transfer logic.
 /// Handles Tor bootstrap, onion service, connection, data transfer, and acknowledgment.
 async fn transfer_data_tor_internal(
@@ -38,7 +38,6 @@ async fn transfer_data_tor_internal(
     file_size: u64,
     checksum: u64,
     transfer_type: TransferType,
-    use_pin: bool,
 ) -> Result<()> {
     // Always generate encryption key for application-layer encryption
     let key = generate_key();
@@ -82,36 +81,10 @@ async fn transfer_data_tor_internal(
     // Generate wormhole code
     let code = generate_tor_code(onion_addr_str.clone(), &key)?;
 
-    if use_pin {
-        print_receiver_command("wormhole-rs receive --pin");
-    } else {
-        print_receiver_command("wormhole-rs receive");
-    }
+    print_receiver_command("wormhole-rs-tor receive");
 
     println!("\nWormhole code:\n{}\n", code);
-
-    if use_pin {
-        // Generate ephemeral keys for PIN exchange
-        let keys = nostr_sdk::Keys::generate();
-        // Generate unique transfer ID to avoid collisions with concurrent transfers
-        let transfer_id = generate_transfer_id();
-        let pin = timeout(
-            PIN_PUBLISH_TIMEOUT,
-            wormhole_common::auth::nostr_pin::publish_wormhole_code_via_pin(
-                &keys,
-                &code,
-                &transfer_id,
-            ),
-        )
-        .await
-        .map_err(|_| anyhow::anyhow!("Timed out publishing PIN to Nostr relay"))?
-        .context("Failed to publish wormhole code via PIN")?;
-
-        println!("🔢 PIN: {}\n", pin);
-        println!("Then enter the PIN above when prompted.\n");
-    } else {
-        println!("Then enter the code above when prompted.\n");
-    }
+    println!("Then enter the code above when prompted.\n");
 
     eprintln!("Waiting for receiver to connect via Tor...");
 
@@ -163,22 +136,22 @@ async fn transfer_data_tor_internal(
 }
 
 /// Send a file via Tor hidden service
-pub async fn send_file_tor(file_path: &Path, use_pin: bool) -> Result<()> {
+pub async fn send_file_tor(file_path: &Path) -> Result<()> {
     send_file_with(
         file_path,
         |file, filename, file_size, checksum, transfer_type| {
-            transfer_data_tor_internal(file, filename, file_size, checksum, transfer_type, use_pin)
+            transfer_data_tor_internal(file, filename, file_size, checksum, transfer_type)
         },
     )
     .await
 }
 
 /// Send a folder via Tor hidden service (as tar archive)
-pub async fn send_folder_tor(folder_path: &Path, use_pin: bool) -> Result<()> {
+pub async fn send_folder_tor(folder_path: &Path) -> Result<()> {
     send_folder_with(
         folder_path,
         |file, filename, file_size, checksum, transfer_type| {
-            transfer_data_tor_internal(file, filename, file_size, checksum, transfer_type, use_pin)
+            transfer_data_tor_internal(file, filename, file_size, checksum, transfer_type)
         },
     )
     .await

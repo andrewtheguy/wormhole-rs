@@ -1,8 +1,9 @@
 //! Common iroh endpoint setup and utilities shared between sender and receiver.
 
 use anyhow::{Context, Result};
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use iroh::{
-    Endpoint, RelayMap, RelayUrl, TransportAddr, Watcher,
+    Endpoint, EndpointAddr, RelayMap, RelayUrl, TransportAddr, Watcher,
     address_lookup::{dns::DnsAddressLookup, mdns::MdnsAddressLookup, pkarr::PkarrPublisher},
     endpoint::{Connection, PathInfoList, RecvStream, RelayMode, SendStream},
 };
@@ -11,6 +12,9 @@ use std::io;
 use std::pin::Pin;
 use std::task::{Context as TaskContext, Poll};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+use wormhole_common::core::wormhole::{
+    CURRENT_VERSION, MinimalAddr, PROTOCOL_IROH, WormholeToken,
+};
 
 /// A duplex wrapper that combines separate send/recv streams into a single bidirectional stream.
 ///
@@ -252,4 +256,55 @@ pub async fn create_receiver_endpoint(relay_urls: Vec<String>) -> Result<Endpoin
         .context("Failed to create endpoint")?;
 
     Ok(endpoint)
+}
+
+/// Create a MinimalAddr from a full EndpointAddr, stripping IP addresses.
+/// Only the first (currently-selected) relay URL is kept to minimize token size.
+/// The receiver discovers additional relays independently via DNS/pkarr.
+pub fn minimal_addr_from_endpoint(addr: &EndpointAddr) -> MinimalAddr {
+    let relay = addr.relay_urls().next().map(|r| r.to_string());
+    MinimalAddr {
+        id: addr.id.to_string(),
+        relay,
+    }
+}
+
+/// Convert a MinimalAddr back to an EndpointAddr
+pub fn minimal_addr_to_endpoint(addr: &MinimalAddr) -> Result<EndpointAddr> {
+    let id = addr
+        .id
+        .parse()
+        .context("Failed to parse endpoint ID from wormhole code")?;
+    let mut endpoint_addr = EndpointAddr::new(id);
+    if let Some(ref relay_str) = addr.relay {
+        let relay_url: RelayUrl = relay_str
+            .parse()
+            .context("Failed to parse relay URL from wormhole code")?;
+        endpoint_addr = endpoint_addr.with_relay_url(relay_url);
+    }
+    Ok(endpoint_addr)
+}
+
+/// Generate a wormhole code from endpoint address
+/// Format: base64url(json(WormholeToken))
+pub fn generate_code(addr: &EndpointAddr, key: &[u8; 32]) -> Result<String> {
+    let minimal_addr = minimal_addr_from_endpoint(addr);
+
+    let token = WormholeToken {
+        version: CURRENT_VERSION,
+        protocol: PROTOCOL_IROH.to_string(),
+        created_at: wormhole_common::core::wormhole::current_timestamp(),
+        key: URL_SAFE_NO_PAD.encode(key),
+        addr: Some(minimal_addr),
+        onion_address: None,
+        webrtc_sender_pubkey: None,
+        webrtc_transfer_id: None,
+        webrtc_relays: None,
+        webrtc_transfer_type: None,
+        webrtc_filename: None,
+    };
+
+    let serialized = serde_json::to_vec(&token).context("Failed to serialize wormhole token")?;
+
+    Ok(URL_SAFE_NO_PAD.encode(&serialized))
 }

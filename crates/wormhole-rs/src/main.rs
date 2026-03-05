@@ -7,15 +7,8 @@ use tracing_subscriber::EnvFilter;
 use wormhole_common::core::transfer::is_interrupted;
 use wormhole_common::core::wormhole;
 
-#[cfg(feature = "iroh")]
 mod iroh;
-#[cfg(feature = "iroh")]
 use iroh::{receiver as iroh_receiver, sender as iroh_sender};
-
-#[cfg(feature = "onion")]
-mod onion;
-#[cfg(feature = "onion")]
-use onion::{receiver as onion_receiver, sender as onion_sender};
 
 mod cli;
 
@@ -30,7 +23,6 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    #[cfg(feature = "iroh")]
     /// Send a file or folder via iroh (default, recommended)
     Send {
         /// Path to file or folder
@@ -47,22 +39,6 @@ enum Commands {
         /// Custom relay server URLs (for iroh transport)
         #[arg(long)]
         relay_url: Vec<String>,
-    },
-
-    #[cfg(feature = "onion")]
-    /// Send a file or folder via Tor hidden service (anonymous)
-    #[command(name = "send-tor")]
-    SendTor {
-        /// Path to file or folder
-        path: PathBuf,
-
-        /// Send a folder (creates tar archive)
-        #[arg(long)]
-        folder: bool,
-
-        /// Use PIN-based code exchange for Nostr (prompts for PIN input)
-        #[arg(long)]
-        pin: bool,
     },
 
     /// Receive a file or folder using a code
@@ -87,7 +63,6 @@ enum Commands {
         #[arg(long)]
         no_resume: bool,
     },
-
 }
 
 /// Validate path exists and matches folder flag
@@ -161,19 +136,6 @@ async fn async_main() -> Result<()> {
             .add_directive("pkarr=warn".parse().unwrap())
             .add_directive("quinn=warn".parse().unwrap())
             .add_directive("quinn_proto=warn".parse().unwrap())
-            // Suppress noisy arti/tor internal logs
-            .add_directive("arti=warn".parse().unwrap())
-            .add_directive("arti_client=warn".parse().unwrap())
-            .add_directive("tor_proto=warn".parse().unwrap())
-            .add_directive("tor_chanmgr=warn".parse().unwrap())
-            .add_directive("tor_circmgr=off".parse().unwrap())
-            .add_directive("tor_guardmgr=warn".parse().unwrap())
-            .add_directive("tor_netdir=warn".parse().unwrap())
-            .add_directive("tor_dirmgr=warn".parse().unwrap())
-            .add_directive("tor_hsservice=warn".parse().unwrap())
-            .add_directive("tor_hsclient=warn".parse().unwrap())
-            .add_directive("tor_rtcompat=warn".parse().unwrap())
-            .add_directive("tor_persist=off".parse().unwrap())
     });
 
     tracing_subscriber::fmt()
@@ -185,7 +147,6 @@ async fn async_main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        #[cfg(feature = "iroh")]
         Commands::Send {
             path,
             folder,
@@ -200,16 +161,6 @@ async fn async_main() -> Result<()> {
             }
         }
 
-        #[cfg(feature = "onion")]
-        Commands::SendTor { path, folder, pin } => {
-            validate_path(&path, folder)?;
-            if folder {
-                onion_sender::send_folder_tor(&path, pin).await?;
-            } else {
-                onion_sender::send_file_tor(&path, pin).await?;
-            }
-        }
-
         Commands::Receive {
             mut code,
             output,
@@ -217,15 +168,6 @@ async fn async_main() -> Result<()> {
             pin,
             no_resume,
         } => {
-            // Warn if relay_url is specified but iroh feature is disabled
-            #[cfg(not(feature = "iroh"))]
-            if !relay_url.is_empty() {
-                eprintln!(
-                    "Warning: --relay-url has no effect because iroh support is disabled.\n\
-                     To use custom relays, rebuild with: cargo build --features iroh"
-                );
-            }
-
             // Validate output directory if provided
             validate_output_dir(&output)?;
 
@@ -270,7 +212,6 @@ async fn async_main() -> Result<()> {
 }
 
 /// Receive using a wormhole code (auto-detects transport)
-#[allow(unused_variables)] // relay_url and no_resume only used with iroh feature
 async fn receive_with_code(
     code: &str,
     output: Option<PathBuf>,
@@ -284,31 +225,16 @@ async fn receive_with_code(
     let token = wormhole::parse_code(code)?;
 
     match token.protocol.as_str() {
-        #[cfg(feature = "iroh")]
         wormhole::PROTOCOL_IROH => {
             iroh_receiver::receive(code, output, relay_url, no_resume).await?;
         }
-        #[cfg(feature = "onion")]
         wormhole::PROTOCOL_TOR => {
-            onion_receiver::receive_file_tor(code, output).await?;
+            anyhow::bail!(
+                "This wormhole code uses Tor transport.\n\
+                 To receive via Tor, use: wormhole-rs-tor receive --code <CODE>"
+            );
         }
         proto => {
-            #[cfg(not(feature = "iroh"))]
-            if proto == wormhole::PROTOCOL_IROH {
-                anyhow::bail!(
-                    "This wormhole code uses Iroh transport, but Iroh support is disabled.\n\
-                     To enable Iroh support, rebuild with: cargo build --features iroh\n\
-                     Or run with: cargo run --features iroh -- receive"
-                );
-            }
-            #[cfg(not(feature = "onion"))]
-            if proto == wormhole::PROTOCOL_TOR {
-                anyhow::bail!(
-                    "This wormhole code uses Tor transport, but Tor support is disabled.\n\
-                     To enable Tor support, rebuild with: cargo build --features onion\n\
-                     Or run with: cargo run --features onion -- receive"
-                );
-            }
             anyhow::bail!("Unknown protocol in wormhole code: {}", proto);
         }
     }

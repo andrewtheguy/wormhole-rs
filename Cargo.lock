@@ -8898,7 +8898,7 @@ dependencies = [
 
 [[package]]
 name = "wormhole-common"
-version = "0.0.1-alpha3"
+version = "0.0.1-alpha4"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -8908,7 +8908,6 @@ dependencies = [
  "fs4",
  "futures",
  "hex",
- "iroh",
  "log",
  "nostr-sdk",
  "rand 0.8.5",
@@ -8928,16 +8927,49 @@ dependencies = [
 
 [[package]]
 name = "wormhole-rs"
-version = "0.0.1-alpha3"
+version = "0.0.1-alpha4"
 dependencies = [
  "anyhow",
- "arti-client",
+ "base64",
  "clap",
  "futures",
  "hex",
  "iroh",
  "log",
  "nostr-sdk",
+ "rand 0.8.5",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tokio-util",
+ "tracing-subscriber",
+ "wormhole-common",
+]
+
+[[package]]
+name = "wormhole-rs-local"
+version = "0.0.1-alpha4"
+dependencies = [
+ "anyhow",
+ "clap",
+ "hex",
+ "mdns-sd",
+ "rand 0.8.5",
+ "tokio",
+ "tracing-subscriber",
+ "wormhole-common",
+]
+
+[[package]]
+name = "wormhole-rs-tor"
+version = "0.0.1-alpha4"
+dependencies = [
+ "anyhow",
+ "arti-client",
+ "clap",
+ "futures",
+ "hex",
+ "log",
  "rand 0.8.5",
  "rusqlite",
  "safelog",
@@ -8951,22 +8983,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "wormhole-rs-local"
-version = "0.0.1-alpha3"
-dependencies = [
- "anyhow",
- "clap",
- "hex",
- "mdns-sd",
- "rand 0.8.5",
- "tokio",
- "tracing-subscriber",
- "wormhole-common",
-]
-
-[[package]]
 name = "wormhole-rs-webrtc"
-version = "0.0.1-alpha3"
+version = "0.0.1-alpha4"
 dependencies = [
  "anyhow",
  "base64",

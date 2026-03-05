@@ -4,8 +4,7 @@ version.workspace = true
 edition.workspace = true
 
 [features]
-default = []
-iroh-addr = ["dep:iroh"]  # For MinimalAddr in wormhole.rs
+nostr = ["dep:nostr-sdk"]
 
 [dependencies]
 # Core (workspace)
@@ -18,7 +17,7 @@ hex = { workspace = true }
 rand = { workspace = true }
 futures = { workspace = true }
 log = { workspace = true }
-nostr-sdk = { workspace = true }
+nostr-sdk = { workspace = true, optional = true }
 
 # Cryptography
 aes-gcm = "0.10"
@@ -40,6 +39,3 @@ reqwest = { version = "0.12", features = ["json", "multipart", "stream"] }
 # CLI (for PIN input)
 rustyline = "15"
 crc32fast = "1.4"
-
-# iroh transport (optional - for MinimalAddr)
-iroh = { version = "0.96.1", optional = true }
