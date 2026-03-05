@@ -133,19 +133,7 @@ wormhole-rs-webrtc receive <WORMHOLE_CODE>
 wormhole-rs-webrtc receive
 ```
 
-##### Manual Mode (Copy/Paste Signaling Codes)
-For air-gapped or restricted environments where Nostr relays are unavailable:
-
-```bash
-# Sender
-wormhole-rs-webrtc send-manual /path/to/file
-
-# Receiver
-wormhole-rs-webrtc receive-manual
-```
-
-Manual mode exchanges offer/answer codes via copy-paste. The codes contain the encryption key, so only share them through secure channels (SSH, remote desktop, encrypted chat).
-Manual mode requires direct peer reachability (for example, same LAN or a routed private/VPN path).
+For copy/paste signaling when Nostr relays are unavailable, see [Manual Mode](#manual-mode).
 
 If WebRTC connection fails (e.g., both peers behind symmetric NAT), try iroh mode which has automatic relay fallback.
 
@@ -163,7 +151,7 @@ wormhole-rs receive --pin
 
 ---
 
-### Local / Offline Transfers
+### Local/Offline Transfers
 
 There are **two** ways to transfer without relying on the public internet:
 
@@ -173,7 +161,7 @@ There are **two** ways to transfer without relying on the public internet:
 
 2) **Manual WebRTC (when mDNS is blocked but peers still have direct network reachability)**
    - Uses WebRTC DataChannels with **manual** offer/answer code exchange
-   - Works even when Nostr relays are unavailable
+   - Works even when Nostr relays are unavailable (see [Manual Mode](#manual-mode))
 
 > **Note**: Tor mode requires internet access. iroh mode can be air‑gapped **only if** you self‑host both the relay **and** discovery services on the same network; the default public relay/discovery endpoints require internet access.
 
@@ -194,7 +182,10 @@ wormhole-rs-local send /path/to/folder --folder
 wormhole-rs-local receive
 ```
 
-#### Manual WebRTC (`wormhole-rs-webrtc send-manual`)
+### Manual Mode
+
+Use manual mode when Nostr relays are unavailable and both peers still have
+direct network reachability (for example, same LAN or routed private/VPN path).
 
 ```bash
 # Sender
@@ -204,7 +195,9 @@ wormhole-rs-webrtc send-manual /path/to/file
 wormhole-rs-webrtc receive-manual
 ```
 
-Manual mode exchanges offer/answer codes via copy-paste. The codes contain the encryption key, so only share them through secure channels (SSH, remote desktop, encrypted chat).
+Manual mode exchanges offer/answer codes via copy-paste. The codes contain the
+encryption key, so only share them through secure channels (SSH, remote
+desktop, encrypted chat).
 
 ## Common Use Cases
 

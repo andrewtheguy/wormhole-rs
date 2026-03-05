@@ -29,8 +29,6 @@ This guide describes common scenarios where `wormhole-rs` shines and which mode 
   ```
 - **Experience**: Sender copy/pastes an offer code, receiver replies with an answer code. The exchanged text includes signaling metadata and the encryption key, so use a secure channel.
 
-> **Note**: Tor Mode requires internet access. iroh Mode can be used in air‑gapped environments **only if** you self‑host the relay **and** discovery services on the same network; the default public relay/discovery endpoints require internet access.
-
 ---
 
 ## 2. Cross-Subnet / VPN Discovery Issues
@@ -127,6 +125,7 @@ This guide describes common scenarios where `wormhole-rs` shines and which mode 
 
 **Solution A**: **iroh Mode + Custom DERP Relays** (Recommended)
 - **Why**: iroh allows you to run your own lightweight relay (DERP). By pointing `wormhole-rs` to your own infrastructure, you achieve a true peer-to-peer connection where no third-party relays are involved.
+- **Connectivity Note**: iroh mode can be used in air-gapped/private environments only when both relay and discovery are self-hosted and reachable by both peers.
 - **Current Status**: Custom relays are supported today via `--relay-url`, but peer discovery still uses iroh's public DNS/pkarr services. See [ROADMAP.md](ROADMAP.md) for updates on custom DNS/discovery support. For a fully zero-third-party option today, use:
   - **Local Mode** (`wormhole-rs-local`) when both peers share a LAN and can rely on mDNS.
 - **Resources**: Implementation for the relay server is available in the [iroh repository](https://github.com/n0-computer/iroh).
