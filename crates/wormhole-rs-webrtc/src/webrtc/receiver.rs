@@ -170,6 +170,10 @@ async fn try_webrtc_receive(
     // Perform SPAKE2 handshake if PIN mode is active (receiver = initiator)
     let mut stream = stream;
     let key = if let Some((ref pin, ref transfer_id)) = pin_info {
+        // Read the "ready" byte for protocol consistency with iroh transport
+        use tokio::io::AsyncReadExt;
+        let mut ready = [0u8; 1];
+        stream.read_exact(&mut ready).await.context("Failed to read ready byte")?;
         eprintln!("Performing SPAKE2 authentication...");
         let derived_key = timeout(
             Duration::from_secs(30),

@@ -84,6 +84,10 @@ pub async fn receive(
 
     // Perform SPAKE2 handshake if PIN mode is active (receiver = initiator)
     let (key, send_stream) = if let Some((ref pin, ref transfer_id)) = pin_info {
+        // Read the "ready" byte sent by the sender to confirm the stream is established.
+        // See sender.rs for why this is needed (QUIC stream materialization).
+        let mut ready = [0u8; 1];
+        recv_stream.read_exact(&mut ready).await.context("Failed to read ready byte")?;
         eprintln!("Performing SPAKE2 authentication...");
         let mut send_stream_mut = send_stream;
         let mut duplex =

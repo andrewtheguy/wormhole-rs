@@ -186,6 +186,11 @@ async fn transfer_data_internal(
     // Perform SPAKE2 handshake if PIN mode is active (sender = responder)
     let key = if let Some((ref pin, ref transfer_id)) = pin_info {
         eprintln!("Performing SPAKE2 authentication...");
+        // Write a "ready" byte to materialize the QUIC stream on the receiver side.
+        // In QUIC, open_bi() allocates the stream locally but may not send a STREAM
+        // frame until data is written. Since SPAKE2 responder reads first, without
+        // this the receiver's accept_bi() would never see the stream.
+        send_stream.write_all(&[0x01]).await.context("Failed to send ready byte")?;
         let mut duplex = IrohDuplex::new(&mut send_stream, &mut recv_stream);
         let derived_key = tokio::time::timeout(
             std::time::Duration::from_secs(30),

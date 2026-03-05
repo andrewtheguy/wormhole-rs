@@ -266,6 +266,9 @@ async fn try_webrtc_transfer(
     let mut stream = stream;
     let key = if let Some((ref pin, ref transfer_id)) = pin_info {
         eprintln!("Performing SPAKE2 authentication...");
+        // Send a "ready" byte for protocol consistency with iroh transport
+        use tokio::io::AsyncWriteExt;
+        stream.write_all(&[0x01]).await.context("Failed to send ready byte")?;
         let derived_key = timeout(
             Duration::from_secs(30),
             handshake_as_responder(&mut stream, pin, transfer_id),
