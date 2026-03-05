@@ -9,19 +9,20 @@
 //!
 //! ## PIN Hint Design
 //!
-//! The PIN hint (first 32 bits of SHA-256(PIN)) is published with events to enable
-//! efficient relay filtering. This design is secure because:
+//! The PIN hint is `SHA-256(PIN || time_bucket)[0..16]` — a 128-bit value that rotates
+//! every hour. This design prevents relay operators from correlating PIN usage across
+//! time windows, since the same PIN produces a different hint each hour.
 //!
-//! - **Ephemeral nature**: Events expire after 1 hour (NIP-40 TTL), not persistent identity
+//! - **Time-based rotation**: Hint changes every hour (1-hour bucket size)
+//! - **Ephemeral nature**: Events expire after 2 hours (2x bucket for boundary padding)
 //! - **Strong PIN entropy**: 12-char PIN has ~65 bits of entropy
 //! - **One-way hash**: SHA-256 cannot be reversed; attacker must brute-force 2^65 hashes
 //! - **Argon2id protection**: Even with PIN, attacker needs per-event salt + expensive KDF
 //! - **Single-use**: Each transfer generates a new PIN, no rainbow table benefit
 //!
-//! The 32-bit hint provides ~4 billion buckets for efficient relay filtering while
-//! the PIN's entropy and Argon2id KDF (64 MiB memory, 3 iterations) provide the
-//! actual security. Brute-forcing 2^65 SHA-256 hashes to find the PIN would take
-//! ~117 years on modern GPUs, making the hint size irrelevant to security.
+//! The receiver queries with hints for both the current and previous time bucket to
+//! handle transitions at bucket boundaries. The 128-bit hint provides high filtering
+//! precision while the PIN's entropy and Argon2id KDF provide the actual security.
 
 use aes_gcm::{
     Aes256Gcm, Key, Nonce,
@@ -70,8 +71,15 @@ const ARGON2_TIME_COST: u32 = 3;
 const ARGON2_MEMORY_COST: u32 = 65536; // 64 MiB
 const ARGON2_PARALLELISM: u32 = 4;
 
-/// PIN exchange event expiration (1 hour)
-const PIN_EVENT_EXPIRATION_SECS: u64 = 3600;
+/// Time bucket size for PIN hint rotation (1 hour).
+const HINT_BUCKET_SEC: u64 = 3600;
+
+/// PIN exchange event expiration (2 hours).
+///
+/// Set to `2 * HINT_BUCKET_SEC` so events survive across the bucket boundary.
+/// Without this padding, events published early in bucket T would expire before
+/// a receiver in bucket T+1 can query with the previous bucket's hint.
+const PIN_EVENT_EXPIRATION_SECS: u64 = 2 * HINT_BUCKET_SEC;
 
 /// Timeout for waiting for relay connections
 const RELAY_CONNECTION_TIMEOUT: Duration = Duration::from_secs(10);
@@ -157,16 +165,46 @@ const EVENT_VERIFICATION_TIMEOUT: Duration = Duration::from_secs(5);
 /// Interval for polling event verification
 const EVENT_VERIFICATION_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
-/// Compute PIN hint for event filtering (first 8 hex chars of SHA-256).
+/// Get the current time bucket index.
+fn current_time_bucket() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system time before UNIX epoch")
+        .as_secs()
+        / HINT_BUCKET_SEC
+}
+
+/// Compute PIN hint for a specific time bucket.
 ///
-/// Uses 32 bits (4 bytes) for efficient relay filtering (~4 billion buckets).
-/// This is safe because PIN events are ephemeral (1-hour TTL) and the PIN's
-/// ~65-bit entropy makes brute-forcing SHA-256 infeasible. See module docs.
-pub fn compute_pin_hint(pin: &str) -> String {
+/// Returns 128 bits (16 bytes = 32 hex chars) of `SHA-256(PIN || bucket)`.
+fn compute_pin_hint_for_bucket(pin: &str, bucket: u64) -> String {
     let mut hasher = Sha256::new();
     hasher.update(pin.as_bytes());
+    hasher.update(bucket.to_be_bytes());
     let hash = hasher.finalize();
-    hex::encode(&hash[..4]) // First 4 bytes = 8 hex chars = 32 bits
+    hex::encode(&hash[..16]) // 128 bits = 32 hex chars
+}
+
+/// Compute PIN hint for the current time bucket (used by sender).
+///
+/// The hint is `SHA-256(PIN || time_bucket)[0..16]` — a 128-bit value that rotates
+/// every hour, preventing relay operators from correlating PIN usage across time
+/// windows. See module docs for full security analysis.
+pub fn compute_pin_hint(pin: &str) -> String {
+    compute_pin_hint_for_bucket(pin, current_time_bucket())
+}
+
+/// Compute PIN hints for both current and previous time bucket (used by receiver).
+///
+/// Returns two hints to handle bucket-boundary transitions: if the sender published
+/// near the end of one bucket, the receiver may be in the next bucket by the time
+/// they query.
+pub fn compute_pin_hints_for_lookup(pin: &str) -> Vec<String> {
+    let bucket = current_time_bucket();
+    vec![
+        compute_pin_hint_for_bucket(pin, bucket),
+        compute_pin_hint_for_bucket(pin, bucket.saturating_sub(1)),
+    ]
 }
 
 /// Derive a 256-bit key from PIN using Argon2id.
@@ -252,7 +290,7 @@ pub fn pin_exchange_kind() -> Kind {
 /// - kind: 24243
 /// - content: base64(encrypted_wormhole_code)
 /// - tags:
-///   - ["h", "<pin_hint>"] - First 8 hex chars of SHA-256(PIN) for filtering (32 bits)
+///   - ["h", "<pin_hint>"] - 128-bit time-bucketed PIN hint for filtering
 ///   - ["s", "<base64(salt)>"] - Argon2id salt
 ///   - ["t", "<transfer_id>"] - Transfer ID
 ///   - ["type", "pin_exchange"] - Event type marker
@@ -397,11 +435,11 @@ pub async fn publish_wormhole_code_via_pin(
 
     // Verify event was published by querying for it
     let event_id = event.id;
-    let pin_hint = compute_pin_hint(&pin);
+    let pin_hints = compute_pin_hints_for_lookup(&pin);
     let verification_filter = Filter::new()
         .kind(pin_exchange_kind())
         .id(event_id)
-        .custom_tag(SingleLetterTag::lowercase(Alphabet::H), pin_hint);
+        .custom_tags(SingleLetterTag::lowercase(Alphabet::H), pin_hints);
 
     let start = std::time::Instant::now();
     let mut verified = false;
@@ -446,18 +484,18 @@ pub async fn fetch_wormhole_code_via_pin(pin: &str) -> Result<PinExchangeResult>
         anyhow::bail!("Invalid PIN length");
     }
 
-    let pin_hint = compute_pin_hint(pin);
+    let pin_hints = compute_pin_hints_for_lookup(pin);
 
     eprintln!("Connecting to Nostr relays...");
 
     // Connect to relays
     let client = connect_to_relays(None, "PIN lookup").await?;
 
-    // Query
+    // Query with hints for current and previous time bucket (OR matching)
     let filter = Filter::new()
         .kind(pin_exchange_kind())
-        .custom_tag(SingleLetterTag::lowercase(Alphabet::H), pin_hint.clone())
-        .since(Timestamp::now() - 3600)
+        .custom_tags(SingleLetterTag::lowercase(Alphabet::H), pin_hints)
+        .since(Timestamp::now() - PIN_EVENT_EXPIRATION_SECS)
         .limit(10);
 
     let events_res = client.fetch_events(filter, Duration::from_secs(10)).await;
@@ -521,8 +559,8 @@ mod tests {
         let hint1 = compute_pin_hint(pin);
         let hint2 = compute_pin_hint(pin);
         assert_eq!(hint1, hint2);
-        // 8 hex chars = 32 bits for efficient filtering (safe for ephemeral events)
-        assert_eq!(hint1.len(), 8);
+        // 32 hex chars = 128 bits
+        assert_eq!(hint1.len(), 32);
     }
 
     #[test]
@@ -530,6 +568,31 @@ mod tests {
         let hint1 = compute_pin_hint("ABC123456789");
         let hint2 = compute_pin_hint("XYZ987654321");
         assert_ne!(hint1, hint2);
+    }
+
+    #[test]
+    fn test_pin_hint_time_bucket() {
+        let pin = "ABC123456789";
+        let bucket1 = 100;
+        let bucket2 = 101;
+        let hint1 = compute_pin_hint_for_bucket(pin, bucket1);
+        let hint2 = compute_pin_hint_for_bucket(pin, bucket2);
+        // Same PIN with different time buckets produces different hints
+        assert_ne!(hint1, hint2);
+        assert_eq!(hint1.len(), 32);
+        assert_eq!(hint2.len(), 32);
+    }
+
+    #[test]
+    fn test_pin_hints_for_lookup() {
+        let pin = "ABC123456789";
+        let hints = compute_pin_hints_for_lookup(pin);
+        assert_eq!(hints.len(), 2);
+        // Current bucket hint should match compute_pin_hint
+        assert_eq!(hints[0], compute_pin_hint(pin));
+        // Both hints should be 32 hex chars
+        assert_eq!(hints[0].len(), 32);
+        assert_eq!(hints[1].len(), 32);
     }
 
     #[test]
