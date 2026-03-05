@@ -3,7 +3,7 @@
 This guide describes common scenarios where `wormhole-rs` shines and which mode to use for each.
 
 ## 1. No Internet Access (LAN / Air-gapped)
-**Scenario**: You need to transfer files without using the public internet: either both machines are on the same LAN, or you are fully air‑gapped and can only copy/paste text.
+**Scenario**: You need to transfer files without using the public internet: either both machines are on the same LAN, or they can still reach each other over a private/routed network while you copy/paste signaling text out-of-band.
 
 **Solution A**: **Local Mode** (`wormhole-rs-local`)
 - **Why**: Uses mDNS discovery and direct TCP. No data leaves your local network. Relies on a short 12‑character PIN instead of a long code.
@@ -18,7 +18,7 @@ This guide describes common scenarios where `wormhole-rs` shines and which mode 
 - **Experience**: The sender is shown a random 12‑character PIN. The receiver finds the sender automatically and is prompted for that PIN.
 
 **Solution B**: **WebRTC Manual Mode** (`wormhole-rs-webrtc send-manual` / `receive-manual`)  
-- **Why**: Works when mDNS is blocked or the devices are on different networks, as long as you can copy/paste text between them. No Nostr relay required.
+- **Why**: Works when mDNS is blocked and peers still have direct IP reachability (same LAN or routed private/VPN network). No Nostr relay required.
 - **Command**:
   ```bash
   # Sender
@@ -27,9 +27,7 @@ This guide describes common scenarios where `wormhole-rs` shines and which mode 
   # Receiver
   wormhole-rs-webrtc receive-manual
   ```
-- **Experience**: Sender copy/pastes an SDP offer, receiver replies with an SDP answer. The exchanged text includes the encryption key, so use a secure channel.
-
-> **Note**: Tor Mode requires internet access. iroh Mode can be used in air‑gapped environments **only if** you self‑host the relay **and** discovery services on the same network; the default public relay/discovery endpoints require internet access.
+- **Experience**: Sender copy/pastes an offer code, receiver replies with an answer code. The exchanged text includes signaling metadata and the encryption key, so use a secure channel.
 
 ---
 
@@ -37,7 +35,7 @@ This guide describes common scenarios where `wormhole-rs` shines and which mode 
 **Scenario**: mDNS discovery doesn't work because peers are on different subnets, across VPNs, or on networks that block multicast.
 
 **Solution**: **iroh Mode**
-- **Why**: iroh discovers peers across network boundaries using DNS/pkarr discovery plus relay infrastructure—no manual IP input required. Requires internet access.
+- **Why**: iroh connects peers across network boundaries using relay infrastructure—no manual IP input required. Requires internet access.
 - **Command**:
   ```bash
   # Sender
@@ -46,7 +44,7 @@ This guide describes common scenarios where `wormhole-rs` shines and which mode 
   # Receiver (iroh code)
   wormhole-rs receive --code <WORMHOLE_CODE>
   ```
-- **Experience**: Share the wormhole code via any channel (chat, paper, verbal). iroh handles peer discovery and NAT traversal automatically without needing IP addresses.
+- **Experience**: Share the wormhole code via any channel (chat, paper, verbal). iroh handles NAT traversal automatically without needing IP addresses.
 
 ---
 
@@ -123,12 +121,10 @@ This guide describes common scenarios where `wormhole-rs` shines and which mode 
 ---
 
 ## 7. Self-Hosted Infrastructure (Zero Third-Party Dependency)
-**Scenario**: You require complete control over the network infrastructure and cannot rely on public relays or discovery servers due to policy or privacy concerns.
+**Scenario**: You require complete control over the network infrastructure and cannot rely on public relays due to policy or privacy concerns.
 
 **Solution A**: **iroh Mode + Custom DERP Relays** (Recommended)
 - **Why**: iroh allows you to run your own lightweight relay (DERP). By pointing `wormhole-rs` to your own infrastructure, you achieve a true peer-to-peer connection where no third-party relays are involved.
-- **Current Status**: Custom relays are supported today via `--relay-url`, but peer discovery still uses iroh's public DNS/pkarr services. See [ROADMAP.md](ROADMAP.md) for updates on custom DNS/discovery support. For a fully zero-third-party option today, use:
-  - **Local Mode** (`wormhole-rs-local`) when both peers share a LAN and can rely on mDNS.
 - **Resources**: Implementation for the relay server is available in the [iroh repository](https://github.com/n0-computer/iroh).
 - **Command**:
   ```bash
@@ -152,4 +148,4 @@ See [ROADMAP.md](ROADMAP.md) for planned features and development priorities.
 
 ## WebRTC Mode
 
-WebRTC mode provides P2P transfers with Nostr signaling for NAT traversal, plus a manual copy/paste path for offline or relay‑blocked environments. See [main README](../README.md#3-webrtc-mode---wormhole-rs-webrtc-send) for usage details.
+WebRTC mode provides P2P transfers with Nostr signaling for NAT traversal, plus a manual copy/paste path for relay-blocked environments where peers are still directly reachable. See [main README](../README.md#3-webrtc-mode---wormhole-rs-webrtc-send) for usage details.

@@ -24,37 +24,34 @@ iroh uses a "hole punching" strategy that attempts direct connections via UDP/QU
 ```mermaid
 sequenceDiagram
     participant Sender
-    participant Discovery as DNS / mDNS
     participant Relay as iroh Relay
     participant Receiver
 
     Sender->>Sender: 1. Create iroh Node (Random NodeID)
     Sender->>Relay: 2. Connect to Home Relay
-    Sender->>Discovery: 3. Publish NodeID via Pkarr/DNS (IPs auto-discovered)
-    
-    Sender->>Sender: 4. Generate wormhole code
-    Note over Sender: Code = base64url(JSON token: version, protocol, created_at, AES_key, minimal addr)
-    Note over Sender: Minimal addr = NodeID + optional relay URL
-    Note over Sender: (IPs NOT in code - discovered via Pkarr/DNS/mDNS)
 
-    Receiver->>Receiver: 5. Parse Code -> NodeAddr
-    Receiver->>Relay: 6. Connect to Relay
-    
+    Sender->>Sender: 3. Generate wormhole code
+    Note over Sender: Code = base64url(JSON token: version, protocol, created_at, AES_key, minimal addr)
+    Note over Sender: Minimal addr = NodeID + relay URL
+
+    Receiver->>Receiver: 4. Parse Code -> NodeAddr
+    Receiver->>Relay: 5. Connect to Relay
+
     par Connection Attempts
         Receiver->>Relay: A. Dial via Relay (Guaranteed)
         Receiver->>Sender: B. Dial Direct UDP (Optimization)
     end
-    
+
     Note over Sender,Receiver: iroh selects best path (Direct > Relay)
-    
-    Sender->>Receiver: 7. Handshake (ALPN "wormhole-transfer/1")
-    Sender->>Receiver: 8. Send Encrypted Header (AES-256-GCM)
+
+    Sender->>Receiver: 6. Handshake (ALPN "wormhole-transfer/1")
+    Sender->>Receiver: 7. Send Encrypted Header (AES-256-GCM)
     Note over Receiver: Check file existence, prompt user
 
     alt User accepts transfer
-        Receiver->>Sender: 9. Send Encrypted PROCEED
+        Receiver->>Sender: 8. Send Encrypted PROCEED
     else User declines or file conflict
-        Receiver->>Sender: 9. Send Encrypted ABORT
+        Receiver->>Sender: 8. Send Encrypted ABORT
         Note over Sender,Receiver: Transfer cancelled
     end
 
@@ -62,7 +59,7 @@ sequenceDiagram
         Sender->>Receiver: Send Encrypted Chunk (QUIC Stream)
     end
 
-    Receiver->>Sender: 10. Send Encrypted ACK
+    Receiver->>Sender: 9. Send Encrypted ACK
 ```
 
 #### Tor Mode
@@ -198,7 +195,7 @@ sequenceDiagram
 
 ### iroh Mode (`wormhole-rs send`) - Recommended
 - **Transport**: QUIC / TLS 1.3
-- **Discovery**: iroh's global discovery (n0 DNS / pkarr) + mDNS for local network.
+- **Discovery**: Relay URL embedded in wormhole code + mDNS for local network.
 - **Relay**: iroh relays (DERP) - automatically used if direct P2P connection fails.
 - **Failover**: Uses multiple relays for redundancy; monitors latency to select the best path.
 - **Connection**: "Hole punching" attempts to establish a direct UDP connection; falls back to relay if NATs are strict.
@@ -220,7 +217,7 @@ sequenceDiagram
 ### WebRTC Mode (`wormhole-rs-webrtc send`)
 - **Transport**: WebRTC DataChannel over DTLS
 - **Discovery**: Nostr relays for SDP/ICE signaling (or manual copy-paste)
-- **NAT Traversal**: ICE with STUN server (`stun:stun.l.google.com:19302`)
+- **NAT Traversal**: ICE with multiple public STUN servers (Google + Cloudflare)
 - **Encryption**: DTLS (WebRTC built-in) + AES-256-GCM at application layer
 - **Fallback**: Try iroh mode (with automatic relay) if direct P2P fails. Use `wormhole-rs-tor` for anonymity
 
@@ -267,7 +264,7 @@ All wormhole codes and signaling offers include a creation timestamp and are val
 
 **Implementation:**
 - **Token Version**: v4 tokens include a `created_at` Unix timestamp
-- **TTL Duration**: 30 minutes (`CODE_TTL_SECS = 1800`)
+- **TTL Duration**: 60 minutes (`SESSION_TTL_SECS = 3600`)
 - **Clock Skew**: Allows up to 60 seconds into the future to handle minor clock drift
 
 **Validation Points:**
@@ -281,7 +278,7 @@ TTL validation is not applied to local mDNS transfers because it is unnecessary:
 - The connection happens immediately over direct TCP on the LAN
 
 **Error Messages:**
-- Expired codes: "Token expired: code is X minutes old (max 30 minutes). Please request a new code from the sender."
+- Expired codes: "Token expired: code is X minutes old (max 60 minutes). Please request a new code from the sender."
 - Future timestamps: "Invalid token: created_at is in the future. Check system clock."
 
 ## Wire Protocol Format
@@ -307,6 +304,26 @@ Control signals are encrypted messages sent over the same length-prefixed framin
 - **RESUME:<offset>**: receiver requests resume from a byte offset (files only)
 
 These signals are not tied to chunk numbers and use fresh random nonces like all other encrypted messages.
+
+### Resumable File On-Disk Flow
+
+Resumable state is only used for **file** transfers (not folders) when resume is enabled.
+
+- Receiver writes incoming bytes to a resume temp file in the target directory:
+  `<final_path>.wormhole-rs.partial`
+- That temp file contains a fixed-size metadata header (checksum, expected size,
+  bytes received, filename) followed by file data.
+
+When the transfer completes successfully:
+
+1. Receiver writes payload bytes (without metadata header) to a staging file:
+   `<final_path>.partial` in the same directory.
+2. Receiver syncs the staging file and parent directory.
+3. Receiver atomically renames staging to the final destination path.
+4. Receiver removes `<final_path>.wormhole-rs.partial`.
+
+Keeping both temp/staging files in the same directory ensures the final rename
+is on the same filesystem, which enables atomic replacement semantics.
 
 ### WebRTC Message Format
 

@@ -5,8 +5,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// Current token format version
 pub const CURRENT_VERSION: u8 = 4;
 
-/// TTL for wormhole codes in seconds (30 minutes)
-pub const CODE_TTL_SECS: u64 = 30 * 60;
+/// TTL for wormhole sessions in seconds (1 hour)
+pub const SESSION_TTL_SECS: u64 = 3600;
 
 /// Protocol identifier for iroh transport
 pub const PROTOCOL_IROH: &str = "iroh";
@@ -57,10 +57,8 @@ fn validate_onion_address(addr: &str) -> Result<()> {
 }
 
 /// Minimal address for serialization - only contains node ID and relay URL.
-/// IP addresses are auto-discovered by iroh, so we don't need them in the wormhole code.
 /// Only one relay URL is kept (the endpoint's currently-selected best relay) to keep
-/// tokens compact for copy/paste. The receiver's iroh endpoint independently discovers
-/// additional relays via DNS/pkarr.
+/// tokens compact for copy/paste.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct MinimalAddr {
     /// Node ID (hex-encoded public key)
@@ -85,7 +83,7 @@ pub struct WormholeToken {
     /// AES-256-GCM key as base64 string (always present for iroh/tor/webrtc)
     pub key: String,
     /// Minimal endpoint address for connection (None for non-iroh transports)
-    /// Contains only node ID and relay URL - IP addresses are auto-discovered
+    /// Contains only node ID and relay URL
     #[serde(skip_serializing_if = "Option::is_none")]
     pub addr: Option<MinimalAddr>,
 
@@ -314,13 +312,13 @@ pub fn parse_code(code: &str) -> Result<WormholeToken> {
         anyhow::bail!("Invalid token: created_at is in the future. Check system clock.");
     }
     let age = now.saturating_sub(token.created_at);
-    if age > CODE_TTL_SECS {
+    if age > SESSION_TTL_SECS {
         let minutes = age / 60;
         anyhow::bail!(
             "Token expired: code is {} minutes old (max {} minutes). \
              Please request a new code from the sender.",
             minutes,
-            CODE_TTL_SECS / 60
+            SESSION_TTL_SECS / 60
         );
     }
 

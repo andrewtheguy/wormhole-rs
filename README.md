@@ -8,7 +8,7 @@ A secure, cross-platform, single-binary peer-to-peer file transfer tool with dir
 ## Features
 
 - **End-to-end encryption** - All transfers use AES-256-GCM encryption
-- **Resumable transfers** - Interrupted transfers can resume from where they left off
+- **Resumable file transfers** - Interrupted file downloads can resume from where they left off
 - **File and folder transfers** - Send individual files or entire directories (automatically archived)
 - **Multiple transport modes** - iroh (recommended), Tor, WebRTC, and local LAN
 - **Local discovery** - mDNS for same-network transfers without internet
@@ -105,7 +105,6 @@ wormhole-rs send /path/to/folder --folder
     wormhole-rs receive --relay-url https://relay1.example.com
     ```
 - Multiple `--relay-url` flags are supported for failover.
-- Discovery still relies on iroh's public DNS/pkarr services today; full zero-third-party operation will land with the planned custom DNS server support (see ROADMAP).
 
 #### 2. Tor Mode - `wormhole-rs-tor send`
 *Anonymous transfers via Tor hidden services. Use when anonymity is required.*
@@ -126,25 +125,14 @@ wormhole-rs-webrtc send /path/to/file
 # Send with custom relay
 wormhole-rs-webrtc send --relay wss://my-relay.com /path/to/file
 
-# Receive (sender displays transfer-id, pubkey, relay)
-wormhole-rs-webrtc receive \
-    --transfer-id <TRANSFER_ID> \
-    --sender-pubkey <SENDER_PUBKEY_HEX> \
-    --relay wss://relay.example.com
+# Receive with code from sender
+wormhole-rs-webrtc receive <WORMHOLE_CODE>
+
+# Or prompt for code interactively
+wormhole-rs-webrtc receive
 ```
 
-##### Manual Mode (Copy/Paste SDP)
-For air-gapped or restricted environments where Nostr relays are unavailable:
-
-```bash
-# Sender
-wormhole-rs-webrtc send-manual /path/to/file
-
-# Receiver
-wormhole-rs-webrtc receive-manual
-```
-
-Manual mode exchanges SDP offers/answers via copy-paste. The codes contain the encryption key, so only share them through secure channels (SSH, remote desktop, encrypted chat).
+For copy/paste signaling when Nostr relays are unavailable, see [Manual Mode](#manual-mode).
 
 If WebRTC connection fails (e.g., both peers behind symmetric NAT), try iroh mode which has automatic relay fallback.
 
@@ -162,7 +150,7 @@ wormhole-rs receive --pin
 
 ---
 
-### Local / Offline Transfers
+### Local/Offline Transfers
 
 There are **two** ways to transfer without relying on the public internet:
 
@@ -170,11 +158,11 @@ There are **two** ways to transfer without relying on the public internet:
    - Uses mDNS discovery + SPAKE2 PIN
    - Fast, zero copy/paste, no internet required
 
-2) **Manual WebRTC (when mDNS is blocked or devices are on different networks but you can copy/paste)**
-   - Uses WebRTC DataChannels with **manual** SDP exchange
-   - Works even when Nostr relays are unavailable
+2) **Manual WebRTC (when mDNS is blocked but peers still have direct network reachability)**
+   - Uses WebRTC DataChannels with **manual** offer/answer code exchange
+   - Works even when Nostr relays are unavailable (see [Manual Mode](#manual-mode))
 
-> **Note**: Tor mode requires internet access. iroh mode can be air‑gapped **only if** you self‑host both the relay **and** discovery services on the same network; the default public relay/discovery endpoints require internet access.
+> **Note**: Tor mode requires internet access. iroh mode can be air‑gapped when you self‑host the relay and point both sides at it via `--relay-url`; the default public relay requires internet access.
 
 #### LAN discovery (`wormhole-rs-local`)
 
@@ -193,7 +181,10 @@ wormhole-rs-local send /path/to/folder --folder
 wormhole-rs-local receive
 ```
 
-#### Manual WebRTC (`wormhole-rs-webrtc send-manual`)
+### Manual Mode
+
+Use manual mode when Nostr relays are unavailable and both peers still have
+direct network reachability (for example, same LAN or routed private/VPN path).
 
 ```bash
 # Sender
@@ -203,7 +194,9 @@ wormhole-rs-webrtc send-manual /path/to/file
 wormhole-rs-webrtc receive-manual
 ```
 
-Manual mode exchanges SDP offers/answers via copy-paste. The codes contain the encryption key, so only share them through secure channels (SSH, remote desktop, encrypted chat).
+Manual mode exchanges offer/answer codes via copy-paste. The codes contain the
+encryption key, so only share them through secure channels (SSH, remote
+desktop, encrypted chat).
 
 ## Common Use Cases
 

@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use iroh::{
     Endpoint, EndpointAddr, RelayMap, RelayUrl, TransportAddr, Watcher,
-    address_lookup::{dns::DnsAddressLookup, mdns::MdnsAddressLookup, pkarr::PkarrPublisher},
+    address_lookup::mdns::MdnsAddressLookup,
     endpoint::{Connection, PathInfoList, RecvStream, RelayMode, SendStream},
 };
 use tokio::task::JoinHandle;
@@ -216,7 +216,7 @@ fn print_relay_info(relay_urls: &[String]) {
 
 /// Create an iroh endpoint configured for sending (accepts incoming connections).
 ///
-/// Sets up N0 DNS discovery, pkarr publishing, and local mDNS discovery.
+/// Sets up local mDNS discovery.
 /// The endpoint is configured with ALPN for wormhole transfers.
 /// Multiple relay URLs provide automatic failover based on latency.
 pub async fn create_sender_endpoint(relay_urls: Vec<String>) -> Result<Endpoint> {
@@ -225,8 +225,6 @@ pub async fn create_sender_endpoint(relay_urls: Vec<String>) -> Result<Endpoint>
 
     let endpoint = Endpoint::empty_builder(relay_mode)
         .alpns(vec![ALPN.to_vec()])
-        .address_lookup(PkarrPublisher::n0_dns())
-        .address_lookup(DnsAddressLookup::n0_dns())
         .address_lookup(MdnsAddressLookup::builder())
         .bind()
         .await
@@ -240,7 +238,7 @@ pub async fn create_sender_endpoint(relay_urls: Vec<String>) -> Result<Endpoint>
 
 /// Create an iroh endpoint configured for receiving (connects to sender).
 ///
-/// Sets up N0 DNS discovery, pkarr publishing, and local mDNS discovery.
+/// Sets up local mDNS discovery.
 /// Does not set ALPN as the receiver specifies it when connecting.
 /// Multiple relay URLs provide automatic failover based on latency.
 pub async fn create_receiver_endpoint(relay_urls: Vec<String>) -> Result<Endpoint> {
@@ -248,8 +246,6 @@ pub async fn create_receiver_endpoint(relay_urls: Vec<String>) -> Result<Endpoin
     let relay_mode = parse_relay_mode(relay_urls)?;
 
     let endpoint = Endpoint::empty_builder(relay_mode)
-        .address_lookup(PkarrPublisher::n0_dns())
-        .address_lookup(DnsAddressLookup::n0_dns())
         .address_lookup(MdnsAddressLookup::builder())
         .bind()
         .await
@@ -260,7 +256,6 @@ pub async fn create_receiver_endpoint(relay_urls: Vec<String>) -> Result<Endpoin
 
 /// Create a MinimalAddr from a full EndpointAddr, stripping IP addresses.
 /// Only the first (currently-selected) relay URL is kept to minimize token size.
-/// The receiver discovers additional relays independently via DNS/pkarr.
 pub fn minimal_addr_from_endpoint(addr: &EndpointAddr) -> MinimalAddr {
     let relay = addr.relay_urls().next().map(|r| r.to_string());
     MinimalAddr {

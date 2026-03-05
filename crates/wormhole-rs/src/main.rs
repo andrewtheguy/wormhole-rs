@@ -134,7 +134,7 @@ async fn async_main() -> Result<()> {
             .add_directive("netwatch=warn".parse().unwrap())
             .add_directive("portmapper=warn".parse().unwrap())
             .add_directive("swarm_discovery=warn".parse().unwrap())
-            .add_directive("pkarr=warn".parse().unwrap())
+
             .add_directive("quinn=warn".parse().unwrap())
             .add_directive("quinn_proto=warn".parse().unwrap())
     });
