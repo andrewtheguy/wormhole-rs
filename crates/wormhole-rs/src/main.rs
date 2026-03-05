@@ -172,13 +172,13 @@ async fn async_main() -> Result<()> {
             validate_output_dir(&output)?;
 
             // Handle PIN mode if requested
-            if pin {
+            let pin_info = if pin {
                 let pin_str = wormhole_common::auth::pin::prompt_pin()?;
 
                 eprintln!("Searching for wormhole token via Nostr...");
 
                 // Fetch encrypted token from Nostr
-                let token_str = tokio::time::timeout(
+                let result = tokio::time::timeout(
                     std::time::Duration::from_secs(30),
                     wormhole_common::auth::nostr_pin::fetch_wormhole_code_via_pin(&pin_str),
                 )
@@ -189,8 +189,11 @@ async fn async_main() -> Result<()> {
                     )
                 })??;
                 eprintln!("Token found and decrypted!");
-                code = Some(token_str);
-            }
+                code = Some(result.code);
+                Some((pin_str, result.transfer_id))
+            } else {
+                None
+            };
 
             // Get code from argument or prompt
             let code = match code {
@@ -204,7 +207,7 @@ async fn async_main() -> Result<()> {
                 }
             };
 
-            receive_with_code(&code, output, relay_url, no_resume).await?;
+            receive_with_code(&code, output, relay_url, no_resume, pin_info).await?;
         }
     }
 
@@ -217,6 +220,7 @@ async fn receive_with_code(
     output: Option<PathBuf>,
     relay_url: Vec<String>,
     no_resume: bool,
+    pin_info: Option<(String, String)>,
 ) -> Result<()> {
     // Validate code format
     wormhole::validate_code_format(code)?;
@@ -226,7 +230,7 @@ async fn receive_with_code(
 
     match token.protocol.as_str() {
         wormhole::PROTOCOL_IROH => {
-            iroh_receiver::receive(code, output, relay_url, no_resume).await?;
+            iroh_receiver::receive(code, output, relay_url, no_resume, pin_info).await?;
         }
         wormhole::PROTOCOL_TOR => {
             anyhow::bail!(

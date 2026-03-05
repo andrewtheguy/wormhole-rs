@@ -6,6 +6,7 @@ use tokio::sync::oneshot;
 
 use super::common::{IrohDuplex, create_sender_endpoint, generate_code, watch_connection_paths};
 use crate::cli::instructions::print_receiver_command;
+use wormhole_common::auth::spake2::handshake_as_responder;
 use wormhole_common::core::crypto::generate_key;
 use wormhole_common::core::transfer::{
     FileHeader, Interrupted, TransferResult, TransferType, run_sender_transfer, send_file_with,
@@ -117,7 +118,8 @@ async fn transfer_data_internal(
 
     println!("\n🔮 Wormhole code:\n{}\n", code);
 
-    if use_pin {
+    // pin_info holds (pin, transfer_id) when PIN mode is active, for SPAKE2 handshake
+    let pin_info = if use_pin {
         // Generate ephemeral keys for PIN exchange
         let keys = nostr_sdk::Keys::generate();
         // Generate unique transfer ID to avoid collisions with concurrent transfers
@@ -131,9 +133,11 @@ async fn transfer_data_internal(
 
         println!("🔢 PIN: {}\n", pin);
         println!("Then enter the PIN above when prompted.\n");
+        Some((pin, transfer_id))
     } else {
         println!("Then enter the code above when prompted.\n");
-    }
+        None
+    };
 
     eprintln!("Waiting for receiver to connect...");
 
@@ -178,6 +182,22 @@ async fn transfer_data_internal(
     // Open bi-directional stream
     let (mut send_stream, mut recv_stream) =
         conn.open_bi().await.context("Failed to open stream")?;
+
+    // Perform SPAKE2 handshake if PIN mode is active (sender = responder)
+    let key = if let Some((ref pin, ref transfer_id)) = pin_info {
+        eprintln!("Performing SPAKE2 authentication...");
+        let mut duplex = IrohDuplex::new(&mut send_stream, &mut recv_stream);
+        let derived_key = tokio::time::timeout(
+            std::time::Duration::from_secs(30),
+            handshake_as_responder(&mut duplex, pin, transfer_id),
+        )
+        .await
+        .map_err(|_| anyhow::anyhow!("SPAKE2 handshake timed out"))??;
+        eprintln!("SPAKE2 authentication successful!");
+        derived_key
+    } else {
+        key
+    };
 
     // Create header and run unified transfer logic
     let header = FileHeader::new(transfer_type, filename, file_size, checksum);

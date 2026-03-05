@@ -37,6 +37,14 @@ use tokio::time::Duration;
 
 use crate::auth::pin::{PIN_LENGTH, generate_pin};
 
+/// Result of fetching a wormhole code via PIN exchange.
+pub struct PinExchangeResult {
+    /// The decrypted wormhole code
+    pub code: String,
+    /// The transfer ID from the Nostr event's "t" tag
+    pub transfer_id: String,
+}
+
 /// Default public Nostr relays for PIN exchange
 /// These should match the relays used in signaling for consistency
 pub const DEFAULT_NOSTR_RELAYS: &[&str] = &[
@@ -432,8 +440,8 @@ pub async fn publish_wormhole_code_via_pin(
 /// Fetch a wormhole code using a PIN.
 ///
 /// Queries default relays for PIN exchange events matching the PIN,
-/// and attempts to decrypt them.
-pub async fn fetch_wormhole_code_via_pin(pin: &str) -> Result<String> {
+/// and attempts to decrypt them. Returns both the code and the transfer ID.
+pub async fn fetch_wormhole_code_via_pin(pin: &str) -> Result<PinExchangeResult> {
     if pin.len() != PIN_LENGTH {
         anyhow::bail!("Invalid PIN length");
     }
@@ -469,7 +477,17 @@ pub async fn fetch_wormhole_code_via_pin(pin: &str) -> Result<String> {
         let event_id = event.id.to_hex();
         match parse_pin_exchange_event(event) {
             Ok((encrypted, salt)) => match decrypt_wormhole_code(&encrypted, pin, &salt) {
-                Ok(code) => return Ok(code),
+                Ok(code) => {
+                    // Extract transfer_id from the "t" tag
+                    let transfer_id = event
+                        .tags
+                        .iter()
+                        .find(|t| t.kind().to_string() == "t")
+                        .and_then(|t| t.content())
+                        .context("Missing transfer ID tag in PIN exchange event")?
+                        .to_string();
+                    return Ok(PinExchangeResult { code, transfer_id });
+                }
                 Err(e) => {
                     log::debug!(
                         "Failed to decrypt event {} (index {}): {}",

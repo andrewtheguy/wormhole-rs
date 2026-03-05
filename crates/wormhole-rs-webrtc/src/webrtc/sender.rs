@@ -11,6 +11,7 @@ use tokio::time::{Duration, timeout};
 use webrtc::ice_transport::ice_candidate::RTCIceCandidateInit;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 
+use wormhole_common::auth::spake2::handshake_as_responder;
 use wormhole_common::core::crypto::generate_key;
 use wormhole_common::core::transfer::{
     FileHeader, TransferType, format_bytes, run_sender_transfer, send_file_with, send_folder_with,
@@ -100,13 +101,14 @@ where
     }
 }
 
-/// Display transfer code or PIN to the user with instructions
+/// Display transfer code or PIN to the user with instructions.
+/// Returns the PIN when in PIN mode, for use in SPAKE2 handshake.
 async fn display_transfer_code(
     use_pin: bool,
     signaling_keys: &nostr_sdk::Keys,
     code_str: &str,
     transfer_id: &str,
-) -> Result<()> {
+) -> Result<Option<String>> {
     if use_pin {
         let pin = wormhole_common::auth::nostr_pin::publish_wormhole_code_via_pin(
             signaling_keys,
@@ -118,12 +120,13 @@ async fn display_transfer_code(
         eprintln!("\n--- Receiver Instructions ---");
         eprintln!("Run: wormhole-rs-webrtc receive --pin");
         eprintln!("PIN: {}\n", pin);
+        Ok(Some(pin))
     } else {
         eprintln!("\n--- Receiver Instructions ---");
         eprintln!("Run: wormhole-rs-webrtc receive");
         eprintln!("Wormhole code:\n{}\n", code_str);
+        Ok(None)
     }
-    Ok(())
 }
 
 /// Result of WebRTC connection attempt
@@ -138,6 +141,7 @@ async fn try_webrtc_transfer(
     header: &FileHeader,
     key: &[u8; 32],
     signaling: &NostrSignaling,
+    pin_info: Option<(String, String)>,
 ) -> Result<WebRtcResult> {
     eprintln!("Attempting WebRTC connection...");
 
@@ -258,12 +262,27 @@ async fn try_webrtc_transfer(
     // Small delay to ensure connection is stable
     tokio::time::sleep(Duration::from_millis(100)).await;
 
+    // Perform SPAKE2 handshake if PIN mode is active (sender = responder)
+    let mut stream = stream;
+    let key = if let Some((ref pin, ref transfer_id)) = pin_info {
+        eprintln!("Performing SPAKE2 authentication...");
+        let derived_key = timeout(
+            Duration::from_secs(30),
+            handshake_as_responder(&mut stream, pin, transfer_id),
+        )
+        .await
+        .map_err(|_| anyhow::anyhow!("SPAKE2 handshake timed out"))??;
+        eprintln!("SPAKE2 authentication successful!");
+        derived_key
+    } else {
+        *key
+    };
+
     // Wrap peer in Arc for cleanup
     let rtc_peer = Arc::new(rtc_peer);
 
     // Use common transfer protocol
-    let mut stream = stream;
-    let result = run_sender_transfer(file, &mut stream, key, header).await;
+    let result = run_sender_transfer(file, &mut stream, &key, header).await;
 
     // Cleanup
     let _ = rtc_peer.close().await;
@@ -311,13 +330,16 @@ async fn transfer_data_webrtc_internal(
         },
     )?;
 
-    display_transfer_code(
+    let pin = display_transfer_code(
         use_pin,
         signaling.signing_keys(),
         &code,
         signaling.transfer_id(),
     )
     .await?;
+
+    // Build pin_info for SPAKE2 handshake
+    let pin_info = pin.map(|p| (p, signaling.transfer_id().to_string()));
 
     eprintln!("Filename: {}", filename);
     eprintln!("Size: {}", format_bytes(file_size));
@@ -327,7 +349,7 @@ async fn transfer_data_webrtc_internal(
     let header = FileHeader::new(transfer_type, filename.clone(), file_size, checksum);
 
     // Try WebRTC transfer
-    match try_webrtc_transfer(&mut file, &header, &key, &signaling).await? {
+    match try_webrtc_transfer(&mut file, &header, &key, &signaling, pin_info).await? {
         WebRtcResult::Success => {
             signaling.disconnect().await;
             eprintln!("Connection closed.");
