@@ -92,14 +92,25 @@ pub async fn receive(
         let mut send_stream_mut = send_stream;
         let mut duplex =
             super::common::IrohDuplex::new(&mut send_stream_mut, &mut recv_stream);
-        let derived_key = tokio::time::timeout(
+        let handshake_result = tokio::time::timeout(
             std::time::Duration::from_secs(30),
             handshake_as_initiator(&mut duplex, pin, transfer_id),
         )
         .await
-        .map_err(|_| anyhow::anyhow!("SPAKE2 handshake timed out"))??;
-        eprintln!("SPAKE2 authentication successful!");
-        (derived_key, send_stream_mut)
+        .map_err(|_| anyhow::anyhow!("SPAKE2 handshake timed out"))
+        .and_then(|r| r);
+        match handshake_result {
+            Ok(derived_key) => {
+                eprintln!("SPAKE2 authentication successful!");
+                (derived_key, send_stream_mut)
+            }
+            Err(e) => {
+                drop(path_watcher);
+                conn.close(2u32.into(), b"handshake failed");
+                endpoint.close().await;
+                return Err(e);
+            }
+        }
     } else {
         (key, send_stream)
     };

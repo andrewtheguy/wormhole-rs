@@ -192,14 +192,25 @@ async fn transfer_data_internal(
         // this the receiver's accept_bi() would never see the stream.
         send_stream.write_all(&[0x01]).await.context("Failed to send ready byte")?;
         let mut duplex = IrohDuplex::new(&mut send_stream, &mut recv_stream);
-        let derived_key = tokio::time::timeout(
+        let handshake_result = tokio::time::timeout(
             std::time::Duration::from_secs(30),
             handshake_as_responder(&mut duplex, pin, transfer_id),
         )
         .await
-        .map_err(|_| anyhow::anyhow!("SPAKE2 handshake timed out"))??;
-        eprintln!("SPAKE2 authentication successful!");
-        derived_key
+        .map_err(|_| anyhow::anyhow!("SPAKE2 handshake timed out"))
+        .and_then(|r| r);
+        match handshake_result {
+            Ok(derived_key) => {
+                eprintln!("SPAKE2 authentication successful!");
+                derived_key
+            }
+            Err(e) => {
+                drop(path_watcher);
+                conn.close(close_codes::ERROR, b"handshake failed");
+                endpoint.close().await;
+                return Err(e);
+            }
+        }
     } else {
         key
     };
