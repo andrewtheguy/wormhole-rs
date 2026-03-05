@@ -10,6 +10,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use std::io::{self, Write};
 use std::path::PathBuf;
+use wormhole_common::auth::PinInfo;
 use wormhole_common::core::transfer::is_interrupted;
 
 mod signaling;
@@ -135,27 +136,30 @@ async fn async_main() -> Result<()> {
             pin,
         } => {
             // Get wormhole code from PIN, argument, or prompt
-            let code = if pin {
+            let (code, pin_info) = if pin {
                 // Use PIN-based code lookup
                 let pin_str = wormhole_common::auth::pin::prompt_pin()?;
                 eprintln!("Looking up wormhole code via PIN...");
-                wormhole_common::auth::nostr_pin::fetch_wormhole_code_via_pin(&pin_str).await?
+                let result =
+                    wormhole_common::auth::nostr_pin::fetch_wormhole_code_via_pin(&pin_str)
+                        .await?;
+                (result.code, Some(PinInfo { pin: pin_str, transfer_id: result.transfer_id }))
             } else if let Some(c) = code {
-                c.trim().to_string()
+                (c.trim().to_string(), None)
             } else {
                 // Prompt for wormhole code
                 print!("Enter wormhole code: ");
                 io::stdout().flush()?;
                 let mut input = String::new();
                 io::stdin().read_line(&mut input)?;
-                input.trim().to_string()
+                (input.trim().to_string(), None)
             };
 
             if code.is_empty() {
                 anyhow::bail!("Wormhole code is required");
             }
 
-            webrtc::receive_webrtc(&code, output, no_resume).await?;
+            webrtc::receive_webrtc(&code, output, no_resume, pin_info).await?;
         }
 
         Commands::SendManual { path } => {

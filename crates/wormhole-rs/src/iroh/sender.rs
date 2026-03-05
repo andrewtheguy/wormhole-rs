@@ -6,6 +6,8 @@ use tokio::sync::oneshot;
 
 use super::common::{IrohDuplex, create_sender_endpoint, generate_code, watch_connection_paths};
 use crate::cli::instructions::print_receiver_command;
+use wormhole_common::auth::PinInfo;
+use wormhole_common::auth::spake2::handshake_as_responder;
 use wormhole_common::core::crypto::generate_key;
 use wormhole_common::core::transfer::{
     FileHeader, Interrupted, TransferResult, TransferType, run_sender_transfer, send_file_with,
@@ -117,7 +119,7 @@ async fn transfer_data_internal(
 
     println!("\n🔮 Wormhole code:\n{}\n", code);
 
-    if use_pin {
+    let pin_info = if use_pin {
         // Generate ephemeral keys for PIN exchange
         let keys = nostr_sdk::Keys::generate();
         // Generate unique transfer ID to avoid collisions with concurrent transfers
@@ -131,9 +133,11 @@ async fn transfer_data_internal(
 
         println!("🔢 PIN: {}\n", pin);
         println!("Then enter the PIN above when prompted.\n");
+        Some(PinInfo { pin, transfer_id })
     } else {
         println!("Then enter the code above when prompted.\n");
-    }
+        None
+    };
 
     eprintln!("Waiting for receiver to connect...");
 
@@ -178,6 +182,39 @@ async fn transfer_data_internal(
     // Open bi-directional stream
     let (mut send_stream, mut recv_stream) =
         conn.open_bi().await.context("Failed to open stream")?;
+
+    // Perform SPAKE2 handshake if PIN mode is active (sender = responder)
+    let key = if let Some(ref pin_info) = pin_info {
+        let (pin, transfer_id) = (&pin_info.pin, &pin_info.transfer_id);
+        eprintln!("Performing SPAKE2 authentication...");
+        // Write a "ready" byte to materialize the QUIC stream on the receiver side.
+        // In QUIC, open_bi() allocates the stream locally but may not send a STREAM
+        // frame until data is written. Since SPAKE2 responder reads first, without
+        // this the receiver's accept_bi() would never see the stream.
+        send_stream.write_all(&[0x01]).await.context("Failed to send ready byte")?;
+        let mut duplex = IrohDuplex::new(&mut send_stream, &mut recv_stream);
+        let handshake_result = tokio::time::timeout(
+            std::time::Duration::from_secs(30),
+            handshake_as_responder(&mut duplex, pin, transfer_id),
+        )
+        .await
+        .map_err(|_| anyhow::anyhow!("SPAKE2 handshake timed out"))
+        .and_then(|r| r.map_err(|e| anyhow::anyhow!("SPAKE2 handshake failed: {}", e)));
+        match handshake_result {
+            Ok(derived_key) => {
+                eprintln!("SPAKE2 authentication successful!");
+                derived_key
+            }
+            Err(e) => {
+                drop(path_watcher);
+                conn.close(close_codes::ERROR, b"handshake failed");
+                endpoint.close().await;
+                return Err(e);
+            }
+        }
+    } else {
+        key
+    };
 
     // Create header and run unified transfer logic
     let header = FileHeader::new(transfer_type, filename, file_size, checksum);

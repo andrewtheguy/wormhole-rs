@@ -6,11 +6,13 @@ use anyhow::{Context, Result};
 use std::path::Path;
 use std::sync::Arc;
 use tokio::fs::File;
-use tokio::io::AsyncBufReadExt;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 use tokio::time::{Duration, timeout};
 use webrtc::ice_transport::ice_candidate::RTCIceCandidateInit;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 
+use wormhole_common::auth::PinInfo;
+use wormhole_common::auth::spake2::handshake_as_responder;
 use wormhole_common::core::crypto::generate_key;
 use wormhole_common::core::transfer::{
     FileHeader, TransferType, format_bytes, run_sender_transfer, send_file_with, send_folder_with,
@@ -23,6 +25,9 @@ use crate::webrtc::common::{DataChannelStream, WebRtcPeer};
 
 /// Connection timeout for WebRTC handshake
 const WEBRTC_CONNECTION_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Timeout for SPAKE2 handshake in PIN mode
+const SPAKE2_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Check if an error is a signaling-related error (vs file/transfer error).
 ///
@@ -100,13 +105,14 @@ where
     }
 }
 
-/// Display transfer code or PIN to the user with instructions
+/// Display transfer code or PIN to the user with instructions.
+/// Returns the PIN when in PIN mode, for use in SPAKE2 handshake.
 async fn display_transfer_code(
     use_pin: bool,
     signaling_keys: &nostr_sdk::Keys,
     code_str: &str,
     transfer_id: &str,
-) -> Result<()> {
+) -> Result<Option<String>> {
     if use_pin {
         let pin = wormhole_common::auth::nostr_pin::publish_wormhole_code_via_pin(
             signaling_keys,
@@ -118,12 +124,13 @@ async fn display_transfer_code(
         eprintln!("\n--- Receiver Instructions ---");
         eprintln!("Run: wormhole-rs-webrtc receive --pin");
         eprintln!("PIN: {}\n", pin);
+        Ok(Some(pin))
     } else {
         eprintln!("\n--- Receiver Instructions ---");
         eprintln!("Run: wormhole-rs-webrtc receive");
         eprintln!("Wormhole code:\n{}\n", code_str);
+        Ok(None)
     }
-    Ok(())
 }
 
 /// Result of WebRTC connection attempt
@@ -138,6 +145,7 @@ async fn try_webrtc_transfer(
     header: &FileHeader,
     key: &[u8; 32],
     signaling: &NostrSignaling,
+    pin_info: Option<PinInfo>,
 ) -> Result<WebRtcResult> {
     eprintln!("Attempting WebRTC connection...");
 
@@ -258,12 +266,30 @@ async fn try_webrtc_transfer(
     // Small delay to ensure connection is stable
     tokio::time::sleep(Duration::from_millis(100)).await;
 
+    // Perform SPAKE2 handshake if PIN mode is active (sender = responder)
+    let mut stream = stream;
+    let key = if let Some(ref pin_info) = pin_info {
+        let (pin, transfer_id) = (&pin_info.pin, &pin_info.transfer_id);
+        eprintln!("Performing SPAKE2 authentication...");
+        // Send a "ready" byte for protocol consistency with iroh transport
+        stream.write_all(&[0x01]).await.context("Failed to send ready byte")?;
+        let derived_key = timeout(
+            SPAKE2_HANDSHAKE_TIMEOUT,
+            handshake_as_responder(&mut stream, pin, transfer_id),
+        )
+        .await
+        .map_err(|_| anyhow::anyhow!("SPAKE2 handshake timed out"))??;
+        eprintln!("SPAKE2 authentication successful!");
+        derived_key
+    } else {
+        *key
+    };
+
     // Wrap peer in Arc for cleanup
     let rtc_peer = Arc::new(rtc_peer);
 
     // Use common transfer protocol
-    let mut stream = stream;
-    let result = run_sender_transfer(file, &mut stream, key, header).await;
+    let result = run_sender_transfer(file, &mut stream, &key, header).await;
 
     // Cleanup
     let _ = rtc_peer.close().await;
@@ -311,13 +337,15 @@ async fn transfer_data_webrtc_internal(
         },
     )?;
 
-    display_transfer_code(
+    let pin = display_transfer_code(
         use_pin,
         signaling.signing_keys(),
         &code,
         signaling.transfer_id(),
     )
     .await?;
+
+    let pin_info = pin.map(|p| PinInfo { pin: p, transfer_id: signaling.transfer_id().to_string() });
 
     eprintln!("Filename: {}", filename);
     eprintln!("Size: {}", format_bytes(file_size));
@@ -327,7 +355,7 @@ async fn transfer_data_webrtc_internal(
     let header = FileHeader::new(transfer_type, filename.clone(), file_size, checksum);
 
     // Try WebRTC transfer
-    match try_webrtc_transfer(&mut file, &header, &key, &signaling).await? {
+    match try_webrtc_transfer(&mut file, &header, &key, &signaling, pin_info).await? {
         WebRtcResult::Success => {
             signaling.disconnect().await;
             eprintln!("Connection closed.");

@@ -10,16 +10,22 @@ use super::common::{
     ALPN, OwnedIrohDuplex, create_receiver_endpoint, minimal_addr_to_endpoint,
     watch_connection_paths,
 };
+use wormhole_common::auth::PinInfo;
+use wormhole_common::auth::spake2::handshake_as_initiator;
 use wormhole_common::core::transfer::run_receiver_transfer;
 use wormhole_common::core::wormhole::parse_code;
 
 /// Receive a file or folder using a wormhole code.
 /// Auto-detects whether it's a file or folder transfer based on the header.
+///
+/// `pin_info` is `Some(PinInfo)` when PIN mode is active,
+/// triggering a SPAKE2 handshake to derive the encryption key.
 pub async fn receive(
     code: &str,
     output_dir: Option<PathBuf>,
     relay_urls: Vec<String>,
     no_resume: bool,
+    pin_info: Option<PinInfo>,
 ) -> Result<()> {
     eprintln!("Parsing wormhole code...");
 
@@ -72,10 +78,47 @@ pub async fn receive(
     const ACCEPT_STREAM_TIMEOUT: Duration = Duration::from_secs(30);
 
     // Accept bi-directional stream
-    let (send_stream, recv_stream) = timeout(ACCEPT_STREAM_TIMEOUT, conn.accept_bi())
+    let (send_stream, mut recv_stream) = timeout(ACCEPT_STREAM_TIMEOUT, conn.accept_bi())
         .await
         .context("Timed out waiting for sender to open stream")?
         .context("Failed to accept stream")?;
+
+    // Perform SPAKE2 handshake if PIN mode is active (receiver = initiator)
+    let (key, send_stream) = if let Some(ref pin_info) = pin_info {
+        let (pin, transfer_id) = (&pin_info.pin, &pin_info.transfer_id);
+        // Read the "ready" byte sent by the sender to confirm the stream is established.
+        // See sender.rs for why this is needed (QUIC stream materialization).
+        let mut ready = [0u8; 1];
+        recv_stream.read_exact(&mut ready).await.context("Failed to read ready byte")?;
+        if ready[0] != 0x01 {
+            anyhow::bail!("Invalid ready byte: expected 0x01, got 0x{:02x}", ready[0]);
+        }
+        eprintln!("Performing SPAKE2 authentication...");
+        let mut send_stream_mut = send_stream;
+        let mut duplex =
+            super::common::IrohDuplex::new(&mut send_stream_mut, &mut recv_stream);
+        let handshake_result = timeout(
+            Duration::from_secs(30),
+            handshake_as_initiator(&mut duplex, pin, transfer_id),
+        )
+        .await
+        .map_err(|_| anyhow::anyhow!("SPAKE2 handshake timed out"))
+        .and_then(|r| r.map_err(|e| anyhow::anyhow!("SPAKE2 handshake failed: {}", e)));
+        match handshake_result {
+            Ok(derived_key) => {
+                eprintln!("SPAKE2 authentication successful!");
+                (derived_key, send_stream_mut)
+            }
+            Err(e) => {
+                drop(path_watcher);
+                conn.close(2u32.into(), b"handshake failed");
+                endpoint.close().await;
+                return Err(e);
+            }
+        }
+    } else {
+        (key, send_stream)
+    };
 
     // Create owned duplex for unified transfer logic
     let duplex = OwnedIrohDuplex::new(send_stream, recv_stream);
