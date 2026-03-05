@@ -105,7 +105,6 @@ wormhole-rs send /path/to/folder --folder
     wormhole-rs receive --relay-url https://relay1.example.com
     ```
 - Multiple `--relay-url` flags are supported for failover.
-- Discovery still relies on iroh's public DNS/pkarr services today; full zero-third-party operation will land with the planned custom DNS server support (see ROADMAP).
 
 #### 2. Tor Mode - `wormhole-rs-tor send`
 *Anonymous transfers via Tor hidden services. Use when anonymity is required.*
@@ -163,7 +162,7 @@ There are **two** ways to transfer without relying on the public internet:
    - Uses WebRTC DataChannels with **manual** offer/answer code exchange
    - Works even when Nostr relays are unavailable (see [Manual Mode](#manual-mode))
 
-> **Note**: Tor mode requires internet access. iroh mode can be air‑gapped **only if** you self‑host both the relay **and** discovery services on the same network; the default public relay/discovery endpoints require internet access.
+> **Note**: Tor mode requires internet access. iroh mode can be air‑gapped when you self‑host the relay and point both sides at it via `--relay-url`; the default public relay requires internet access.
 
 #### LAN discovery (`wormhole-rs-local`)
 

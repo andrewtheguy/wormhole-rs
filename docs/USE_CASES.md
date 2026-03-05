@@ -35,7 +35,7 @@ This guide describes common scenarios where `wormhole-rs` shines and which mode 
 **Scenario**: mDNS discovery doesn't work because peers are on different subnets, across VPNs, or on networks that block multicast.
 
 **Solution**: **iroh Mode**
-- **Why**: iroh discovers peers across network boundaries using DNS/pkarr discovery plus relay infrastructure—no manual IP input required. Requires internet access.
+- **Why**: iroh connects peers across network boundaries using relay infrastructure—no manual IP input required. Requires internet access.
 - **Command**:
   ```bash
   # Sender
@@ -44,7 +44,7 @@ This guide describes common scenarios where `wormhole-rs` shines and which mode 
   # Receiver (iroh code)
   wormhole-rs receive --code <WORMHOLE_CODE>
   ```
-- **Experience**: Share the wormhole code via any channel (chat, paper, verbal). iroh handles peer discovery and NAT traversal automatically without needing IP addresses.
+- **Experience**: Share the wormhole code via any channel (chat, paper, verbal). iroh handles NAT traversal automatically without needing IP addresses.
 
 ---
 
@@ -121,13 +121,10 @@ This guide describes common scenarios where `wormhole-rs` shines and which mode 
 ---
 
 ## 7. Self-Hosted Infrastructure (Zero Third-Party Dependency)
-**Scenario**: You require complete control over the network infrastructure and cannot rely on public relays or discovery servers due to policy or privacy concerns.
+**Scenario**: You require complete control over the network infrastructure and cannot rely on public relays due to policy or privacy concerns.
 
 **Solution A**: **iroh Mode + Custom DERP Relays** (Recommended)
 - **Why**: iroh allows you to run your own lightweight relay (DERP). By pointing `wormhole-rs` to your own infrastructure, you achieve a true peer-to-peer connection where no third-party relays are involved.
-- **Connectivity Note**: iroh mode can be used in air-gapped/private environments only when both relay and discovery are self-hosted and reachable by both peers.
-- **Current Status**: Custom relays are supported today via `--relay-url`, but peer discovery still uses iroh's public DNS/pkarr services. See [ROADMAP.md](ROADMAP.md) for updates on custom DNS/discovery support. For a fully zero-third-party option today, use:
-  - **Local Mode** (`wormhole-rs-local`) when both peers share a LAN and can rely on mDNS.
 - **Resources**: Implementation for the relay server is available in the [iroh repository](https://github.com/n0-computer/iroh).
 - **Command**:
   ```bash

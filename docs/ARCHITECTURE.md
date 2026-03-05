@@ -24,37 +24,34 @@ iroh uses a "hole punching" strategy that attempts direct connections via UDP/QU
 ```mermaid
 sequenceDiagram
     participant Sender
-    participant Discovery as DNS / mDNS
     participant Relay as iroh Relay
     participant Receiver
 
     Sender->>Sender: 1. Create iroh Node (Random NodeID)
     Sender->>Relay: 2. Connect to Home Relay
-    Sender->>Discovery: 3. Publish NodeID via Pkarr/DNS (IPs auto-discovered)
-    
-    Sender->>Sender: 4. Generate wormhole code
-    Note over Sender: Code = base64url(JSON token: version, protocol, created_at, AES_key, minimal addr)
-    Note over Sender: Minimal addr = NodeID + optional relay URL
-    Note over Sender: (IPs NOT in code - discovered via Pkarr/DNS/mDNS)
 
-    Receiver->>Receiver: 5. Parse Code -> NodeAddr
-    Receiver->>Relay: 6. Connect to Relay
-    
+    Sender->>Sender: 3. Generate wormhole code
+    Note over Sender: Code = base64url(JSON token: version, protocol, created_at, AES_key, minimal addr)
+    Note over Sender: Minimal addr = NodeID + relay URL
+
+    Receiver->>Receiver: 4. Parse Code -> NodeAddr
+    Receiver->>Relay: 5. Connect to Relay
+
     par Connection Attempts
         Receiver->>Relay: A. Dial via Relay (Guaranteed)
         Receiver->>Sender: B. Dial Direct UDP (Optimization)
     end
-    
+
     Note over Sender,Receiver: iroh selects best path (Direct > Relay)
-    
-    Sender->>Receiver: 7. Handshake (ALPN "wormhole-transfer/1")
-    Sender->>Receiver: 8. Send Encrypted Header (AES-256-GCM)
+
+    Sender->>Receiver: 6. Handshake (ALPN "wormhole-transfer/1")
+    Sender->>Receiver: 7. Send Encrypted Header (AES-256-GCM)
     Note over Receiver: Check file existence, prompt user
 
     alt User accepts transfer
-        Receiver->>Sender: 9. Send Encrypted PROCEED
+        Receiver->>Sender: 8. Send Encrypted PROCEED
     else User declines or file conflict
-        Receiver->>Sender: 9. Send Encrypted ABORT
+        Receiver->>Sender: 8. Send Encrypted ABORT
         Note over Sender,Receiver: Transfer cancelled
     end
 
@@ -62,7 +59,7 @@ sequenceDiagram
         Sender->>Receiver: Send Encrypted Chunk (QUIC Stream)
     end
 
-    Receiver->>Sender: 10. Send Encrypted ACK
+    Receiver->>Sender: 9. Send Encrypted ACK
 ```
 
 #### Tor Mode
@@ -198,7 +195,7 @@ sequenceDiagram
 
 ### iroh Mode (`wormhole-rs send`) - Recommended
 - **Transport**: QUIC / TLS 1.3
-- **Discovery**: iroh's global discovery (n0 DNS / pkarr) + mDNS for local network.
+- **Discovery**: Relay URL embedded in wormhole code + mDNS for local network.
 - **Relay**: iroh relays (DERP) - automatically used if direct P2P connection fails.
 - **Failover**: Uses multiple relays for redundancy; monitors latency to select the best path.
 - **Connection**: "Hole punching" attempts to establish a direct UDP connection; falls back to relay if NATs are strict.
