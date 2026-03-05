@@ -267,7 +267,7 @@ All wormhole codes and signaling offers include a creation timestamp and are val
 
 **Implementation:**
 - **Token Version**: v4 tokens include a `created_at` Unix timestamp
-- **TTL Duration**: 30 minutes (`CODE_TTL_SECS = 1800`)
+- **TTL Duration**: 60 minutes (`SESSION_TTL_SECS = 3600`)
 - **Clock Skew**: Allows up to 60 seconds into the future to handle minor clock drift
 
 **Validation Points:**

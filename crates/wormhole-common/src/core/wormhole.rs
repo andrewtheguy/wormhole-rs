@@ -5,8 +5,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// Current token format version
 pub const CURRENT_VERSION: u8 = 4;
 
-/// TTL for wormhole codes in seconds (30 minutes)
-pub const CODE_TTL_SECS: u64 = 30 * 60;
+/// TTL for wormhole sessions in seconds (1 hour)
+pub const SESSION_TTL_SECS: u64 = 3600;
 
 /// Protocol identifier for iroh transport
 pub const PROTOCOL_IROH: &str = "iroh";
@@ -314,13 +314,13 @@ pub fn parse_code(code: &str) -> Result<WormholeToken> {
         anyhow::bail!("Invalid token: created_at is in the future. Check system clock.");
     }
     let age = now.saturating_sub(token.created_at);
-    if age > CODE_TTL_SECS {
+    if age > SESSION_TTL_SECS {
         let minutes = age / 60;
         anyhow::bail!(
             "Token expired: code is {} minutes old (max {} minutes). \
              Please request a new code from the sender.",
             minutes,
-            CODE_TTL_SECS / 60
+            SESSION_TTL_SECS / 60
         );
     }
 

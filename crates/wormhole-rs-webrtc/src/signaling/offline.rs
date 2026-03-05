@@ -45,7 +45,7 @@ use std::io::{BufRead, ErrorKind, Write};
 use std::time::{SystemTime, UNIX_EPOCH};
 use webrtc::ice_transport::ice_candidate::RTCIceCandidate;
 
-use wormhole_common::core::wormhole::CODE_TTL_SECS;
+use wormhole_common::core::wormhole::SESSION_TTL_SECS;
 
 use crate::signaling::nostr::IceCandidatePayload;
 
@@ -405,13 +405,13 @@ fn validate_offer_ttl(offer: &OfflineOffer) -> Result<()> {
     }
 
     let age = now.saturating_sub(offer.created_at);
-    if age > CODE_TTL_SECS {
+    if age > SESSION_TTL_SECS {
         let minutes = age / 60;
         anyhow::bail!(
             "Offer expired: code is {} minutes old (max {} minutes). \
              Please request a new code from the sender.",
             minutes,
-            CODE_TTL_SECS / 60
+            SESSION_TTL_SECS / 60
         );
     }
 

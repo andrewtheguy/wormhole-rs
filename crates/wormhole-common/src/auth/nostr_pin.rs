@@ -37,6 +37,7 @@ use sha2::{Digest, Sha256};
 use tokio::time::Duration;
 
 use crate::auth::pin::{PIN_LENGTH, generate_pin};
+use crate::core::wormhole::SESSION_TTL_SECS;
 
 /// Result of fetching a wormhole code via PIN exchange.
 pub struct PinExchangeResult {
@@ -71,15 +72,12 @@ const ARGON2_TIME_COST: u32 = 3;
 const ARGON2_MEMORY_COST: u32 = 65536; // 64 MiB
 const ARGON2_PARALLELISM: u32 = 4;
 
-/// Time bucket size for PIN hint rotation (1 hour).
-const HINT_BUCKET_SEC: u64 = 3600;
-
 /// PIN exchange event expiration (2 hours).
 ///
-/// Set to `2 * HINT_BUCKET_SEC` so events survive across the bucket boundary.
+/// Set to `2 * SESSION_TTL_SECS` so events survive across the bucket boundary.
 /// Without this padding, events published early in bucket T would expire before
 /// a receiver in bucket T+1 can query with the previous bucket's hint.
-const PIN_EVENT_EXPIRATION_SECS: u64 = 2 * HINT_BUCKET_SEC;
+const PIN_EVENT_EXPIRATION_SECS: u64 = 2 * SESSION_TTL_SECS;
 
 /// Timeout for waiting for relay connections
 const RELAY_CONNECTION_TIMEOUT: Duration = Duration::from_secs(10);
@@ -171,7 +169,7 @@ fn current_time_bucket() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .expect("system time before UNIX epoch")
         .as_secs()
-        / HINT_BUCKET_SEC
+        / SESSION_TTL_SECS
 }
 
 /// Compute PIN hint for a specific time bucket.
