@@ -4,6 +4,7 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use tracing_subscriber::EnvFilter;
 
+use wormhole_common::auth::PinInfo;
 use wormhole_common::core::transfer::is_interrupted;
 use wormhole_common::core::wormhole;
 
@@ -190,7 +191,7 @@ async fn async_main() -> Result<()> {
                 })??;
                 eprintln!("Token found and decrypted!");
                 code = Some(result.code);
-                Some((pin_str, result.transfer_id))
+                Some(PinInfo { pin: pin_str, transfer_id: result.transfer_id })
             } else {
                 None
             };
@@ -220,7 +221,7 @@ async fn receive_with_code(
     output: Option<PathBuf>,
     relay_url: Vec<String>,
     no_resume: bool,
-    pin_info: Option<(String, String)>,
+    pin_info: Option<PinInfo>,
 ) -> Result<()> {
     // Validate code format
     wormhole::validate_code_format(code)?;

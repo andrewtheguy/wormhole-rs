@@ -10,6 +10,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use std::io::{self, Write};
 use std::path::PathBuf;
+use wormhole_common::auth::PinInfo;
 use wormhole_common::core::transfer::is_interrupted;
 
 mod signaling;
@@ -142,7 +143,7 @@ async fn async_main() -> Result<()> {
                 let result =
                     wormhole_common::auth::nostr_pin::fetch_wormhole_code_via_pin(&pin_str)
                         .await?;
-                (result.code, Some((pin_str, result.transfer_id)))
+                (result.code, Some(PinInfo { pin: pin_str, transfer_id: result.transfer_id }))
             } else if let Some(c) = code {
                 (c.trim().to_string(), None)
             } else {

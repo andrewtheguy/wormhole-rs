@@ -11,6 +11,7 @@ use tokio::time::{Duration, timeout};
 use webrtc::ice_transport::ice_candidate::RTCIceCandidateInit;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 
+use wormhole_common::auth::PinInfo;
 use wormhole_common::auth::spake2::handshake_as_responder;
 use wormhole_common::core::crypto::generate_key;
 use wormhole_common::core::transfer::{
@@ -141,7 +142,7 @@ async fn try_webrtc_transfer(
     header: &FileHeader,
     key: &[u8; 32],
     signaling: &NostrSignaling,
-    pin_info: Option<(String, String)>,
+    pin_info: Option<PinInfo>,
 ) -> Result<WebRtcResult> {
     eprintln!("Attempting WebRTC connection...");
 
@@ -264,7 +265,8 @@ async fn try_webrtc_transfer(
 
     // Perform SPAKE2 handshake if PIN mode is active (sender = responder)
     let mut stream = stream;
-    let key = if let Some((ref pin, ref transfer_id)) = pin_info {
+    let key = if let Some(ref pin_info) = pin_info {
+        let (pin, transfer_id) = (&pin_info.pin, &pin_info.transfer_id);
         eprintln!("Performing SPAKE2 authentication...");
         // Send a "ready" byte for protocol consistency with iroh transport
         use tokio::io::AsyncWriteExt;
@@ -341,8 +343,7 @@ async fn transfer_data_webrtc_internal(
     )
     .await?;
 
-    // Build pin_info for SPAKE2 handshake
-    let pin_info = pin.map(|p| (p, signaling.transfer_id().to_string()));
+    let pin_info = pin.map(|p| PinInfo { pin: p, transfer_id: signaling.transfer_id().to_string() });
 
     eprintln!("Filename: {}", filename);
     eprintln!("Size: {}", format_bytes(file_size));

@@ -8,6 +8,7 @@ use tokio::time::{Duration, timeout};
 use webrtc::ice_transport::ice_candidate::RTCIceCandidateInit;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 
+use wormhole_common::auth::PinInfo;
 use wormhole_common::auth::spake2::handshake_as_initiator;
 use wormhole_common::core::transfer::run_receiver_transfer;
 use wormhole_common::core::wormhole::{PROTOCOL_WEBRTC, decode_key, parse_code};
@@ -41,7 +42,7 @@ async fn try_webrtc_receive(
     key: &[u8; 32],
     output_dir: Option<PathBuf>,
     no_resume: bool,
-    pin_info: Option<(String, String)>,
+    pin_info: Option<PinInfo>,
 ) -> Result<WebRtcResult> {
     eprintln!("Attempting WebRTC connection...");
 
@@ -169,7 +170,8 @@ async fn try_webrtc_receive(
 
     // Perform SPAKE2 handshake if PIN mode is active (receiver = initiator)
     let mut stream = stream;
-    let key = if let Some((ref pin, ref transfer_id)) = pin_info {
+    let key = if let Some(ref pin_info) = pin_info {
+        let (pin, transfer_id) = (&pin_info.pin, &pin_info.transfer_id);
         // Read the "ready" byte for protocol consistency with iroh transport
         use tokio::io::AsyncReadExt;
         let mut ready = [0u8; 1];
@@ -206,7 +208,7 @@ pub async fn receive_webrtc(
     code: &str,
     output_dir: Option<PathBuf>,
     no_resume: bool,
-    pin_info: Option<(String, String)>,
+    pin_info: Option<PinInfo>,
 ) -> Result<()> {
     eprintln!("Parsing wormhole code...");
 
