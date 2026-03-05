@@ -4,6 +4,7 @@
 
 use anyhow::{Context, Result};
 use std::path::PathBuf;
+use tokio::io::AsyncReadExt;
 use tokio::time::{Duration, timeout};
 use webrtc::ice_transport::ice_candidate::RTCIceCandidateInit;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
@@ -28,6 +29,9 @@ const DATA_CHANNEL_OPEN_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Timeout for waiting for the sender to close the connection after transfer
 const CLOSE_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Timeout for SPAKE2 handshake in PIN mode
+const SPAKE2_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Result of WebRTC connection attempt
 enum WebRtcResult {
@@ -173,12 +177,11 @@ async fn try_webrtc_receive(
     let key = if let Some(ref pin_info) = pin_info {
         let (pin, transfer_id) = (&pin_info.pin, &pin_info.transfer_id);
         // Read the "ready" byte for protocol consistency with iroh transport
-        use tokio::io::AsyncReadExt;
         let mut ready = [0u8; 1];
         stream.read_exact(&mut ready).await.context("Failed to read ready byte")?;
         eprintln!("Performing SPAKE2 authentication...");
         let derived_key = timeout(
-            Duration::from_secs(30),
+            SPAKE2_HANDSHAKE_TIMEOUT,
             handshake_as_initiator(&mut stream, pin, transfer_id),
         )
         .await

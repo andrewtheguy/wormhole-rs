@@ -6,7 +6,7 @@ use anyhow::{Context, Result};
 use std::path::Path;
 use std::sync::Arc;
 use tokio::fs::File;
-use tokio::io::AsyncBufReadExt;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 use tokio::time::{Duration, timeout};
 use webrtc::ice_transport::ice_candidate::RTCIceCandidateInit;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
@@ -25,6 +25,9 @@ use crate::webrtc::common::{DataChannelStream, WebRtcPeer};
 
 /// Connection timeout for WebRTC handshake
 const WEBRTC_CONNECTION_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Timeout for SPAKE2 handshake in PIN mode
+const SPAKE2_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Check if an error is a signaling-related error (vs file/transfer error).
 ///
@@ -269,10 +272,9 @@ async fn try_webrtc_transfer(
         let (pin, transfer_id) = (&pin_info.pin, &pin_info.transfer_id);
         eprintln!("Performing SPAKE2 authentication...");
         // Send a "ready" byte for protocol consistency with iroh transport
-        use tokio::io::AsyncWriteExt;
         stream.write_all(&[0x01]).await.context("Failed to send ready byte")?;
         let derived_key = timeout(
-            Duration::from_secs(30),
+            SPAKE2_HANDSHAKE_TIMEOUT,
             handshake_as_responder(&mut stream, pin, transfer_id),
         )
         .await
