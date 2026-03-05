@@ -179,6 +179,9 @@ async fn try_webrtc_receive(
         // Read the "ready" byte for protocol consistency with iroh transport
         let mut ready = [0u8; 1];
         stream.read_exact(&mut ready).await.context("Failed to read ready byte")?;
+        if ready[0] != 0x01 {
+            anyhow::bail!("Invalid ready byte: expected 0x01, got 0x{:02x}", ready[0]);
+        }
         eprintln!("Performing SPAKE2 authentication...");
         let derived_key = timeout(
             SPAKE2_HANDSHAKE_TIMEOUT,

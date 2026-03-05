@@ -90,6 +90,9 @@ pub async fn receive(
         // See sender.rs for why this is needed (QUIC stream materialization).
         let mut ready = [0u8; 1];
         recv_stream.read_exact(&mut ready).await.context("Failed to read ready byte")?;
+        if ready[0] != 0x01 {
+            anyhow::bail!("Invalid ready byte: expected 0x01, got 0x{:02x}", ready[0]);
+        }
         eprintln!("Performing SPAKE2 authentication...");
         let mut send_stream_mut = send_stream;
         let mut duplex =
