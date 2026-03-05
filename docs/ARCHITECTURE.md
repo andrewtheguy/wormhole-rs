@@ -308,6 +308,26 @@ Control signals are encrypted messages sent over the same length-prefixed framin
 
 These signals are not tied to chunk numbers and use fresh random nonces like all other encrypted messages.
 
+### Resumable File On-Disk Flow
+
+Resumable state is only used for **file** transfers (not folders) when resume is enabled.
+
+- Receiver writes incoming bytes to a resume temp file in the target directory:
+  `<final_path>.wormhole-rs.partial`
+- That temp file contains a fixed-size metadata header (checksum, expected size,
+  bytes received, filename) followed by file data.
+
+When the transfer completes successfully:
+
+1. Receiver writes payload bytes (without metadata header) to a staging file:
+   `<final_path>.partial` in the same directory.
+2. Receiver syncs the staging file and parent directory.
+3. Receiver atomically renames staging to the final destination path.
+4. Receiver removes `<final_path>.wormhole-rs.partial`.
+
+Keeping both temp/staging files in the same directory ensures the final rename
+is on the same filesystem, which enables atomic replacement semantics.
+
 ### WebRTC Message Format
 
 WebRTC uses the same length-prefixed encrypted framing as stream transports. The
