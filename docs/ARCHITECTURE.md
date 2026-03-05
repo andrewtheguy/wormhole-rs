@@ -220,7 +220,7 @@ sequenceDiagram
 ### WebRTC Mode (`wormhole-rs-webrtc send`)
 - **Transport**: WebRTC DataChannel over DTLS
 - **Discovery**: Nostr relays for SDP/ICE signaling (or manual copy-paste)
-- **NAT Traversal**: ICE with STUN server (`stun:stun.l.google.com:19302`)
+- **NAT Traversal**: ICE with multiple public STUN servers (Google + Cloudflare)
 - **Encryption**: DTLS (WebRTC built-in) + AES-256-GCM at application layer
 - **Fallback**: Try iroh mode (with automatic relay) if direct P2P fails. Use `wormhole-rs-tor` for anonymity
 
@@ -281,7 +281,7 @@ TTL validation is not applied to local mDNS transfers because it is unnecessary:
 - The connection happens immediately over direct TCP on the LAN
 
 **Error Messages:**
-- Expired codes: "Token expired: code is X minutes old (max 30 minutes). Please request a new code from the sender."
+- Expired codes: "Token expired: code is X minutes old (max 60 minutes). Please request a new code from the sender."
 - Future timestamps: "Invalid token: created_at is in the future. Check system clock."
 
 ## Wire Protocol Format
