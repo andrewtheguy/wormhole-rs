@@ -11,47 +11,9 @@ pub const SESSION_TTL_SECS: u64 = 3600;
 /// Protocol identifier for iroh transport
 pub const PROTOCOL_IROH: &str = "iroh";
 
-/// Protocol identifier for tor transport
-pub const PROTOCOL_TOR: &str = "tor";
-
 /// Minimum base64url-encoded beam code length.
 /// A minimal token payload is ~20+ bytes, which base64 encodes to ~30+ characters.
 const MIN_CODE_LENGTH: usize = 30;
-
-/// Validate a Tor v3 onion address format.
-///
-/// A valid v3 onion address:
-/// - Ends with ".onion"
-/// - Has exactly 56 base32 characters before the ".onion" suffix
-/// - Uses only lowercase letters a-z and digits 2-7 (base32 alphabet)
-///
-/// # Returns
-/// `Ok(())` if valid, `Err` with descriptive message if invalid.
-fn validate_onion_address(addr: &str) -> Result<()> {
-    if !addr.ends_with(".onion") {
-        anyhow::bail!("Onion address must end with '.onion'");
-    }
-
-    let without_suffix = addr.strip_suffix(".onion").unwrap();
-
-    // V3 onion addresses are exactly 56 base32 characters
-    if without_suffix.len() != 56 {
-        anyhow::bail!(
-            "Invalid v3 onion address: expected 56 characters before '.onion', got {}",
-            without_suffix.len()
-        );
-    }
-
-    // Base32 alphabet for Tor: a-z and 2-7
-    if !without_suffix
-        .chars()
-        .all(|c| c.is_ascii_lowercase() || ('2'..='7').contains(&c))
-    {
-        anyhow::bail!("Invalid v3 onion address: contains invalid characters (expected a-z, 2-7)");
-    }
-
-    Ok(())
-}
 
 /// Minimal address for serialization - only contains node ID and relay URL.
 /// Only one relay URL is kept (the endpoint's currently-selected best relay) to keep
@@ -80,22 +42,17 @@ pub struct MinimalAddr {
 pub struct BeamToken {
     /// Token format version (for future compatibility checks)
     pub version: u8,
-    /// Protocol identifier (e.g., "iroh", "tor")
+    /// Protocol identifier (currently always "iroh")
     pub protocol: String,
     /// Unix timestamp when this token was created (for TTL validation)
     pub created_at: u64,
-    /// Base64-encoded 256-bit secret. Iroh uses it to authorize the receiver and
-    /// derive the content key; Tor uses it directly as the content key.
+    /// Base64-encoded 256-bit secret used to authorize the receiver and derive
+    /// the content key.
     pub key: String,
-    /// Minimal endpoint address for connection (None for non-iroh transports)
+    /// Minimal endpoint address for connection.
     /// Contains only node ID and relay URL
     #[serde(skip_serializing_if = "Option::is_none")]
     pub addr: Option<MinimalAddr>,
-
-    // Tor-specific fields:
-    /// Onion address for Tor hidden service (e.g., "abc123...xyz.onion")
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub onion_address: Option<String>,
 }
 
 /// Get current Unix timestamp in seconds
@@ -104,34 +61,6 @@ pub fn current_timestamp() -> u64 {
         .duration_since(UNIX_EPOCH)
         .expect("System clock is set before Unix epoch")
         .as_secs()
-}
-
-/// Generate a beam code for Tor transfer
-/// Format: base64url(json(BeamToken))
-///
-/// # Arguments
-/// * `onion_address` - The .onion address of the hidden service (v3 format)
-/// * `key` - The encryption key (required)
-///
-/// # Errors
-///
-/// Returns an error if the onion address is not a valid v3 format.
-pub fn generate_tor_code(onion_address: String, key: &[u8; 32]) -> Result<String> {
-    // Validate onion address format early to fail fast
-    validate_onion_address(&onion_address).context("Invalid onion address in generate_tor_code")?;
-
-    let token = BeamToken {
-        version: CURRENT_VERSION,
-        protocol: PROTOCOL_TOR.to_string(),
-        created_at: current_timestamp(),
-        key: URL_SAFE_NO_PAD.encode(key),
-        addr: None,
-        onion_address: Some(onion_address),
-    };
-
-    let serialized = serde_json::to_vec(&token).context("Failed to serialize beam token")?;
-
-    Ok(URL_SAFE_NO_PAD.encode(&serialized))
 }
 
 /// Validate beam code format without fully parsing it.
@@ -190,12 +119,11 @@ pub fn parse_code(code: &str) -> Result<BeamToken> {
     }
 
     // Validate protocol
-    if token.protocol != PROTOCOL_IROH && token.protocol != PROTOCOL_TOR {
+    if token.protocol != PROTOCOL_IROH {
         anyhow::bail!(
-            "Invalid protocol '{}'. Supported protocols: '{}', '{}'",
+            "Invalid protocol '{}'. Supported protocol: '{}'",
             token.protocol,
-            PROTOCOL_IROH,
-            PROTOCOL_TOR
+            PROTOCOL_IROH
         );
     }
 
@@ -216,7 +144,7 @@ pub fn parse_code(code: &str) -> Result<BeamToken> {
         );
     }
 
-    // Validate the 256-bit secret/key format (required for all current protocols)
+    // Validate the 256-bit secret/key format
     let key_bytes = URL_SAFE_NO_PAD
         .decode(&token.key)
         .context("Invalid key format: not valid base64")?;
@@ -227,38 +155,10 @@ pub fn parse_code(code: &str) -> Result<BeamToken> {
         );
     }
 
-    // For iroh protocol, ensure addr is present
-    if token.protocol == PROTOCOL_IROH && token.addr.is_none() {
+    // Ensure the endpoint address is present
+    if token.addr.is_none() {
         anyhow::bail!("Invalid iroh token: missing endpoint address");
     }
 
-    // For tor protocol, ensure onion_address is present and valid
-    if token.protocol == PROTOCOL_TOR {
-        match &token.onion_address {
-            None => anyhow::bail!("Invalid tor token: missing onion address"),
-            Some(addr) => {
-                validate_onion_address(addr).context("Invalid tor token")?;
-            }
-        }
-    }
-
     Ok(token)
-}
-
-/// Helper function to decode a base64 key from BeamToken into a 32-byte array
-pub fn decode_key(key_str: &str) -> Result<[u8; 32]> {
-    let key_bytes = URL_SAFE_NO_PAD
-        .decode(key_str)
-        .context("Failed to decode base64 key")?;
-
-    if key_bytes.len() != 32 {
-        anyhow::bail!(
-            "Invalid key length: expected 32 bytes, got {}",
-            key_bytes.len()
-        );
-    }
-
-    let mut key = [0u8; 32];
-    key.copy_from_slice(&key_bytes);
-    Ok(key)
 }

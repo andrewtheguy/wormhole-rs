@@ -1,6 +1,6 @@
 //! Transport-agnostic folder operations for tar archive creation and extraction.
 //!
-//! This module provides common folder handling logic used by both iroh and Tor transports.
+//! This module provides common folder handling logic for the iroh transport.
 
 use anyhow::{Context, Result};
 use std::cmp;

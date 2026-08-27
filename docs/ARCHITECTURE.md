@@ -9,11 +9,10 @@ beam-rs supports the following transfer modes:
 1. **Default Iroh mode** (Recommended) - Direct P2P transfers using iroh's QUIC/TLS stack (automatic relay fallback) via `beam-rs send`. Requires internet access.
 2. **PIN mode** - publishes an encrypted ephemeral node-ID record over LAN mDNS, then authenticates and derives the content key with SPAKE2. Relays and internet discovery are disabled, and a PIN is valid once for 120 seconds.
 3. **Serverless Mode** - uses iroh with relays and internet discovery disabled via `beam-rs send --serverless`. A pasted serverless payload carries the node ID, a 256-bit session secret, and discovered direct addresses.
-4. **Tor Mode** - Anonymous transfers via Tor hidden services (uses `arti`) via `beam-rs send --tor`. Requires internet access.
 
 ## Transfer Flows
 
-### 1. iroh Transfers
+### iroh Transfers
 
 #### Default Iroh mode (Recommended) - QUIC / Direct + Relay
 
@@ -99,46 +98,6 @@ sequenceDiagram
     Sender->>Receiver: 7. Encrypted header / chunks / ACK (AES-256-GCM)
 ```
 
-### 2. Tor Transfers
-
-#### Tor Mode
-
-```mermaid
-sequenceDiagram
-    participant Sender
-    participant Tor as Tor Network
-    participant Receiver
-
-    Sender->>Sender: 1. Bootstrap Tor client (ephemeral)
-    Sender->>Tor: 2. Create .onion hidden service
-    Sender->>Sender: 3. Generate beam code
-    Note over Sender: Code = base64url(JSON token: version, protocol, created_at, AES_key, onion_addr)
-
-    Receiver->>Receiver: 4. Bootstrap Tor client
-    Receiver->>Tor: 5. Connect to .onion address
-    Note over Receiver: Retries up to 5 times on timeout
-
-    Tor-->>Sender: 6. Tor circuit established
-    Note over Sender,Receiver: End-to-end encrypted via Tor
-
-    Sender->>Receiver: 7. Send Encrypted Header (AES-256-GCM)
-    Note over Receiver: Check file existence, prompt user
-
-    alt User accepts transfer
-        Receiver->>Sender: 8. Send Encrypted PROCEED
-    else User declines or file conflict
-        Receiver->>Sender: 8. Send Encrypted ABORT
-        Note over Sender,Receiver: Transfer cancelled
-    end
-
-    loop 16KB chunks
-        Sender->>Receiver: Send Encrypted Chunk
-        Receiver->>Receiver: Write to disk
-    end
-
-    Receiver->>Sender: 9. Send Encrypted ACK
-```
-
 ## Connection Types/Modes
 
 ### Default Iroh mode (`beam-rs send`) - Recommended
@@ -169,13 +128,6 @@ sequenceDiagram
 - **Encryption**: AES-256-GCM with a SPAKE2-derived key, plus QUIC/TLS encryption.
 - **Reachability**: LAN only. Both peers must share a network where mDNS works. Incompatible with `--serverless` and `--relay-url`.
 
-### Tor Mode (`beam-rs send --tor`)
-
-- **Transport**: Tor Onion Services
-- **Discovery**: Onion Address
-- **PIN Support**: No
-- **Encryption**: Tor circuit encryption plus mandatory AES-256-GCM at the application layer.
-
 ## Security Model
 
 ### Default Iroh mode Encryption (Dual Layer)
@@ -204,12 +156,6 @@ LAN-only.
 - **Authentication and key derivation**: The PIN is the SPAKE2 password. The sender's node ID is used as the session context and validated during the handshake. The SPAKE2 result becomes the AES-256-GCM content key.
 - **Security**: SPAKE2 prevents a passive transcript from becoming an offline PIN verifier. The public PIN-derived rendezvous record can still be tested offline, so its Argon2id cost and short lifetime are important mitigations.
 
-### Tor Mode Security
-
-- **Anonymity**: Sender/Receiver IPs hidden.
-- **Encryption**: End-to-end via Tor circuit encryption plus mandatory AES-256-GCM at application layer for all data (headers, chunks, and control signals).
-- **Timeouts**: The sender waits up to 10 minutes for a receiver to connect. The receiver retries retryable Tor connection failures up to 5 times and applies a 30-minute transfer timeout by default; set `BEAM_TRANSFER_TIMEOUT_SECS` to override it.
-
 ### TTL (Time-To-Live) Validation
 
 All beam codes include a creation timestamp and are validated against a TTL to prevent replay attacks and stale session establishment.
@@ -220,7 +166,7 @@ All beam codes include a creation timestamp and are validated against a TTL to p
 - **Clock Skew**: Allows up to 60 seconds into the future to handle minor clock drift
 
 **Validation Points:**
-1. **Beam Codes** (default iroh and Tor): Validated in `parse_code()` before connection.
+1. **Beam Codes** (default iroh): Validated in `parse_code()` before connection.
 2. **PIN Mode**: The rendezvous and listening window is 120 seconds; there is no embedded beam token.
 3. **Serverless Codes**: Valid only while their ephemeral sender process remains alive. They use a separate strict versioned payload rather than the beam-token format.
 
@@ -232,7 +178,7 @@ All beam codes include a creation timestamp and are validated against a TTL to p
 
 ### Encrypted Message Format (Stream-based transports)
 
-All encrypted messages (used by Iroh, iroh `--serverless`, and Tor modes) follow this format:
+All encrypted messages (used by Iroh and iroh `--serverless` modes) follow this format:
 
 ```
 [length: 4 bytes BE][encrypted_payload]

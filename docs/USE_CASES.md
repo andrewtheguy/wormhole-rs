@@ -81,35 +81,16 @@ refresh.
 ## 4. Strict Firewalls / Restricted Networks
 **Scenario**: You are on a corporate or university network that blocks UDP, non-standard ports, and direct P2P connections. Standard transfers hang or fail.
 
-**Solution A**: **Default Iroh mode** (Recommended)
+**Solution**: **Default Iroh mode** (Recommended)
 - **Why**: iroh uses QUIC with automatic relay fallback. It tries direct P2P first, then falls back to iroh's relay servers if needed.
 - **Command**:
   ```bash
   beam-rs send /path/to/file
   ```
 
-**Solution B**: **Tor Mode**
-- **Why**: Tor can help when direct QUIC/UDP and iroh relays are blocked but the network still permits Tor to bootstrap. It routes the transfer through a hidden service and also prevents either peer from learning the other's IP, though it is typically slower and may itself be blocked on some restricted networks.
-- **Command**:
-  ```bash
-  beam-rs send --tor /path/to/file
-  ```
-
 ---
 
-## 5. Maximum Anonymity
-**Scenario**: You want to transfer a file without revealing your IP address to the peer or any relay servers.
-
-**Solution**: **Tor Mode** (`beam-rs send --tor`)
-- **Why**: Creates a Tor Hidden Service for the transfer. Traffic is routed through the Tor network, masking locations of both parties.
-- **Command**:
-  ```bash
-  beam-rs send --tor /path/to/file
-  ```
-
----
-
-## 6. Large File Transfer
+## 5. Large File Transfer
 **Scenario**: Transferring a massive dataset (GBs) over the internet.
 
 **Solution**: **Default Iroh mode** (Recommended)
@@ -120,7 +101,7 @@ refresh.
 
 ---
 
-## 7. Self-Hosted Infrastructure (Zero Third-Party Dependency)
+## 6. Self-Hosted Infrastructure (Zero Third-Party Dependency)
 **Scenario**: You require complete control over the network infrastructure and cannot rely on public relays due to policy or privacy concerns.
 
 **Solution A**: **Default Iroh mode + Custom DERP Relays** (Advanced)
@@ -144,6 +125,6 @@ refresh.
 
 ---
 
-## 8. Planned / Future Scenarios
+## 7. Planned / Future Scenarios
 
 See [ROADMAP.md](ROADMAP.md) for planned features and development priorities.

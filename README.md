@@ -10,11 +10,9 @@ A secure, cross-platform, single-binary peer-to-peer file transfer tool with dir
 - **End-to-end encryption** - All transfers use AES-256-GCM encryption
 - **Resumable file transfers** - Interrupted file downloads can resume from receiver partial state (folder transfers are streamed tar archives and are not resumable)
 - **File and folder transfers** - Send individual files or entire directories (automatically archived)
-- **Multiple transport modes** - iroh (recommended) and Tor
 - **Serverless transfers** - direct transfers with no third-party server; a copy/paste code embeds the node ID, a fresh session secret, and discovered direct addresses, with mDNS as a fallback (`beam-rs send --serverless`)
 - **LAN-only PIN pairing** - `--pin` discovers the sender over mDNS without a relay, internet-backed DNS publisher, or copied long code
 - **NAT traversal** - Automatic relay fallback for iroh
-- **Anonymous transfers** - Tor hidden services via `beam-rs send --tor` for anonymity
 - **Cross-platform** - Standalone release binaries for Linux x86_64/aarch64, macOS Apple Silicon, and Windows x86_64 (stable releases)
 
 ## Installation
@@ -58,7 +56,6 @@ $env:BEAM_INSTALL_ARGS='<release-tag>'; irm https://andrewtheguy.github.io/beam-
 ### From Source
 
 ```bash
-# Single binary with both the iroh and Tor transports
 cargo build --release
 ```
 
@@ -134,17 +131,9 @@ code, use `beam-rs send --pin` as described above.
 `--pin` and `--serverless` are alternate pairing methods and cannot be combined.
 Neither can be combined with `--relay-url` because relays are disabled.
 
-### 4. Tor Mode - `send --tor`
-
-*Anonymous transfers via Tor hidden services. Use when anonymity is required. Requires internet access.*
-
-```bash
-beam-rs send --tor /path/to/file
-```
-
 ### Receiving
 
-`beam-rs receive` handles iroh, serverless, Tor, and PIN inputs. Serverless beam
+`beam-rs receive` handles iroh, serverless, and PIN inputs. Serverless beam
 codes and PINs are auto-detected. PINs always use LAN-only discovery with relays
 and internet-backed DNS disabled.
 
@@ -164,7 +153,6 @@ beam-rs receive --no-resume
 See [USE_CASES.md](docs/USE_CASES.md) for detailed scenarios including:
 - **No Internet** - Air-gapped / Local LAN transfers
 - **Restricted Networks** - Firewall/NAT traversal options
-- **Anonymity** - Tor mode for anonymous transfers
 - **Self-Hosted** - Zero third-party dependency setups
 
 For protocol details and wire formats, see [ARCHITECTURE.md](docs/ARCHITECTURE.md).
@@ -173,7 +161,6 @@ For protocol details and wire formats, see [ARCHITECTURE.md](docs/ARCHITECTURE.m
 
 All modes provide end-to-end encryption.
 - **Default iroh**: The beam code carries a one-time secret and sender address. SPAKE2 proves secret possession, binds it to the receiver's authenticated iroh node ID, and derives the content-encryption key before metadata is sent.
-- **Tor**: The beam code carries the content-encryption key and onion address.
 - **Serverless**: The copied beam code carries a 256-bit session secret and direct address hints; SPAKE2 derives the content-encryption key.
 - **PIN mode (`send --pin`)**: mDNS carries only an encrypted ephemeral node ID. After connection, SPAKE2 proves PIN possession and derives the content-encryption key. Iroh relays and internet-backed DNS are disabled.
 
@@ -182,12 +169,11 @@ All modes provide end-to-end encryption.
 | iroh | Internet | Beam Code secret + SPAKE2 node-ID authorization | QUIC/TLS 1.3 | AES-256-GCM with SPAKE2-derived key |
 | iroh (`--pin`) | Direct (LAN) | mDNS node-ID rendezvous + SPAKE2 | QUIC/TLS 1.3 | AES-256-GCM with SPAKE2-derived key |
 | iroh (`--serverless`) | Direct (LAN/public) | Copied 256-bit secret + SPAKE2 | QUIC/TLS 1.3 | AES-256-GCM with SPAKE2-derived key |
-| Tor (`send --tor`) | Internet | Beam Code | Tor circuits | AES-256-GCM |
 
 All modes use dual-layer encryption (transport + content). `--serverless` is the
 same iroh transport with relays disabled, so it keeps QUIC/TLS 1.3 on the wire.
 
-Relay servers (iroh, Tor) never see decrypted content or encryption keys.
+Iroh relay servers never see decrypted content or encryption keys.
 Serverless and PIN modes contact neither kind of server.
 
 For detailed security model, see [ARCHITECTURE.md](docs/ARCHITECTURE.md#security-model).

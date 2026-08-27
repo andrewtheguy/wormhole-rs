@@ -31,13 +31,6 @@ argon2 = "0.5"
 spake2 = "0.4"
 
 # File handling / hashing
-# liblzma is pulled in transitively via arti-client -> async-compression. By
-# default liblzma-sys links the system liblzma (Homebrew's xz on the macOS CI
-# runner), which produces a binary that fails on machines without that dylib.
-# Depend on it directly with `static` so the bundled liblzma is built from
-# source and linked statically; feature unification applies this to the
-# transitive copy too.
-liblzma = { version = "0.4.6", features = ["static"] }
 tar = "0.4"
 walkdir = "2"
 xxhash-rust = { version = "0.8", features = ["xxh64"] }
@@ -51,12 +44,6 @@ iroh = "1.0.2"
 iroh-mdns-address-lookup = "0.4.0"
 swarm-discovery = "0.6.3"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
-
-# Tor/Onion transport
-arti-client = { version = "0.43", features = ["onion-service-service", "onion-service-client", "tokio", "static-sqlite"] }
-tor-hsservice = "0.43"
-tor-cell = "0.43"
-safelog = "0.8"
 
 [profile.release]
 strip = true
