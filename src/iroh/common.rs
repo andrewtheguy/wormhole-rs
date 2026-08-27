@@ -452,7 +452,6 @@ pub fn generate_code(
         created_at: beam_rs::core::beam::current_timestamp(),
         key: URL_SAFE_NO_PAD.encode(session_secret),
         addr: Some(minimal_addr),
-        onion_address: None,
     };
 
     let serialized = serde_json::to_vec(&token).context("Failed to serialize beam token")?;

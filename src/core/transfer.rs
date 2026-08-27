@@ -201,7 +201,7 @@ pub async fn send_encrypted_header<W: AsyncWriteExt + Unpin>(
     // Write encrypted header
     writer.write_all(&encrypted).await?;
 
-    // Flush to ensure header is sent immediately (required for Tor streams)
+    // Flush to ensure the header is sent immediately
     writer.flush().await?;
 
     Ok(())
@@ -1187,7 +1187,7 @@ pub enum TransferResult {
     Aborted,
 }
 
-/// Unified sender transfer logic for all transports.
+/// Unified sender transfer logic.
 ///
 /// Handles the complete transfer flow:
 /// 1. Send encrypted header
@@ -1195,7 +1195,7 @@ pub enum TransferResult {
 /// 3. Seek file if resuming
 /// 4. Send file data
 /// 5. Flush stream
-/// 6. Wait for ACK (with optional timeout)
+/// 6. Wait for ACK
 ///
 /// # Arguments
 /// * `file` - File to send (must be seekable for resume support)
@@ -1211,33 +1211,6 @@ pub async fn run_sender_transfer<S, F>(
     stream: &mut S,
     key: &[u8; 32],
     header: &FileHeader,
-) -> Result<TransferResult>
-where
-    S: AsyncReadExt + AsyncWriteExt + Unpin,
-    F: AsyncReadExt + AsyncSeekExt + Unpin,
-{
-    run_sender_transfer_with_timeout(file, stream, key, header, None).await
-}
-
-/// Unified sender transfer logic with optional ACK timeout.
-///
-/// Same as `run_sender_transfer` but allows specifying a timeout for ACK.
-/// If the timeout expires, the transfer is considered successful (data was sent).
-/// This is useful for unreliable transports like Tor where streams may close abruptly.
-///
-/// # Arguments
-/// * `file` - File to send (must be seekable for resume support)
-/// * `stream` - Bidirectional stream for reading and writing
-/// * `key` - 32-byte encryption key
-/// * `header` - File header with metadata
-/// * `ack_timeout` - Optional timeout for waiting for ACK. If None, waits indefinitely.
-///   If timeout expires, considers transfer successful.
-pub async fn run_sender_transfer_with_timeout<S, F>(
-    file: &mut F,
-    stream: &mut S,
-    key: &[u8; 32],
-    header: &FileHeader,
-    ack_timeout: Option<std::time::Duration>,
 ) -> Result<TransferResult>
 where
     S: AsyncReadExt + AsyncWriteExt + Unpin,
@@ -1269,43 +1242,21 @@ where
     // 3. Send file data
     send_file_data(file, stream, key, header.file_size, start_offset, 10).await?;
 
-    // 4. Flush stream (important for TCP-based transports)
+    // 4. Flush stream
     stream.flush().await.context("Failed to flush stream")?;
 
     ui::status("\nTransfer complete!");
 
-    // 5. Wait for ACK (with optional timeout)
+    // 5. Wait for ACK
     ui::status("Waiting for receiver to confirm...");
 
-    let ack_result = match ack_timeout {
-        Some(timeout) => {
-            match tokio::time::timeout(timeout, recv_control(stream, key)).await {
-                Ok(result) => result,
-                Err(_) => {
-                    // Timeout - consider transfer successful (data was sent)
-                    ui::status("Connection closed (transfer completed)");
-                    return Ok(TransferResult::Success);
-                }
-            }
-        }
-        None => recv_control(stream, key).await,
-    };
-
-    match ack_result {
+    match recv_control(stream, key).await {
         Ok(ControlSignal::Ack) => {
             ui::status("Receiver confirmed!");
             Ok(TransferResult::Success)
         }
         Ok(other) => anyhow::bail!("Expected ACK, got {:?}", other),
-        Err(e) => {
-            // For unreliable transports, connection errors after data sent are acceptable
-            if ack_timeout.is_some() {
-                ui::status("Connection closed (transfer completed)");
-                Ok(TransferResult::Success)
-            } else {
-                Err(e).context("Failed to receive ACK")
-            }
-        }
+        Err(e) => Err(e).context("Failed to receive ACK"),
     }
 }
 
@@ -1314,7 +1265,7 @@ use crate::core::folder::{
     print_skipped_entries, print_tar_extraction_info,
 };
 
-/// Unified receiver transfer logic for all transports.
+/// Unified receiver transfer logic.
 ///
 /// Handles the complete transfer flow:
 /// 1. Receive encrypted header

@@ -4,7 +4,6 @@ use std::path::{Path, PathBuf};
 use tracing_subscriber::EnvFilter;
 
 use beam_rs::core::transfer::is_interrupted;
-use beam_rs::core::beam;
 use beam_rs::ui;
 
 mod auth;
@@ -13,9 +12,6 @@ mod iroh;
 use iroh::{receiver as iroh_receiver, sender as iroh_sender};
 use iroh::common::EndpointReadiness;
 use iroh::sender::PairingMode;
-
-mod onion;
-use onion::{receiver as onion_receiver, sender as onion_sender};
 
 mod cli;
 
@@ -50,11 +46,6 @@ enum Commands {
         /// Use no third-party services with a copied direct-address code
         #[arg(long)]
         serverless: bool,
-
-        /// Send via a Tor hidden service (anonymous) instead of iroh.
-        /// Incompatible with iroh pairing and relay options.
-        #[arg(long)]
-        tor: bool,
     },
 
     /// Receive a file or folder using a beam code or PIN
@@ -184,23 +175,8 @@ async fn run(command: Commands) -> Result<()> {
             pin,
             relay_url,
             serverless,
-            tor,
         } => {
             validate_path(&path, folder)?;
-            if tor && (pin || serverless || !relay_url.is_empty()) {
-                anyhow::bail!(
-                    "--tor cannot be combined with --pin, --serverless, or --relay-url: \
-                     those options configure the iroh transport, which --tor replaces."
-                );
-            }
-            if tor {
-                if folder {
-                    onion_sender::send_folder_tor(&path).await?;
-                } else {
-                    onion_sender::send_file_tor(&path).await?;
-                }
-                return Ok(());
-            }
             if (pin || serverless) && !relay_url.is_empty() {
                 anyhow::bail!(
                     "--relay-url is only supported by the default beam-code mode; PIN discovery does not carry custom relay configuration and serverless mode disables relays"
@@ -251,37 +227,8 @@ async fn run(command: Commands) -> Result<()> {
                 )
                 .await?;
             } else {
-                receive_with_code(&input, output, no_resume).await?;
+                iroh_receiver::receive(&input, output, no_resume).await?;
             }
-        }
-    }
-
-    Ok(())
-}
-
-/// Receive using a beam code (auto-detects transport)
-async fn receive_with_code(
-    code: &str,
-    output: Option<PathBuf>,
-    no_resume: bool,
-) -> Result<()> {
-    // Validate code format
-    beam::validate_code_format(code)?;
-
-    // Parse code to determine transport
-    let token = beam::parse_code(code)?;
-
-    match token.protocol.as_str() {
-        beam::PROTOCOL_IROH => {
-            iroh_receiver::receive(code, output, no_resume).await?;
-        }
-        beam::PROTOCOL_TOR => {
-            // A Tor code carries an onion address; bootstrap the Tor client and
-            // connect anonymously.
-            onion_receiver::receive_file_tor(code, output, no_resume).await?;
-        }
-        proto => {
-            anyhow::bail!("Unknown protocol in beam code: {}", proto);
         }
     }
 
